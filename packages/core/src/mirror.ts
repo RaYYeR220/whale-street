@@ -94,32 +94,34 @@ export function evaluateMirror(
     );
 
   const tp = ctx.traderPosition;
-  if (!tp || tp.size === 0) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
-  if (ctx.mark === null || !(ctx.mark > 0)) refuse('NO_MARK', 'no live mark price');
+  const hasPos = tp && Number.isFinite(tp.size) && tp.size !== 0;
+  const hasValidMark = ctx.mark !== null && Number.isFinite(ctx.mark) && ctx.mark > 0;
 
-  if (tp && tp.size !== 0) {
-    const allowedLev = Math.min(tp.leverage, m.maxLeverage);
+  if (!hasPos) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
+  if (!hasValidMark) refuse('NO_MARK', 'no live mark price');
+
+  if (hasPos && hasValidMark) {
+    const allowedLev = Math.min(tp!.leverage, m.maxLeverage);
     if (!(req.leverage >= 1 && req.leverage <= allowedLev))
       refuse('LEVERAGE_CAP', `leverage is capped at ${allowedLev}x`);
-    if (ctx.mark !== null && ctx.mark > 0) {
-      const long = tp.size > 0;
-      const adverse = long
-        ? (ctx.mark - tp.entryPx) / tp.entryPx
-        : (tp.entryPx - ctx.mark) / tp.entryPx;
-      if (!(adverse < m.antiFomoPct)) {
-        refuse(
-          'ANTI_FOMO',
-          Number.isFinite(adverse)
-            ? `you'd enter ${(adverse * 100).toFixed(1)}% worse than the trader — that's how FOMO loses money`
-            : 'cannot compare with the trader entry price',
-        );
-      }
+    const long = tp!.size > 0;
+    const adverse = long
+      ? (ctx.mark! - tp!.entryPx) / tp!.entryPx
+      : (tp!.entryPx - ctx.mark!) / tp!.entryPx;
+    if (!(adverse < m.antiFomoPct)) {
+      refuse(
+        'ANTI_FOMO',
+        Number.isFinite(adverse)
+          ? `you'd enter ${(adverse * 100).toFixed(1)}% worse than the trader — that's how FOMO loses money`
+          : 'cannot compare with the trader entry price',
+      );
     }
   }
 
-  if (refusals.length > 0 || !tp || ctx.mark === null) return { allow: false, refusals };
+  if (refusals.length > 0 || !hasPos || !hasValidMark) return { allow: false, refusals };
 
-  const long = tp.size > 0;
+  // At this point, hasPos and hasValidMark are both true, so tp and ctx.mark are valid
+  const long = tp!.size > 0;
   const move = slPct / req.leverage;
   return {
     allow: true,
@@ -127,10 +129,10 @@ export function evaluateMirror(
       coin: req.coin,
       isBuy: long,
       notionalUsd: req.notionalUsd,
-      size: req.notionalUsd / ctx.mark,
+      size: req.notionalUsd / ctx.mark!,
       leverage: req.leverage,
-      stopLossPx: long ? ctx.mark * (1 - move) : ctx.mark * (1 + move),
-      markPx: ctx.mark,
+      stopLossPx: long ? ctx.mark! * (1 - move) : ctx.mark! * (1 + move),
+      markPx: ctx.mark!,
     },
   };
 }

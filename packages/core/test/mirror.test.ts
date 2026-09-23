@@ -173,4 +173,88 @@ describe('mirror policy', () => {
       expect(nanEntryPx.refusals.find((r) => r.code === 'ANTI_FOMO')).toBeDefined();
     }
   });
+
+  it('fails closed on non-finite position size and mark', () => {
+    // NaN in traderPosition.size should refuse NO_POSITION
+    const sizeNaN = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: Number.NaN,
+          entryPx: 40,
+          liqPx: 30,
+          leverage: 10,
+          marginUsed: 400,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    expect(sizeNaN.allow).toBe(false);
+    if (!sizeNaN.allow) {
+      expect(sizeNaN.refusals.find((r) => r.code === 'NO_POSITION')).toBeDefined();
+    }
+
+    // Infinity in traderPosition.size should refuse NO_POSITION
+    const sizeInfinity = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: Number.POSITIVE_INFINITY,
+          entryPx: 40,
+          liqPx: 30,
+          leverage: 10,
+          marginUsed: 400,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    expect(sizeInfinity.allow).toBe(false);
+    if (!sizeInfinity.allow) {
+      expect(sizeInfinity.refusals.find((r) => r.code === 'NO_POSITION')).toBeDefined();
+    }
+
+    // Infinity in mark with SHORT position should refuse NO_MARK
+    const markInfinityShort = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: -5,
+          entryPx: 42,
+          liqPx: 60,
+          leverage: 5,
+          marginUsed: 0,
+          unrealizedPnl: 0,
+        },
+        mark: Number.POSITIVE_INFINITY,
+      }),
+    );
+    expect(markInfinityShort.allow).toBe(false);
+    if (!markInfinityShort.allow) {
+      expect(markInfinityShort.refusals.find((r) => r.code === 'NO_MARK')).toBeDefined();
+    }
+
+    // Infinity in mark with LONG position should refuse NO_MARK
+    const markInfinityLong = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: 100,
+          entryPx: 40,
+          liqPx: 30,
+          leverage: 10,
+          marginUsed: 400,
+          unrealizedPnl: 0,
+        },
+        mark: Number.POSITIVE_INFINITY,
+      }),
+    );
+    expect(markInfinityLong.allow).toBe(false);
+    if (!markInfinityLong.allow) {
+      expect(markInfinityLong.refusals.find((r) => r.code === 'NO_MARK')).toBeDefined();
+    }
+  });
 });
