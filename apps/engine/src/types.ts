@@ -16,7 +16,18 @@ export type SeasonStatus = 'ACTIVE' | 'CLOSED';
 export type IpoStatus = 'PENDING' | 'APPROVED' | 'DENIED' | 'DEFERRED';
 
 export type MirrorKind = 'leverage' | 'order';
-export type MirrorStatus = 'REFUSED' | 'PREPARED' | 'SUBMITTED' | 'FILLED' | 'RESTING' | 'REJECTED';
+/**
+ * UNKNOWN = execute sent but the outcome is not definitive (timeout, network error, 5xx, an
+ * unparseable 2xx): the order may have reached Hyperliquid. Counts toward the caps like a fill.
+ */
+export type MirrorStatus =
+  | 'REFUSED'
+  | 'PREPARED'
+  | 'SUBMITTED'
+  | 'FILLED'
+  | 'RESTING'
+  | 'REJECTED'
+  | 'UNKNOWN';
 
 /** Persisted NAV state of a company (companies.nav_state_json). */
 export interface NavPersist {

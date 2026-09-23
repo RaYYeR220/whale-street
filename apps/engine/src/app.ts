@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerMirrorRoutes } from './api/mirror-routes';
 import { registerRest } from './api/rest';
 import { registerWs } from './api/ws';
 import type { Engine } from './engine';
@@ -12,5 +13,6 @@ export async function buildApp(e: Engine): Promise<FastifyInstance> {
   await app.register(websocket, { options: { maxPayload: 64 * 1024, perMessageDeflate: false } });
   registerRest(app, e);
   registerWs(app, e);
+  registerMirrorRoutes(app, e);
   return app;
 }

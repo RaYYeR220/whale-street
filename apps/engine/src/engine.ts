@@ -22,6 +22,7 @@ import { createExchange, type ExchangeService } from './services/exchange';
 import { createFilingService, type FilingService } from './services/filings';
 import { createIpoService, type IpoService } from './services/ipo';
 import { createListingService, type ListingService } from './services/listing';
+import { createMirrorService, type MirrorService } from './services/mirror';
 import { createPlayersService, type PlayersService } from './services/players';
 import { createSeasonService, type SeasonService } from './services/seasons';
 
@@ -82,6 +83,7 @@ export interface Engine {
   readonly players: PlayersService;
   readonly seasons: SeasonService;
   readonly exchange: ExchangeService;
+  readonly mirror: MirrorService;
   readonly idle: IdleGate;
   readonly scheduler: Scheduler;
   /** One 1 Hz step: replay advance → idle gate → scheduler → market loop → bots → season rollover. */
@@ -144,6 +146,17 @@ export function createEngine(deps: EngineDeps): Engine {
   const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays });
   seasons.ensure(now);
   const exchange = createExchange({ state, repos, bus, clock, seasons, params });
+  const mirror = createMirrorService({
+    config,
+    trading: deps.trading,
+    state,
+    repos,
+    refresher,
+    clock,
+    log,
+    info: hl.info,
+    params,
+  });
   const loop = createMarketLoop({
     state,
     repos,
@@ -207,6 +220,7 @@ export function createEngine(deps: EngineDeps): Engine {
     players,
     seasons,
     exchange,
+    mirror,
     idle,
     scheduler,
     tick() {
