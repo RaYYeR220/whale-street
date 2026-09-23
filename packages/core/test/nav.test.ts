@@ -116,18 +116,18 @@ describe('nav', () => {
       snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })], accountValue: 0 }),
     );
     expect(st0.nav).toBe(100);
-    const st0_tick = tickNav(st0, { BTC: 150 });
-    expect(st0_tick.nav).toBe(100); // NAV unchanged
-    expect(st0_tick.cumPnl).toBe(50); // but cumPnl updated
+    const st0Tick = tickNav(st0, { BTC: 150 });
+    expect(st0Tick.nav).toBe(100); // NAV unchanged
+    expect(st0Tick.cumPnl).toBe(50); // but cumPnl updated
 
     // Negative equity case
-    const st_neg = initNav(
+    const stNeg = initNav(
       snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })], accountValue: -10 }),
     );
-    expect(st_neg.nav).toBe(100);
-    const st_neg_tick = tickNav(st_neg, { BTC: 150 });
-    expect(st_neg_tick.nav).toBe(100); // NAV unchanged
-    expect(st_neg_tick.cumPnl).toBe(50); // but cumPnl updated
+    expect(stNeg.nav).toBe(100);
+    const stNegTick = tickNav(stNeg, { BTC: 150 });
+    expect(stNegTick.nav).toBe(100); // NAV unchanged
+    expect(stNegTick.cumPnl).toBe(50); // but cumPnl updated
   });
 
   it('applySnapshot uses fallback uSnap when mark is missing', () => {
@@ -169,5 +169,109 @@ describe('nav', () => {
 
     // Infinity mark
     expect(unrealizedAt(positions, { BTC: Infinity })).toBeNull();
+  });
+
+  it('unrealizedAt returns null when a position has a non-finite size or an invalid entryPx', () => {
+    const marks = { BTC: 110 };
+    expect(unrealizedAt([pos({ coin: 'BTC', size: Number.NaN, entryPx: 100 })], marks)).toBeNull();
+    expect(
+      unrealizedAt([pos({ coin: 'BTC', size: Number.POSITIVE_INFINITY, entryPx: 100 })], marks),
+    ).toBeNull();
+    expect(unrealizedAt([pos({ coin: 'BTC', size: 1, entryPx: Number.NaN })], marks)).toBeNull();
+    expect(unrealizedAt([pos({ coin: 'BTC', size: 1, entryPx: 0 })], marks)).toBeNull();
+    expect(unrealizedAt([pos({ coin: 'BTC', size: 1, entryPx: -5 })], marks)).toBeNull();
+  });
+
+  it('applySnapshot ignores a snapshot with a NaN realizedSinceAnchor and recovers on the next clean one', () => {
+    const open = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
+    let st = tickNav(initNav(open), { BTC: 110 }); // +10 on 1000 => nav 101
+    const before = st;
+
+    const poisoned = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })],
+      realizedSinceAnchor: Number.NaN,
+      accountValue: 1_010,
+    });
+    st = applySnapshot(st, poisoned, { BTC: 110 });
+    expect(st).toBe(before); // untouched: old snapshot kept
+
+    const clean = snap({ positions: [], realizedSinceAnchor: 10, accountValue: 1_010 });
+    st = applySnapshot(st, clean, { BTC: 110 });
+    expect(Number.isFinite(st.nav)).toBe(true);
+    expect(st.nav).toBeCloseTo(before.nav, 10);
+  });
+
+  it('applySnapshot ignores a snapshot with a non-finite unrealizedPnl field and recovers on the next clean one', () => {
+    const open = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
+    let st = tickNav(initNav(open), { BTC: 110 });
+    const before = st;
+
+    const poisoned = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: 100, unrealizedPnl: Number.NaN })],
+      accountValue: 1_010,
+    });
+    st = applySnapshot(st, poisoned, { BTC: 110 });
+    expect(st).toBe(before);
+
+    const clean = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: 100, unrealizedPnl: 10 })],
+      accountValue: 1_010,
+    });
+    st = applySnapshot(st, clean, { BTC: 110 });
+    expect(Number.isFinite(st.nav)).toBe(true);
+    expect(st.nav).toBeCloseTo(before.nav, 10);
+  });
+
+  it('applySnapshot ignores a snapshot with an invalid entryPx and recovers on the next clean one', () => {
+    const open = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
+    let st = tickNav(initNav(open), { BTC: 110 });
+    const before = st;
+
+    const poisoned = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: Number.NaN })],
+      accountValue: 1_010,
+    });
+    st = applySnapshot(st, poisoned, { BTC: 110 });
+    expect(st).toBe(before);
+
+    const clean = snap({ positions: [], realizedSinceAnchor: 10, accountValue: 1_010 });
+    st = applySnapshot(st, clean, { BTC: 110 });
+    expect(Number.isFinite(st.nav)).toBe(true);
+    expect(st.nav).toBeCloseTo(before.nav, 10);
+  });
+
+  it('a deposit or withdrawal never moves NAV even when interleaved with tickNav calls (flow-neutral)', () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            isFlow: fc.boolean(),
+            amount: fc.double({ min: -500, max: 5_000, noNaN: true }),
+          }),
+          { minLength: 1, maxLength: 30 },
+        ),
+        (steps) => {
+          // Reported uPnL (5) equals live uPnL at mark 110 (0.5 · 10), so a tickNav call at
+          // this same mark is a no-op for cum, isolating the effect of flows on NAV.
+          const positions = [pos({ coin: 'BTC', size: 0.5, entryPx: 100, unrealizedPnl: 5 })];
+          let equity = 2_000;
+          let st = initNav(snap({ positions, accountValue: equity }));
+          // Reference run: identical mark ticks, no flows at all.
+          let stReference = initNav(snap({ positions, accountValue: equity }));
+          for (const step of steps) {
+            if (step.isFlow) {
+              equity = Math.max(100, equity + step.amount);
+              st = applySnapshot(st, snap({ positions, accountValue: equity }), { BTC: 110 });
+              expect(st.equity).toBeCloseTo(equity, 8);
+            } else {
+              st = tickNav(st, { BTC: 110 });
+            }
+            stReference = tickNav(stReference, { BTC: 110 });
+          }
+          expect(st.nav).toBeCloseTo(100, 10);
+          expect(st.nav).toBeCloseTo(stReference.nav, 10);
+        },
+      ),
+    );
   });
 });

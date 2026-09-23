@@ -1,12 +1,17 @@
 import { PARAMS } from './params';
 import type { Marks, Position, Snapshot } from './types';
+import { isSaneSnapshot, isValidPx } from './validity';
 
-/** Live unrealized PnL at the given marks; null if any needed mark is missing or invalid. */
+/**
+ * Live unrealized PnL at the given marks; null if any position has a non-finite size, an
+ * invalid entryPx, or a missing/invalid mark.
+ */
 export function unrealizedAt(positions: readonly Position[], marks: Marks): number | null {
   let total = 0;
   for (const p of positions) {
+    if (!Number.isFinite(p.size) || !isValidPx(p.entryPx)) return null;
     const m = marks[p.coin];
-    if (m === undefined || !Number.isFinite(m) || m <= 0) return null;
+    if (!isValidPx(m)) return null;
     total += p.size * (m - p.entryPx);
   }
   return total;
@@ -46,28 +51,39 @@ function stepNav(state: NavState, cum: number): number {
   return Math.max(0, state.nav * (1 + r));
 }
 
-/** Advance NAV to new marks with positions unchanged. Missing marks freeze the state. */
+/**
+ * Advance NAV to new marks with positions unchanged. Missing/invalid marks or positions, or a
+ * non-finite result, freeze the state.
+ */
 export function tickNav(state: NavState, marks: Marks): NavState {
   const u = unrealizedAt(state.snapshot.positions, marks);
   if (u === null) return state;
   const cum = state.snapshot.realizedSinceAnchor + u;
+  const equity = state.snapshot.accountValue + (u - state.uSnap);
+  if (!Number.isFinite(cum) || !Number.isFinite(equity)) return state;
   return {
     ...state,
     nav: stepNav(state, cum),
     cumPnl: cum,
-    equity: state.snapshot.accountValue + (u - state.uSnap),
+    equity,
   };
 }
 
-/** Swap in a new snapshot and apply the PnL jump since the last step as one NAV step. */
+/**
+ * Swap in a new snapshot and apply the PnL jump since the last step as one NAV step. An unsane
+ * snapshot, or one that would produce a non-finite result, is ignored and the old snapshot kept.
+ */
 export function applySnapshot(state: NavState, snapshot: Snapshot, marks: Marks): NavState {
+  if (!isSaneSnapshot(snapshot)) return state;
   const uSnap = snapshotUnrealized(snapshot);
   const u = unrealizedAt(snapshot.positions, marks) ?? uSnap;
   const cum = snapshot.realizedSinceAnchor + u;
+  const equity = snapshot.accountValue + (u - uSnap);
+  if (!Number.isFinite(cum) || !Number.isFinite(equity)) return state;
   return {
     nav: stepNav(state, cum),
     cumPnl: cum,
-    equity: snapshot.accountValue + (u - uSnap),
+    equity,
     snapshot,
     uSnap,
   };
