@@ -65,7 +65,13 @@ export function evaluateMirror(
 
   if (ctx.companyStatus !== 'ACTIVE')
     refuse('COMPANY_NOT_ACTIVE', `company is ${ctx.companyStatus.toLowerCase()}`);
-  if (!(ctx.snapshotAgeMs <= m.maxSnapshotAgeMs))
+  if (
+    !(
+      Number.isFinite(ctx.snapshotAgeMs) &&
+      ctx.snapshotAgeMs >= 0 &&
+      ctx.snapshotAgeMs <= m.maxSnapshotAgeMs
+    )
+  )
     refuse('STALE_DATA', 'trader data is older than 60 seconds');
   if (!ctx.coinSupported)
     refuse('COIN_UNSUPPORTED', `${req.coin} cannot be traded through the Nansen Trading API`);
@@ -75,9 +81,21 @@ export function evaluateMirror(
       `size must be between $${m.minNotionalUsd} and $${m.maxNotionalUsd}`,
     );
   }
-  if (!(ctx.playerOpenMirrors < m.maxOpen))
+  if (
+    !(
+      Number.isFinite(ctx.playerOpenMirrors) &&
+      ctx.playerOpenMirrors >= 0 &&
+      ctx.playerOpenMirrors < m.maxOpen
+    )
+  )
     refuse('TOO_MANY_OPEN', `at most ${m.maxOpen} open mirrors`);
-  if (!(ctx.playerDailyNotionalUsd + req.notionalUsd <= m.dailyCapUsd))
+  if (
+    !(
+      Number.isFinite(ctx.playerDailyNotionalUsd) &&
+      ctx.playerDailyNotionalUsd >= 0 &&
+      ctx.playerDailyNotionalUsd + req.notionalUsd <= m.dailyCapUsd
+    )
+  )
     refuse('DAILY_CAP', `daily mirror cap is $${m.dailyCapUsd}`);
   if (!(slPct > 0 && slPct <= m.maxStopLossPct)) {
     refuse(
@@ -85,7 +103,7 @@ export function evaluateMirror(
       `stop-loss must risk at most ${Math.round(m.maxStopLossPct * 100)}% of margin`,
     );
   }
-  if (!(ctx.hp >= m.minHp))
+  if (!(Number.isFinite(ctx.hp) && ctx.hp >= m.minHp))
     refuse(
       'NEAR_LIQUIDATION',
       Number.isFinite(ctx.hp)
@@ -100,10 +118,13 @@ export function evaluateMirror(
   if (!hasPos) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
   if (!hasValidMark) refuse('NO_MARK', 'no live mark price');
 
-  if (hasPos && hasValidMark) {
+  if (hasPos) {
     const allowedLev = Math.min(tp!.leverage, m.maxLeverage);
     if (!(req.leverage >= 1 && req.leverage <= allowedLev))
       refuse('LEVERAGE_CAP', `leverage is capped at ${allowedLev}x`);
+  }
+
+  if (hasPos && hasValidMark) {
     const long = tp!.size > 0;
     const adverse = long
       ? (ctx.mark! - tp!.entryPx) / tp!.entryPx

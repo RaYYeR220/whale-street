@@ -257,4 +257,64 @@ describe('mirror policy', () => {
       expect(markInfinityLong.refusals.find((r) => r.code === 'NO_MARK')).toBeDefined();
     }
   });
+
+  it('fails closed on negative and infinite context values', () => {
+    // +Infinity in hp should refuse NEAR_LIQUIDATION
+    const hpInfinity = evaluateMirror(req(), ctx({ hp: Number.POSITIVE_INFINITY }));
+    expect(hpInfinity.allow).toBe(false);
+    if (!hpInfinity.allow) {
+      expect(hpInfinity.refusals.find((r) => r.code === 'NEAR_LIQUIDATION')).toBeDefined();
+    }
+
+    // -Infinity in snapshotAgeMs should refuse STALE_DATA
+    const snapshotNegInf = evaluateMirror(req(), ctx({ snapshotAgeMs: Number.NEGATIVE_INFINITY }));
+    expect(snapshotNegInf.allow).toBe(false);
+    if (!snapshotNegInf.allow) {
+      expect(snapshotNegInf.refusals.find((r) => r.code === 'STALE_DATA')).toBeDefined();
+    }
+
+    // -Infinity in playerOpenMirrors should refuse TOO_MANY_OPEN
+    const openMirrorsNegInf = evaluateMirror(
+      req(),
+      ctx({ playerOpenMirrors: Number.NEGATIVE_INFINITY }),
+    );
+    expect(openMirrorsNegInf.allow).toBe(false);
+    if (!openMirrorsNegInf.allow) {
+      expect(openMirrorsNegInf.refusals.find((r) => r.code === 'TOO_MANY_OPEN')).toBeDefined();
+    }
+
+    // -Infinity in playerDailyNotionalUsd should refuse DAILY_CAP
+    const dailyNegInf = evaluateMirror(
+      req(),
+      ctx({ playerDailyNotionalUsd: Number.NEGATIVE_INFINITY }),
+    );
+    expect(dailyNegInf.allow).toBe(false);
+    if (!dailyNegInf.allow) {
+      expect(dailyNegInf.refusals.find((r) => r.code === 'DAILY_CAP')).toBeDefined();
+    }
+  });
+
+  it('collects LEVERAGE_CAP even when mark is invalid', () => {
+    // Invalid mark with high leverage should get both NO_MARK and LEVERAGE_CAP
+    const d = evaluateMirror(
+      req({ leverage: 20 }),
+      ctx({
+        mark: null,
+        traderPosition: {
+          coin: 'HYPE',
+          size: 100,
+          entryPx: 40,
+          liqPx: 30,
+          leverage: 10,
+          marginUsed: 400,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    expect(d.allow).toBe(false);
+    if (!d.allow) {
+      expect(d.refusals.find((r) => r.code === 'NO_MARK')).toBeDefined();
+      expect(d.refusals.find((r) => r.code === 'LEVERAGE_CAP')).toBeDefined();
+    }
+  });
 });
