@@ -1,5 +1,6 @@
 import { PARAMS, type Params } from './params';
 import type { CompanyStatus, Position } from './types';
+import { isSanePosition, isValidPx } from './validity';
 
 export interface MirrorRequest {
   coin: string;
@@ -72,7 +73,10 @@ export function evaluateMirror(
       ctx.snapshotAgeMs <= m.maxSnapshotAgeMs
     )
   )
-    refuse('STALE_DATA', 'trader data is older than 60 seconds');
+    refuse(
+      'STALE_DATA',
+      `trader data is older than ${Math.round(m.maxSnapshotAgeMs / 1000)} seconds`,
+    );
   if (!ctx.coinSupported)
     refuse('COIN_UNSUPPORTED', `${req.coin} cannot be traded through the Nansen Trading API`);
   if (!(req.notionalUsd >= m.minNotionalUsd && req.notionalUsd <= m.maxNotionalUsd)) {
@@ -112,13 +116,11 @@ export function evaluateMirror(
     );
 
   const tp = ctx.traderPosition;
-  const hasPos = tp && Number.isFinite(tp.size) && tp.size !== 0;
-  const hasValidMark = ctx.mark !== null && Number.isFinite(ctx.mark) && ctx.mark > 0;
-  const pos = hasPos && tp ? tp : null;
-  const mark = hasValidMark ? ctx.mark : null;
+  const pos = tp !== null && tp.coin === req.coin && isSanePosition(tp) ? tp : null;
+  const mark = isValidPx(ctx.mark) ? ctx.mark : null;
 
-  if (!hasPos) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
-  if (!hasValidMark) refuse('NO_MARK', 'no live mark price');
+  if (!pos) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
+  if (mark === null) refuse('NO_MARK', 'no live mark price');
 
   if (pos) {
     const allowedLev = Math.min(pos.leverage, m.maxLeverage);
@@ -140,9 +142,11 @@ export function evaluateMirror(
   }
 
   if (refusals.length > 0) return { allow: false, refusals };
-  if (!pos || mark === null) return { allow: false, refusals };
+  if (!pos || mark === null) {
+    refuse('NO_POSITION', `trader has no open ${req.coin} position`);
+    return { allow: false, refusals };
+  }
 
-  // At this point, pos and mark are valid
   const long = pos.size > 0;
   const move = slPct / req.leverage;
   return {
