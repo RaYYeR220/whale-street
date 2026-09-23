@@ -116,6 +116,19 @@ describe('createHlFeed', () => {
     expect(trades[0]?.[0]?.coin).toBe('BTC');
   });
 
+  it('does not emit onMids for an empty parse', () => {
+    const feed = createHlFeed({ wsFactory: (u) => new FakeWs(u) });
+    const mids: unknown[] = [];
+    feed.onMids((m) => mids.push(m));
+    feed.start();
+    latest().open();
+    latest().emit({ channel: 'allMids', data: { mids: {} } });
+    latest().emit({ channel: 'allMids', data: { mids: { '@1': '2' } } });
+    expect(mids).toEqual([]);
+    latest().emit({ channel: 'allMids', data: { mids: { BTC: '1' } } });
+    expect(mids).toEqual([{ BTC: 1 }]);
+  });
+
   it('diffs trade subscriptions while open', () => {
     const feed = createHlFeed({ wsFactory: (u) => new FakeWs(u) });
     feed.setTradeCoins(['BTC', 'ETH']);

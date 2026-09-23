@@ -20,6 +20,20 @@ describe('HlInfo', () => {
     expect(r).toEqual({ ok: true, value: { BTC: 64_000 } });
   });
 
+  it('allMids: a non-object body is malformed, not an empty snapshot', async () => {
+    for (const body of [null, 'nope', 5, ['BTC', '1']]) {
+      const r = await infoWith([{ status: 200, body }]).allMids();
+      expect(r).toEqual({ ok: false, error: 'malformed allMids' });
+    }
+  });
+
+  it('allMids: an empty parse (no usable coin entries) is malformed, not an empty snapshot', async () => {
+    for (const body of [{}, { '@1': '2' }, { BTC: 'not-a-number' }]) {
+      const r = await infoWith([{ status: 200, body }]).allMids();
+      expect(r).toEqual({ ok: false, error: 'malformed allMids' });
+    }
+  });
+
   it('clearinghouse maps positions', async () => {
     const seen: unknown[] = [];
     const body = {
@@ -132,6 +146,26 @@ describe('HlInfo', () => {
     const body = clearinghouseBody(ethPosition({ coin: undefined }));
     const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
     expect(r.ok).toBe(false);
+  });
+
+  it('clearinghouse: a missing assetPositions array is malformed, not treated as a flat account', async () => {
+    for (const body of [
+      { marginSummary: { accountValue: '12000.5' }, time: 1 },
+      { assetPositions: null, marginSummary: { accountValue: '12000.5' }, time: 1 },
+      { assetPositions: 'nope', marginSummary: { accountValue: '12000.5' }, time: 1 },
+    ]) {
+      const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('clearinghouse: an empty assetPositions array is a legit flat account', async () => {
+    const body = { assetPositions: [], marginSummary: { accountValue: '12000.5' }, time: 1 };
+    const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+    expect(r).toEqual({
+      ok: true,
+      value: { positions: [], accountValue: 12_000.5, time: 1 },
+    });
   });
 
   it('clearinghouse: a zero-size row is skipped while other rows are kept', async () => {

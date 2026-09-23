@@ -57,7 +57,15 @@ export function createHlInfo(
   return {
     async allMids() {
       const r = await post({ type: 'allMids' });
-      return r.ok ? some(parseMids({ mids: r.value })) : r;
+      if (!r.ok) return r;
+      if (typeof r.value !== 'object' || r.value === null || Array.isArray(r.value)) {
+        return none('malformed allMids');
+      }
+      const m = parseMids({ mids: r.value });
+      // A well-shaped body that still parses to zero usable coins is indistinguishable from a
+      // malformed one; never hand callers an empty snapshot as if it were real market data.
+      if (Object.keys(m).length === 0) return none('malformed allMids');
+      return some(m);
     },
 
     async clearinghouse(user) {
@@ -71,7 +79,10 @@ export function createHlInfo(
         } | null;
         const accountValue = n(d?.marginSummary?.accountValue);
         if (!d || !Number.isFinite(accountValue)) return none('malformed clearinghouseState');
-        const rawPositions = Array.isArray(d.assetPositions) ? d.assetPositions : [];
+        // `assetPositions` missing or non-array is malformed; only an actual empty array is a
+        // legit flat account (no open positions).
+        if (!Array.isArray(d.assetPositions)) return none('malformed clearinghouseState');
+        const rawPositions = d.assetPositions;
         const positions: Position[] = [];
         for (const entry of rawPositions) {
           const p = (entry as { position?: unknown } | null)?.position;

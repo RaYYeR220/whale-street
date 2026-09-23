@@ -144,8 +144,12 @@ export function createHlFeed(
       } catch {
         return;
       }
-      if (msg.channel === 'allMids') mids.emit(parseMids(msg.data), now());
-      else if (msg.channel === 'trades') {
+      if (msg.channel === 'allMids') {
+        const m = parseMids(msg.data);
+        // An empty parse (no usable coin entries) is never emitted: it's indistinguishable from a
+        // malformed payload, and downstream code must not mistake it for a real, empty snapshot.
+        if (Object.keys(m).length > 0) mids.emit(m, now());
+      } else if (msg.channel === 'trades') {
         const t = parseTrades(msg.data);
         if (t.length > 0) trades.emit(t);
       }
