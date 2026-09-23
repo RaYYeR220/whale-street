@@ -224,6 +224,21 @@ describe('listing committee', () => {
     expect(v.decision).toBe('DEFERRED');
   });
 
+  it('HUMAN_TRADER fails closed when tradedTimes is non-finite', () => {
+    const ev = clean();
+    ev.pnl = some({
+      realizedPnlUsd: 400_000,
+      feesUsd: 20_000,
+      winRate: 0.64,
+      closedTrades: 100,
+      tradedTimes: Number.NaN,
+      topCoins: ['BTC', 'HYPE'],
+    });
+    const v = evaluateListing(ev);
+    expect(v.checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe('FAIL');
+    expect(v.decision).toBe('DENIED');
+  });
+
   it('scoreToRating reads its cutoffs from params (spread override)', () => {
     const lenient = {
       ...PARAMS,

@@ -193,7 +193,7 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
     const days = Math.max(1, history ?? 0);
     const perDay = ev.pnl.value.tradedTimes / days;
     const hold = (days * 1_440) / Math.max(1, ev.pnl.value.closedTrades);
-    const mmProfile = perDay > c.maxTradesPerDay || hold < c.minAvgHoldMinutes;
+    const mmProfile = !(perDay <= c.maxTradesPerDay && hold >= c.minAvgHoldMinutes);
     if (mmProfile) {
       // A market-maker profile is disqualifying on its own; no need to know isVault.
       checks.push({
