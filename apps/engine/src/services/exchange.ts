@@ -1,8 +1,10 @@
 import {
+  netWorth as computeNetWorth,
   type ExecContext,
   executeOrder,
   type Holding,
   holdingValue,
+  isValidPx,
   needsAutoCover,
   type OrderSide,
   PARAMS,
@@ -47,15 +49,18 @@ export interface FillView {
 export interface HoldingView extends Holding {
   companyId: string;
   ticker: string;
-  price: number;
-  value: number;
+  /** null when this company has no live price right now (see PortfolioView.netWorthReason). */
+  price: number | null;
+  value: number | null;
 }
 
 export interface PortfolioView {
   playerId: string;
   seasonId: number;
   cash: number;
-  netWorth: number;
+  /** null (never a fabricated number) when any held company's price is currently unavailable. */
+  netWorth: number | null;
+  netWorthReason: string | null;
   holdings: HoldingView[];
 }
 
@@ -81,7 +86,8 @@ export interface LeaderboardEntry {
   playerId: string;
   handle: string;
   kind: PlayerKind;
-  netWorth: number;
+  /** null (never a fabricated number) when any held company's price is currently unavailable. */
+  netWorth: number | null;
 }
 
 export interface HolderView {
@@ -141,29 +147,45 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
   const log = d.log ?? silentLogger;
   const { state, repos } = d;
 
-  const priceOf = (companyId: string) => {
+  /** null (never 0) when the company has no live share price right now — never fabricate a value. */
+  const priceOf = (companyId: string): number | null => {
     const rt = state.get(companyId);
-    return rt ? state.price(rt) : 0;
+    if (!rt) return null;
+    const p = state.price(rt);
+    return isValidPx(p) ? p : null;
   };
 
   const portfolio = (playerId: string): PortfolioView => {
     const season = d.seasons.ensure(d.clock.now());
     const cash = repos.portfolios.get(playerId, season.id)?.cash ?? params.seasonStartCash;
-    const holdings = repos.holdings.forPlayer(playerId, season.id).map((h): HoldingView => {
+    const rows = repos.holdings.forPlayer(playerId, season.id);
+    const prices: Record<string, number> = {};
+    const missingTickers: string[] = [];
+    const holdings = rows.map((h): HoldingView => {
       const price = priceOf(h.companyId);
+      const ticker = state.get(h.companyId)?.ticker ?? '?';
+      if (price === null) missingTickers.push(ticker);
+      else prices[h.companyId] = price;
       return {
         ...toHolding(h),
         companyId: h.companyId,
-        ticker: state.get(h.companyId)?.ticker ?? '?',
+        ticker,
         price,
-        value: holdingValue(toHolding(h), price),
+        value: price === null ? null : holdingValue(toHolding(h), price),
       };
     });
+    const pf: Portfolio = {
+      cash,
+      holdings: Object.fromEntries(rows.map((h) => [h.companyId, toHolding(h)])),
+    };
+    const net = computeNetWorth(pf, prices);
     return {
       playerId,
       seasonId: season.id,
       cash,
-      netWorth: cash + holdings.reduce((s, h) => s + h.value, 0),
+      netWorth: net,
+      netWorthReason:
+        net === null ? `missing live price for ${[...new Set(missingTickers)].join(', ')}` : null,
       holdings,
     };
   };
@@ -316,25 +338,40 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
 
     leaderboard(limit) {
       const season = d.seasons.ensure(d.clock.now());
-      const worth = new Map(repos.portfolios.forSeason(season.id).map((p) => [p.playerId, p.cash]));
+      const cashByPlayer = new Map(
+        repos.portfolios.forSeason(season.id).map((p) => [p.playerId, p.cash]),
+      );
+      const holdingsByPlayer = new Map<string, Record<string, Holding>>();
       for (const h of repos.holdings.forSeason(season.id)) {
-        worth.set(
-          h.playerId,
-          (worth.get(h.playerId) ?? params.seasonStartCash) +
-            holdingValue(toHolding(h), priceOf(h.companyId)),
-        );
+        const m = holdingsByPlayer.get(h.playerId) ?? {};
+        m[h.companyId] = toHolding(h);
+        holdingsByPlayer.set(h.playerId, m);
       }
-      const players = new Map(repos.players.many([...worth.keys()]).map((p) => [p.id, p]));
-      return [...worth.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, limit)
-        .map(([playerId, netWorth], i) => ({
-          rank: i + 1,
-          playerId,
-          handle: players.get(playerId)?.handle ?? '?',
-          kind: players.get(playerId)?.kind ?? 'human',
-          netWorth,
-        }));
+      const prices: Record<string, number> = {};
+      for (const rt of state.list()) {
+        const p = priceOf(rt.id);
+        if (p !== null) prices[rt.id] = p;
+      }
+      const ids = new Set([...cashByPlayer.keys(), ...holdingsByPlayer.keys()]);
+      const players = new Map(repos.players.many([...ids]).map((p) => [p.id, p]));
+      const rows = [...ids].map((playerId) => {
+        const pf: Portfolio = {
+          cash: cashByPlayer.get(playerId) ?? params.seasonStartCash,
+          holdings: holdingsByPlayer.get(playerId) ?? {},
+        };
+        return { playerId, netWorth: computeNetWorth(pf, prices) };
+      });
+      rows.sort(
+        (a, b) =>
+          (b.netWorth ?? Number.NEGATIVE_INFINITY) - (a.netWorth ?? Number.NEGATIVE_INFINITY),
+      );
+      return rows.slice(0, limit).map((r, i) => ({
+        rank: i + 1,
+        playerId: r.playerId,
+        handle: players.get(r.playerId)?.handle ?? '?',
+        kind: players.get(r.playerId)?.kind ?? 'human',
+        netWorth: r.netWorth,
+      }));
     },
 
     holders(companyId) {
