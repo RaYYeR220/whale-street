@@ -20,7 +20,16 @@ export interface HlInfo {
   isVault(address: Address): Promise<Maybe<boolean>>;
 }
 
-const n = (v: unknown): number => (typeof v === 'number' ? v : Number(v));
+const n = (v: unknown): number => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : Number.NaN;
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t === '') return Number.NaN;
+    const parsed = Number(t);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  return Number.NaN;
+};
 
 export function createHlInfo(
   o: { url?: string; fetch?: typeof fetch; timeoutMs?: number } = {},
@@ -54,37 +63,44 @@ export function createHlInfo(
     async clearinghouse(user) {
       const r = await post({ type: 'clearinghouseState', user });
       if (!r.ok) return r;
-      const d = r.value as {
-        assetPositions?: Array<{ position: Record<string, unknown> }>;
-        marginSummary?: { accountValue?: unknown };
-        time?: unknown;
-      } | null;
-      const accountValue = n(d?.marginSummary?.accountValue);
-      if (!d || !Number.isFinite(accountValue)) return none('malformed clearinghouseState');
-      const positions: Position[] = [];
-      for (const { position: p } of d.assetPositions ?? []) {
-        const liq = p.liquidationPx;
-        const lev = (p.leverage as { value?: unknown } | undefined)?.value;
-        const pos: Position = {
-          coin: String(p.coin),
-          size: n(p.szi),
-          entryPx: n(p.entryPx),
-          liqPx: liq === null || liq === undefined || liq === '' ? null : n(liq),
-          leverage: n(lev),
-          marginUsed: n(p.marginUsed),
-          unrealizedPnl: n(p.unrealizedPnl),
-        };
-        if (
-          ![pos.size, pos.entryPx, pos.leverage, pos.marginUsed, pos.unrealizedPnl].every(
+      try {
+        const d = r.value as {
+          assetPositions?: unknown;
+          marginSummary?: { accountValue?: unknown };
+          time?: unknown;
+        } | null;
+        const accountValue = n(d?.marginSummary?.accountValue);
+        if (!d || !Number.isFinite(accountValue)) return none('malformed clearinghouseState');
+        const rawPositions = Array.isArray(d.assetPositions) ? d.assetPositions : [];
+        const positions: Position[] = [];
+        for (const entry of rawPositions) {
+          const p = (entry as { position?: unknown } | null)?.position;
+          if (!p || typeof p !== 'object') return none('malformed clearinghouseState');
+          const rec = p as Record<string, unknown>;
+          const coin = rec.coin;
+          if (typeof coin !== 'string' || coin.trim() === '') {
+            return none(`malformed position for ${String(coin)}`);
+          }
+          const size = n(rec.szi);
+          if (size === 0) continue; // HL sometimes lists closed coins at zero size; skip them
+          const liqRaw = rec.liquidationPx;
+          const liqPx = liqRaw === null || liqRaw === undefined || liqRaw === '' ? null : n(liqRaw);
+          const entryPx = n(rec.entryPx);
+          const leverage = n((rec.leverage as { value?: unknown } | undefined)?.value);
+          const marginUsed = n(rec.marginUsed);
+          const unrealizedPnl = n(rec.unrealizedPnl);
+          const numericOk = [size, entryPx, leverage, marginUsed, unrealizedPnl].every(
             Number.isFinite,
-          )
-        ) {
-          return none(`malformed position for ${pos.coin}`);
+          );
+          const liqOk = liqPx === null || (Number.isFinite(liqPx) && liqPx > 0);
+          if (!numericOk || !liqOk) return none(`malformed position for ${coin}`);
+          positions.push({ coin, size, entryPx, liqPx, leverage, marginUsed, unrealizedPnl });
         }
-        positions.push(pos);
+        const time = n(d.time);
+        return some({ positions, accountValue, time: Number.isFinite(time) ? time : null });
+      } catch (e) {
+        return none(`malformed clearinghouseState: ${e instanceof Error ? e.message : String(e)}`);
       }
-      const time = n(d.time);
-      return some({ positions, accountValue, time: Number.isFinite(time) ? time : null });
     },
 
     async isVault(address) {

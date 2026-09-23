@@ -73,4 +73,81 @@ describe('HlInfo', () => {
     const bad = await infoWith([{ status: 500, body: 'boom' }]).isVault(U);
     expect(bad.ok).toBe(false);
   });
+
+  function ethPosition(overrides: Record<string, unknown> = {}) {
+    return {
+      coin: 'ETH',
+      szi: '-2',
+      entryPx: '2500',
+      liquidationPx: null,
+      leverage: { type: 'cross', value: 5 },
+      marginUsed: '1000',
+      unrealizedPnl: '30',
+      ...overrides,
+    };
+  }
+
+  function clearinghouseBody(
+    position: unknown,
+    marginSummary: Record<string, unknown> = { accountValue: '12000.5' },
+  ) {
+    return {
+      assetPositions: [{ type: 'oneWay', position }],
+      marginSummary,
+      time: 1_758_000_000_000,
+    };
+  }
+
+  it('clearinghouse: liquidationPx must be null or a finite number > 0', async () => {
+    for (const liquidationPx of [true, 'N/A', 0]) {
+      const body = clearinghouseBody(ethPosition({ liquidationPx }));
+      const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('clearinghouse: an entry without a usable position object resolves to none, not a rejection', async () => {
+    for (const entry of [{}, { position: null }]) {
+      const body = { assetPositions: [entry], marginSummary: { accountValue: '12000.5' }, time: 1 };
+      const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('clearinghouse: szi must parse to a finite number, not just coerce to 0', async () => {
+    for (const szi of [null, '', false]) {
+      const body = clearinghouseBody(ethPosition({ szi }));
+      const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+      expect(r.ok).toBe(false);
+    }
+  });
+
+  it('clearinghouse: accountValue must parse, not coerce null to 0', async () => {
+    const body = clearinghouseBody(ethPosition(), { accountValue: null });
+    const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+    expect(r.ok).toBe(false);
+  });
+
+  it('clearinghouse: a position without a coin is malformed', async () => {
+    const body = clearinghouseBody(ethPosition({ coin: undefined }));
+    const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+    expect(r.ok).toBe(false);
+  });
+
+  it('clearinghouse: a zero-size row is skipped while other rows are kept', async () => {
+    const body = {
+      assetPositions: [
+        { type: 'oneWay', position: ethPosition({ coin: 'DOGE', szi: '0' }) },
+        { type: 'oneWay', position: ethPosition() },
+      ],
+      marginSummary: { accountValue: '12000.5' },
+      time: 1_758_000_000_000,
+    };
+    const r = await infoWith([{ status: 200, body }]).clearinghouse(U);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.positions).toHaveLength(1);
+      expect(r.value.positions[0]?.coin).toBe('ETH');
+    }
+  });
 });
