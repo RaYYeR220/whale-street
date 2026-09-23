@@ -240,38 +240,46 @@ describe('nav', () => {
     expect(st.nav).toBeCloseTo(before.nav, 10);
   });
 
-  it('a deposit or withdrawal never moves NAV even when interleaved with tickNav calls (flow-neutral)', () => {
+  it('a deposit or withdrawal never moves NAV even when the mark has moved since the last flow (flow-neutral)', () => {
     fc.assert(
       fc.property(
         fc.array(
           fc.record({
             isFlow: fc.boolean(),
             amount: fc.double({ min: -500, max: 5_000, noNaN: true }),
+            mark: fc.double({ min: 80, max: 130, noNaN: true }),
+            reportedU: fc.double({ min: -20, max: 20, noNaN: true }),
           }),
           { minLength: 1, maxLength: 30 },
         ),
         (steps) => {
-          // Reported uPnL (5) equals live uPnL at mark 110 (0.5 · 10), so a tickNav call at
-          // this same mark is a no-op for cum, isolating the effect of flows on NAV.
-          const positions = [pos({ coin: 'BTC', size: 0.5, entryPx: 100, unrealizedPnl: 5 })];
+          const base = pos({ coin: 'BTC', size: 0.5, entryPx: 100, unrealizedPnl: 5 });
           let equity = 2_000;
-          let st = initNav(snap({ positions, accountValue: equity }));
-          // Reference run: identical mark ticks, no flows at all.
-          let stReference = initNav(snap({ positions, accountValue: equity }));
+          let lastMark = 110;
+          let st = initNav(snap({ positions: [base], accountValue: equity }));
           for (const step of steps) {
             if (step.isFlow) {
+              const before = st.nav;
               equity = Math.max(100, equity + step.amount);
-              st = applySnapshot(st, snap({ positions, accountValue: equity }), { BTC: 110 });
-              expect(st.equity).toBeCloseTo(equity, 8);
+              const flowPositions = [{ ...base, unrealizedPnl: step.reportedU }];
+              st = applySnapshot(st, snap({ positions: flowPositions, accountValue: equity }), {
+                BTC: lastMark,
+              });
+              expect(st.nav).toBeCloseTo(before, 10);
             } else {
-              st = tickNav(st, { BTC: 110 });
+              lastMark = step.mark;
+              st = tickNav(st, { BTC: lastMark });
             }
-            stReference = tickNav(stReference, { BTC: 110 });
+            expect(Number.isFinite(st.nav)).toBe(true);
           }
-          expect(st.nav).toBeCloseTo(100, 10);
-          expect(st.nav).toBeCloseTo(stReference.nav, 10);
         },
       ),
     );
+  });
+
+  it('tickNav freezes when the computed cum/equity is non-finite', () => {
+    const huge = snap({ positions: [pos({ coin: 'BTC', size: Number.MAX_VALUE, entryPx: 100 })] });
+    const st0 = initNav(huge);
+    expect(tickNav(st0, { BTC: 110 })).toBe(st0);
   });
 });
