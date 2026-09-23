@@ -1,6 +1,13 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { applySnapshot, initNav, type Position, type Snapshot, tickNav } from '../src/index';
+import {
+  applySnapshot,
+  initNav,
+  type Position,
+  type Snapshot,
+  tickNav,
+  unrealizedAt,
+} from '../src/index';
 
 const ADDR = '0x00000000000000000000000000000000000000aa' as const;
 
@@ -101,5 +108,66 @@ describe('nav', () => {
       { X: 1 },
     );
     expect(st.nav).toBe(0);
+  });
+
+  it('freezes NAV when equity is zero or negative', () => {
+    // Zero equity case
+    const st0 = initNav(
+      snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })], accountValue: 0 }),
+    );
+    expect(st0.nav).toBe(100);
+    const st0_tick = tickNav(st0, { BTC: 150 });
+    expect(st0_tick.nav).toBe(100); // NAV unchanged
+    expect(st0_tick.cumPnl).toBe(50); // but cumPnl updated
+
+    // Negative equity case
+    const st_neg = initNav(
+      snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })], accountValue: -10 }),
+    );
+    expect(st_neg.nav).toBe(100);
+    const st_neg_tick = tickNav(st_neg, { BTC: 150 });
+    expect(st_neg_tick.nav).toBe(100); // NAV unchanged
+    expect(st_neg_tick.cumPnl).toBe(50); // but cumPnl updated
+  });
+
+  it('applySnapshot uses fallback uSnap when mark is missing', () => {
+    // Initial state with open position
+    const open = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: 100, unrealizedPnl: 15 })],
+      accountValue: 1_000,
+    });
+    let st = initNav(open);
+    st = tickNav(st, { BTC: 115 }); // +15 on 1000
+
+    // New snapshot: still open but no mark available
+    const nextSnap = snap({
+      positions: [pos({ coin: 'BTC', size: 1, entryPx: 100, unrealizedPnl: 25 })],
+      realizedSinceAnchor: 0,
+      accountValue: 1_000,
+    });
+    const prevCumPnl = st.cumPnl;
+    const prevEquity = st.equity;
+    st = applySnapshot(st, nextSnap, {}); // BTC mark missing, uses reported uPnL
+
+    expect(st.cumPnl).toBe(25); // realizedSinceAnchor (0) + reported unrealizedPnl (25)
+    const deltaCum = st.cumPnl - prevCumPnl;
+    const expectedNav = 100 * (1 + deltaCum / prevEquity);
+    expect(st.nav).toBeCloseTo(expectedNav, 10);
+  });
+
+  it('unrealizedAt returns null for non-positive or non-finite marks', () => {
+    const positions = [pos({ coin: 'BTC', size: 1, entryPx: 100 })];
+
+    // Zero mark
+    expect(unrealizedAt(positions, { BTC: 0 })).toBeNull();
+
+    // NaN mark
+    expect(unrealizedAt(positions, { BTC: Number.NaN })).toBeNull();
+
+    // Negative mark
+    expect(unrealizedAt(positions, { BTC: -50 })).toBeNull();
+
+    // Infinity mark
+    expect(unrealizedAt(positions, { BTC: Infinity })).toBeNull();
   });
 });
