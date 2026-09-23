@@ -217,6 +217,35 @@ describe('ledger', () => {
     expect(needsAutoCover(h, sh.pool, 200)).toBe(true);
   });
 
+  it('needsAutoCover refuses a non-positive NAV instead of forcing a retry loop', () => {
+    const sh = ok(
+      executeOrder(newPortfolio(), createPool(), { companyId: 'c', side: 'SHORT', qty: 10 }, CTX),
+    );
+    const h = sh.portfolio.holdings.c;
+    if (!h) throw new Error('missing holding');
+    expect(needsAutoCover(h, sh.pool, 0)).toBe(false);
+    expect(needsAutoCover(h, sh.pool, Number.NaN)).toBe(false);
+    expect(needsAutoCover(h, sh.pool, -5)).toBe(false);
+  });
+
+  it('a cover leaving shortQty below EPS sweeps the residual collateral into cash', () => {
+    const pf = {
+      cash: 0,
+      holdings: { c: { longQty: 0, longCost: 0, shortQty: 10, shortCollateral: 1_000_000 } },
+    };
+    const dust = 5e-10;
+    const r = ok(
+      executeOrder(
+        pf,
+        createPool(),
+        { companyId: 'c', side: 'COVER', qty: pf.holdings.c.shortQty - dust },
+        CTX,
+      ),
+    );
+    expect(r.portfolio.holdings.c).toBeUndefined();
+    expect(r.portfolio.cash).toBeCloseTo(pf.cash + pf.holdings.c.shortCollateral - r.fill.cash, 6);
+  });
+
   it('cash never goes negative across random non-forced order sequences', () => {
     const side = fc.constantFrom('BUY', 'SELL', 'SHORT', 'COVER') as fc.Arbitrary<
       'BUY' | 'SELL' | 'SHORT' | 'COVER'

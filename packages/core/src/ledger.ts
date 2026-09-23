@@ -53,7 +53,7 @@ export interface ExecContext {
   nav: number;
   /** Remaining IPO allocation for this player, if the company is in its IPO window. */
   ipoRemainingCash?: number;
-  /** Engine-initiated (auto-cover, settlement): bypasses status and cash checks. */
+  /** Engine-initiated (auto-cover, settlement): bypasses the status check and the COVER cash check. */
   forced?: boolean;
 }
 
@@ -238,6 +238,7 @@ export function needsAutoCover(
   params: Params = PARAMS,
 ): boolean {
   if (h.shortQty <= EPS) return false;
+  if (!(nav > 0)) return false;
   const q = quoteBuy(pool, h.shortQty, nav, params);
   if (!q.ok) return true;
   return q.cash >= params.autoCoverAt * h.shortCollateral;
