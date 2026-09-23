@@ -77,11 +77,23 @@ const PrepareResponse = z.looseObject({
   price: numOrNull,
 });
 const ExecuteResponse = z.looseObject({
-  status: z.string(),
-  response: z
-    .looseObject({ data: z.looseObject({ statuses: z.array(z.unknown()) }).nullish() })
-    .nullish(),
+  status: z.string().nullish(),
+  // A 2xx execute response has been observed with a bare string `response` (e.g. "accepted") as
+  // well as the documented `{ data: { statuses: [...] } }` shape. Accept anything here and pull
+  // `statuses` out defensively below: a 2xx must never turn into ok:false over an unexpected but
+  // harmless response shape.
+  response: z.unknown().optional(),
 });
+
+/** Defensively pulls `statuses` out of an execute response's `response` field. Any shape other
+ * than `{ data: { statuses: [...] } }` yields an empty list rather than an error. */
+function extractStatuses(response: unknown): unknown[] {
+  if (response === null || typeof response !== 'object') return [];
+  const data = (response as { data?: unknown }).data;
+  if (data === null || typeof data !== 'object') return [];
+  const statuses = (data as { statuses?: unknown }).statuses;
+  return Array.isArray(statuses) ? statuses : [];
+}
 
 function toPrepared(j: unknown): PreparedAction {
   const p = PrepareResponse.parse(j);
@@ -181,7 +193,7 @@ export class NansenTrading {
       body,
       (j) => {
         const d = ExecuteResponse.parse(j);
-        return { status: d.status, statuses: d.response?.data?.statuses ?? [] };
+        return { status: d.status ?? 'unknown', statuses: extractStatuses(d.response) };
       },
       { retries: 0 },
     );

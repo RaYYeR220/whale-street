@@ -134,12 +134,11 @@ describe('NansenClient', () => {
     });
   });
 
-  it('empty pnl summary data maps to zeros', async () => {
+  it('missing pnl summary data fails rather than fabricating zeros', async () => {
     const r = await clientWith({ data: null }).perpPnlSummary(A, '2025-09-01', '2026-09-23');
-    expect(r).toMatchObject({
-      ok: true,
-      value: { realizedPnlUsd: 0, closedTrades: 0, topCoins: [] },
-    });
+    expect(r).toMatchObject({ ok: false, error: 'schema: no pnl data' });
+    const r2 = await clientWith({}).perpPnlSummary(A, '2025-09-01', '2026-09-23');
+    expect(r2).toMatchObject({ ok: false, error: 'schema: no pnl data' });
   });
 
   it('perp trades: request shape and timestamp parsing', async () => {

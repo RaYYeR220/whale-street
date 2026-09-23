@@ -178,4 +178,26 @@ describe('NansenTrading', () => {
       value: { status: 'ok', statuses: [{ filled: { oid: 77 } }] },
     });
   });
+
+  it('execute never fails a 2xx response: an unrecognized response shape still yields ok:true with empty statuses', async () => {
+    const t = trading([{ status: 200, body: { status: 'ok', response: 'accepted' } }]);
+    const r = await t.execute({
+      action: {},
+      nonce: 1,
+      signature: { r: '0x1', s: '0x2', v: 28 },
+      vaultAddress: null,
+    });
+    expect(r).toMatchObject({ ok: true, value: { status: 'ok', statuses: [] } });
+  });
+
+  it('execute defaults status to "unknown" when the field is missing', async () => {
+    const t = trading([{ status: 200, body: {} }]);
+    const r = await t.execute({
+      action: {},
+      nonce: 1,
+      signature: { r: '0x1', s: '0x2', v: 28 },
+      vaultAddress: null,
+    });
+    expect(r).toMatchObject({ ok: true, value: { status: 'unknown', statuses: [] } });
+  });
 });

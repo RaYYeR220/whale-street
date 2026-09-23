@@ -142,15 +142,7 @@ export class NansenClient {
       { address, date: { from, to } },
       (j) => {
         const d = PerpPnlSummaryResponse.parse(j).data;
-        if (!d)
-          return {
-            realizedPnlUsd: 0,
-            feesUsd: 0,
-            winRate: 0,
-            closedTrades: 0,
-            tradedTimes: 0,
-            topCoins: [],
-          };
+        if (!d) throw new Error('no pnl data');
         return {
           realizedPnlUsd: d.realized_pnl_usd,
           feesUsd: d.fees_usd,
