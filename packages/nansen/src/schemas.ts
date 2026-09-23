@@ -1,8 +1,23 @@
 import { z } from 'zod';
 
-/** Number that may arrive as a numeric string. */
+/** A plain decimal number string: optional leading `-`, digits, optional fraction, optional
+ * exponent. Rejects hex ("0x10"), empty/whitespace-only strings and any other non-decimal form. */
+const DECIMAL_RE = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
+
+/** Number that may arrive as a numeric string. Strings are trimmed and must match a strict
+ * decimal shape; a malformed string is a schema error, never a silently coerced value. */
 export const num = z.union([z.number(), z.string()]).transform((v, ctx) => {
-  const n = typeof v === 'number' ? v : Number(v);
+  let n: number;
+  if (typeof v === 'number') {
+    n = v;
+  } else {
+    const t = v.trim();
+    if (t === '' || !DECIMAL_RE.test(t)) {
+      ctx.addIssue({ code: 'custom', message: `not a number: ${String(v)}` });
+      return z.NEVER;
+    }
+    n = Number(t);
+  }
   if (!Number.isFinite(n)) {
     ctx.addIssue({ code: 'custom', message: `not a number: ${String(v)}` });
     return z.NEVER;
@@ -10,13 +25,34 @@ export const num = z.union([z.number(), z.string()]).transform((v, ctx) => {
   return n;
 });
 
-/** Nullable number: a missing key, null, undefined or "" become null. `.optional()` sits on the
- * input side so zod treats the object key as optional; the transform still maps undefined → null. */
+/** Nullable number: a missing key, null, undefined, "" or whitespace-only become null.
+ * `.optional()` sits on the input side so zod treats the object key as optional. Any other
+ * non-decimal string (e.g. "0x10") is a schema error, not a silently coerced value. */
 export const numOrNull = z
   .union([z.number(), z.string(), z.null()])
   .optional()
-  .transform((v) => (v === null || v === undefined || v === '' ? null : Number(v)))
-  .refine((v) => v === null || Number.isFinite(v), 'not a number');
+  .transform((v, ctx) => {
+    if (v === null || v === undefined) return null;
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v)) {
+        ctx.addIssue({ code: 'custom', message: `not a number: ${String(v)}` });
+        return z.NEVER;
+      }
+      return v;
+    }
+    const t = v.trim();
+    if (t === '') return null;
+    if (!DECIMAL_RE.test(t)) {
+      ctx.addIssue({ code: 'custom', message: `not a number: ${v}` });
+      return z.NEVER;
+    }
+    const n = Number(t);
+    if (!Number.isFinite(n)) {
+      ctx.addIssue({ code: 'custom', message: `not a number: ${v}` });
+      return z.NEVER;
+    }
+    return n;
+  });
 
 export const PerpPositionSchema = z.looseObject({
   token_symbol: z.string(),
@@ -28,13 +64,30 @@ export const PerpPositionSchema = z.looseObject({
   unrealized_pnl_usd: num,
 });
 
-export const PerpPositionsResponse = z.looseObject({
-  data: z.looseObject({
-    assetPositions: z.array(z.looseObject({ position: PerpPositionSchema })),
-    margin_summary_account_value_usd: num,
-    time: numOrNull,
+/** Nansen's perp-positions payload has been observed with both camelCase and snake_case keys
+ * for `assetPositions`/`time`. Normalize before validating so both spellings map identically;
+ * any other keys pass through untouched. */
+function normalizePerpPositionsPayload(v: unknown): unknown {
+  if (v === null || typeof v !== 'object') return v;
+  const outer = v as Record<string, unknown>;
+  const d = outer.data;
+  if (d === null || typeof d !== 'object') return v;
+  const rec = d as Record<string, unknown>;
+  const assetPositions = 'assetPositions' in rec ? rec.assetPositions : rec.asset_positions;
+  const time = 'time' in rec ? rec.time : rec.timestamp;
+  return { ...outer, data: { ...rec, assetPositions, time } };
+}
+
+export const PerpPositionsResponse = z.preprocess(
+  normalizePerpPositionsPayload,
+  z.looseObject({
+    data: z.looseObject({
+      assetPositions: z.array(z.looseObject({ position: PerpPositionSchema })),
+      margin_summary_account_value_usd: num,
+      time: numOrNull,
+    }),
   }),
-});
+);
 
 export const PerpPnlSummaryResponse = z.looseObject({
   data: z

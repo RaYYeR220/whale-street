@@ -77,6 +77,38 @@ describe('NansenClient', () => {
     ]);
   });
 
+  it('perp positions: a snake_case payload maps identically to the camelCase one', async () => {
+    const position = {
+      position: {
+        token_symbol: 'BTC',
+        size: '1',
+        entry_price_usd: '1',
+        liquidation_price_usd: null,
+        leverage_value: '1',
+        margin_used_usd: '1',
+        unrealized_pnl_usd: '1',
+      },
+    };
+    const rCamel = await clientWith({
+      data: {
+        assetPositions: [position],
+        margin_summary_account_value_usd: '100',
+        time: 1_758_000_000_000,
+      },
+    }).perpPositions(A);
+    const rSnake = await clientWith({
+      data: {
+        asset_positions: [position],
+        margin_summary_account_value_usd: '100',
+        timestamp: 1_758_000_000_000,
+      },
+    }).perpPositions(A);
+    if (!rCamel.ok) throw new Error(rCamel.error);
+    if (!rSnake.ok) throw new Error(rSnake.error);
+    expect(rSnake.value).toEqual(rCamel.value);
+    expect(rCamel.value.time).toBe(1_758_000_000_000);
+  });
+
   it('maps pnl summary and normalizes percentage win rates', async () => {
     const c = clientWith({
       data: {
