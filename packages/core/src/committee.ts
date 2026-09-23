@@ -1,5 +1,6 @@
 import { PARAMS, type Params } from './params';
 import { type Address, type Marks, type Maybe, type Position, RATINGS, type Rating } from './types';
+import { isSanePosition, isValidPx } from './validity';
 
 export interface PnlStats {
   realizedPnlUsd: number;
@@ -77,13 +78,22 @@ const unknown = (id: CheckId, why: string): CheckResult => ({
   status: 'UNKNOWN',
   detail: `evidence unavailable: ${why}`,
 });
-const markOf = (p: Position, marks: Marks) => marks[p.coin] ?? p.entryPx;
+/** Position price = live mark if valid, else the reported entryPx if valid, else unpriceable. */
+function priceOf(p: Position, marks: Marks): number | null {
+  const m = marks[p.coin];
+  if (isValidPx(m)) return m;
+  if (isValidPx(p.entryPx)) return p.entryPx;
+  return null;
+}
 
+/** Notional-weighted average leverage; skips positions with no usable price. */
 export function avgLeverage(positions: readonly Position[], marks: Marks): number {
   let notional = 0;
   let weighted = 0;
   for (const p of positions) {
-    const n = Math.abs(p.size) * markOf(p, marks);
+    const price = priceOf(p, marks);
+    if (price === null) continue;
+    const n = Math.abs(p.size) * price;
     notional += n;
     weighted += n * p.leverage;
   }
@@ -173,74 +183,117 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
   }
 
   // 3. Human trader
-  if (!ev.isVault.ok) checks.push(unknown('HUMAN_TRADER', ev.isVault.error));
-  else if (!ev.pnl.ok) checks.push(unknown('HUMAN_TRADER', ev.pnl.error));
+  if (!ev.pnl.ok) checks.push(unknown('HUMAN_TRADER', ev.pnl.error));
   else if (!ev.firstTradeAt.ok) checks.push(unknown('HUMAN_TRADER', ev.firstTradeAt.error));
-  else if (ev.isVault.value)
-    checks.push({ id: 'HUMAN_TRADER', status: 'FAIL', detail: 'address is a vault' });
   else {
     const days = Math.max(1, history ?? 0);
     const perDay = ev.pnl.value.tradedTimes / days;
     const hold = (days * 1_440) / Math.max(1, ev.pnl.value.closedTrades);
-    const passed = perDay <= c.maxTradesPerDay && hold >= c.minAvgHoldMinutes;
-    checks.push({
-      id: 'HUMAN_TRADER',
-      status: passed ? 'PASS' : 'FAIL',
-      detail: passed
-        ? `${perDay.toFixed(1)} trades/day`
-        : `market-maker profile: ${perDay.toFixed(0)} trades/day, ~${hold.toFixed(1)} min per trade`,
-    });
+    const mmProfile = perDay > c.maxTradesPerDay || hold < c.minAvgHoldMinutes;
+    if (mmProfile) {
+      // A market-maker profile is disqualifying on its own; no need to know isVault.
+      checks.push({
+        id: 'HUMAN_TRADER',
+        status: 'FAIL',
+        detail: `market-maker profile: ${perDay.toFixed(0)} trades/day, ~${hold.toFixed(1)} min per trade`,
+      });
+    } else if (!ev.isVault.ok) {
+      checks.push(unknown('HUMAN_TRADER', ev.isVault.error));
+    } else if (ev.isVault.value) {
+      checks.push({ id: 'HUMAN_TRADER', status: 'FAIL', detail: 'address is a vault' });
+    } else {
+      checks.push({
+        id: 'HUMAN_TRADER',
+        status: 'PASS',
+        detail: `${perDay.toFixed(1)} trades/day`,
+      });
+    }
   }
 
   // 4. Hidden hedge
   if (!ev.positions.ok) checks.push(unknown('HIDDEN_HEDGE', ev.positions.error));
   else if (!ev.linked.ok) checks.push(unknown('HIDDEN_HEDGE', ev.linked.error));
   else {
-    const failedLink = ev.linked.value.find((l) => !l.positions.ok);
-    if (failedLink && !failedLink.positions.ok)
-      checks.push(unknown('HIDDEN_HEDGE', `${failedLink.address}: ${failedLink.positions.error}`));
-    else {
+    const appUnusable = ev.positions.value.some(
+      (p) => p.size !== 0 && (!isSanePosition(p) || priceOf(p, ev.marks) === null),
+    );
+    if (appUnusable) {
+      checks.push(unknown('HIDDEN_HEDGE', 'applicant position data is invalid'));
+    } else {
       const app = new Map<string, { side: number; notional: number }>();
       for (const p of ev.positions.value) {
         if (p.size === 0) continue;
-        app.set(p.coin, {
-          side: Math.sign(p.size),
-          notional: Math.abs(p.size) * markOf(p, ev.marks),
-        });
+        const price = priceOf(p, ev.marks);
+        if (price === null) continue; // unreachable: appUnusable already ruled this out
+        app.set(p.coin, { side: Math.sign(p.size), notional: Math.abs(p.size) * price });
       }
-      const opp = new Map<string, number>();
-      for (const l of ev.linked.value) {
-        if (!l.positions.ok) continue;
-        for (const p of l.positions.value) {
-          const a = app.get(p.coin);
-          if (!a || p.size === 0 || Math.sign(p.size) === a.side) continue;
-          const n = Math.abs(p.size) * markOf(p, ev.marks);
-          opp.set(p.coin, (opp.get(p.coin) ?? 0) + n);
-          hedgeLinks.push({
-            address: l.address,
-            coin: p.coin,
-            side: p.size > 0 ? 'LONG' : 'SHORT',
-            notionalUsd: n,
+
+      const linkedUnusable = ev.linked.value.some(
+        (l) =>
+          l.positions.ok &&
+          l.positions.value.some(
+            (p) =>
+              app.has(p.coin) &&
+              p.size !== 0 &&
+              (!isSanePosition(p) || priceOf(p, ev.marks) === null),
+          ),
+      );
+      if (linkedUnusable) {
+        checks.push(unknown('HIDDEN_HEDGE', 'a linked wallet position is invalid'));
+      } else {
+        const opp = new Map<string, number>();
+        const links: HedgeLink[] = [];
+        for (const l of ev.linked.value) {
+          if (!l.positions.ok) continue;
+          for (const p of l.positions.value) {
+            const a = app.get(p.coin);
+            if (!a || p.size === 0 || Math.sign(p.size) === a.side) continue;
+            const price = priceOf(p, ev.marks);
+            if (price === null) continue; // unreachable: linkedUnusable already ruled this out
+            const n = Math.abs(p.size) * price;
+            opp.set(p.coin, (opp.get(p.coin) ?? 0) + n);
+            links.push({
+              address: l.address,
+              coin: p.coin,
+              side: p.size > 0 ? 'LONG' : 'SHORT',
+              notionalUsd: n,
+            });
+          }
+        }
+        let total = 0;
+        let covered = 0;
+        for (const [coin, a] of app) {
+          total += a.notional;
+          covered += Math.min(a.notional, opp.get(coin) ?? 0);
+        }
+        const ratio = total > 0 ? covered / total : 0;
+        const failed = total > 0 && ratio >= c.hedgeOffsetThreshold;
+        const failedLink = ev.linked.value.find((l) => !l.positions.ok);
+
+        if (failed) {
+          // Monotonic: the offset already proven from the wallets that DID load is enough to
+          // deny, regardless of any other wallet that failed to load.
+          checks.push({
+            id: 'HIDDEN_HEDGE',
+            status: 'FAIL',
+            detail: `${Math.round(ratio * 100)}% of exposure offset by linked wallets`,
+          });
+          hedgeLinks.push(...links);
+        } else if (failedLink && !failedLink.positions.ok) {
+          checks.push(
+            unknown('HIDDEN_HEDGE', `${failedLink.address}: ${failedLink.positions.error}`),
+          );
+        } else {
+          checks.push({
+            id: 'HIDDEN_HEDGE',
+            status: 'PASS',
+            detail:
+              total === 0
+                ? 'no open exposure'
+                : `${Math.round(ratio * 100)}% of exposure offset by linked wallets`,
           });
         }
       }
-      let total = 0;
-      let covered = 0;
-      for (const [coin, a] of app) {
-        total += a.notional;
-        covered += Math.min(a.notional, opp.get(coin) ?? 0);
-      }
-      const ratio = total > 0 ? covered / total : 0;
-      const failed = total > 0 && ratio >= c.hedgeOffsetThreshold;
-      checks.push({
-        id: 'HIDDEN_HEDGE',
-        status: failed ? 'FAIL' : 'PASS',
-        detail:
-          total === 0
-            ? 'no open exposure'
-            : `${Math.round(ratio * 100)}% of exposure offset by linked wallets`,
-      });
-      if (!failed) hedgeLinks.length = 0;
     }
   }
 

@@ -116,6 +116,7 @@ describe('listing committee', () => {
       topCoins: [],
     });
     expect(evaluateListing(mm).checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe('FAIL');
+    expect(evaluateListing(mm).decision).toBe('DENIED');
     expect(evaluateListing({ ...clean(), isVault: some(true) }).decision).toBe('DENIED');
     expect(evaluateListing({ ...clean(), alreadyListed: true }).decision).toBe('DENIED');
     expect(evaluateListing({ ...clean(), cooldownUntil: NOW + DAY }).decision).toBe('DENIED');
@@ -127,6 +128,99 @@ describe('listing committee', () => {
     expect(v.decision).toBe('APPROVED');
     expect(v.checks.find((c) => c.id === 'CONCENTRATION')?.status).toBe('FLAG');
     expect(v.rating).toBe(downgrade(base.rating ?? 'CCC', 2));
+  });
+
+  function hedgedFixture(): ListingEvidence {
+    const ev = clean();
+    ev.linked = some([
+      { address: LINK, relation: 'first_funder', positions: some([pos('BTC', -1.5, 60_000)]) },
+    ]);
+    return ev;
+  }
+
+  it('never approves a hedged cluster when a price or size is corrupted', () => {
+    // NaN mark: falls back to entryPx (still valid), so the hedge is still correctly detected -> DENIED.
+    const nanMark = hedgedFixture();
+    nanMark.marks = { BTC: Number.NaN };
+    expect(evaluateListing(nanMark).decision).not.toBe('APPROVED');
+    expect(evaluateListing(nanMark).decision).toBe('DENIED');
+
+    // Mark of zero: same fallback recovery -> DENIED.
+    const zeroMark = hedgedFixture();
+    zeroMark.marks = { BTC: 0 };
+    expect(evaluateListing(zeroMark).decision).not.toBe('APPROVED');
+    expect(evaluateListing(zeroMark).decision).toBe('DENIED');
+
+    // Negative mark: same fallback recovery -> DENIED.
+    const negMark = hedgedFixture();
+    negMark.marks = { BTC: -60_000 };
+    expect(evaluateListing(negMark).decision).not.toBe('APPROVED');
+    expect(evaluateListing(negMark).decision).toBe('DENIED');
+
+    // NaN applicant size: not sane, no size-based fallback exists -> DEFERRED.
+    const nanAppSize = hedgedFixture();
+    nanAppSize.positions = some([pos('BTC', Number.NaN, 60_000)]);
+    expect(evaluateListing(nanAppSize).decision).not.toBe('APPROVED');
+    expect(evaluateListing(nanAppSize).decision).toBe('DEFERRED');
+
+    // NaN linked size: not sane, no size-based fallback exists -> DEFERRED.
+    const nanLinkedSize = hedgedFixture();
+    nanLinkedSize.linked = some([
+      {
+        address: LINK,
+        relation: 'first_funder',
+        positions: some([pos('BTC', Number.NaN, 60_000)]),
+      },
+    ]);
+    expect(evaluateListing(nanLinkedSize).decision).not.toBe('APPROVED');
+    expect(evaluateListing(nanLinkedSize).decision).toBe('DEFERRED');
+  });
+
+  it('denies a hedged cluster once the wallets that loaded already reach the offset threshold, even if another wallet timed out', () => {
+    const ev = clean();
+    const LINK2 = '0x00000000000000000000000000000000000000c3' as const;
+    ev.linked = some([
+      { address: LINK, relation: 'related', positions: none('timeout') },
+      { address: LINK2, relation: 'first_funder', positions: some([pos('BTC', -1.5, 60_000)]) },
+    ]);
+    const v = evaluateListing(ev);
+    expect(v.decision).toBe('DENIED');
+    expect(v.checks.find((c) => c.id === 'HIDDEN_HEDGE')?.status).toBe('FAIL');
+  });
+
+  it('stays UNKNOWN when a linked wallet times out and the loaded wallets do not yet reach the offset threshold', () => {
+    const ev = clean();
+    const LINK2 = '0x00000000000000000000000000000000000000c4' as const;
+    ev.linked = some([
+      { address: LINK, relation: 'related', positions: none('timeout') },
+      { address: LINK2, relation: 'first_funder', positions: some([pos('BTC', -0.2, 60_000)]) },
+    ]);
+    const v = evaluateListing(ev);
+    expect(v.decision).toBe('DEFERRED');
+    expect(v.checks.find((c) => c.id === 'HIDDEN_HEDGE')?.status).toBe('UNKNOWN');
+  });
+
+  it('HUMAN_TRADER fails on a market-maker profile even when isVault is unavailable', () => {
+    const ev = clean();
+    ev.pnl = some({
+      realizedPnlUsd: 1,
+      feesUsd: 1,
+      winRate: 0.5,
+      closedTrades: 200_000,
+      tradedTimes: 400_000,
+      topCoins: [],
+    });
+    ev.isVault = none('timeout');
+    const v = evaluateListing(ev);
+    expect(v.checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe('FAIL');
+    expect(v.decision).toBe('DENIED');
+  });
+
+  it('HUMAN_TRADER defers (as before) when isVault is unavailable but the profile looks human', () => {
+    const ev = { ...clean(), isVault: none('timeout') };
+    const v = evaluateListing(ev);
+    expect(v.checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe('UNKNOWN');
+    expect(v.decision).toBe('DEFERRED');
   });
 
   it('rating helpers', () => {
