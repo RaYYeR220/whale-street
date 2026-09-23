@@ -45,25 +45,52 @@ export function parseMids(data: unknown): Marks {
   return out;
 }
 
+/** A strict positive decimal: digits, an optional fractional part, no sign, no exponent, no hex.
+ * Used for trade px/sz/time, which must never be silently coerced from a malformed value. */
+const POSITIVE_DECIMAL_RE = /^\d+(\.\d+)?$/;
+
+function strictPositiveNumber(v: unknown): number | null {
+  if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? v : null;
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (t === '' || !POSITIVE_DECIMAL_RE.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim() !== '';
+}
+
 export function parseTrades(data: unknown): HlTrade[] {
   if (!Array.isArray(data)) return [];
   const out: HlTrade[] = [];
   for (const row of data) {
     if (typeof row !== 'object' || row === null) continue;
     const t = row as Record<string, unknown>;
+    if (typeof t.coin !== 'string' || t.coin === '') continue;
+    if (t.side !== 'B' && t.side !== 'A') continue;
+    const px = strictPositiveNumber(t.px);
+    const sz = strictPositiveNumber(t.sz);
+    const time = strictPositiveNumber(t.time);
+    if (px === null || sz === null || time === null) continue;
     const users = t.users;
-    if (!Array.isArray(users) || users.length !== 2) continue;
-    const px = Number(t.px);
-    const sz = Number(t.sz);
-    if (typeof t.coin !== 'string' || !Number.isFinite(px) || !Number.isFinite(sz)) continue;
+    if (
+      !Array.isArray(users) ||
+      users.length !== 2 ||
+      !isNonEmptyString(users[0]) ||
+      !isNonEmptyString(users[1])
+    ) {
+      continue;
+    }
     out.push({
       coin: t.coin,
-      side: t.side === 'B' ? 'B' : 'A',
+      side: t.side,
       px,
       sz,
-      time: Number(t.time),
+      time,
       hash: String(t.hash ?? ''),
-      users: [String(users[0]).toLowerCase(), String(users[1]).toLowerCase()],
+      users: [users[0].toLowerCase(), users[1].toLowerCase()],
     });
   }
   return out;

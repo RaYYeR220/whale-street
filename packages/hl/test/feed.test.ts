@@ -87,6 +87,39 @@ describe('parsers', () => {
       { coin: 'BTC', side: 'B', px: 1, sz: 1, time: 1, hash: 'h', users: ['0x1', '0x2'] },
     ]);
   });
+
+  it('parseTrades skips rows with a side other than B or A', () => {
+    const base = { coin: 'BTC', px: '1', sz: '1', time: 1, hash: 'h', users: ['0x1', '0x2'] };
+    expect(parseTrades([{ ...base, side: 'X' }])).toEqual([]);
+    expect(parseTrades([{ ...base, side: undefined }])).toEqual([]);
+    expect(parseTrades([{ ...base, side: 'b' }])).toEqual([]);
+  });
+
+  it('parseTrades skips rows with px/sz that are not strict positive decimals', () => {
+    const base = { coin: 'BTC', side: 'B', time: 1, hash: 'h', users: ['0x1', '0x2'] };
+    for (const px of ['0', '-1', '0x10', '1e3', '', ' ', 'abc', Number.NaN, null]) {
+      expect(parseTrades([{ ...base, px, sz: '1' }])).toEqual([]);
+    }
+    for (const sz of ['0', '-1', '0x10', '1e3', '', ' ', 'abc', Number.NaN, null]) {
+      expect(parseTrades([{ ...base, px: '1', sz }])).toEqual([]);
+    }
+  });
+
+  it('parseTrades skips rows whose time is not a finite positive number', () => {
+    const base = { coin: 'BTC', side: 'B', px: '1', sz: '1', hash: 'h', users: ['0x1', '0x2'] };
+    for (const time of [0, -1, Number.NaN, null, undefined, '']) {
+      expect(parseTrades([{ ...base, time }])).toEqual([]);
+    }
+  });
+
+  it('parseTrades skips rows whose users are not two non-empty strings', () => {
+    const base = { coin: 'BTC', side: 'B', px: '1', sz: '1', time: 1, hash: 'h' };
+    expect(parseTrades([{ ...base, users: ['0x1'] }])).toEqual([]);
+    expect(parseTrades([{ ...base, users: ['0x1', ''] }])).toEqual([]);
+    expect(parseTrades([{ ...base, users: ['0x1', '  '] }])).toEqual([]);
+    expect(parseTrades([{ ...base, users: ['0x1', 2] }])).toEqual([]);
+    expect(parseTrades([{ ...base, users: null }])).toEqual([]);
+  });
 });
 
 describe('createHlFeed', () => {
