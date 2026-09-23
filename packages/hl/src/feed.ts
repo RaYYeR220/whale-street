@@ -127,17 +127,35 @@ export function createHlFeed(
     status.emit('connecting');
     const sock = factory(url);
     ws = sock;
+    // Liveness watchdog: tracks the last time *any* message (including a pong) arrived on this
+    // socket. A connection that stops responding entirely (dead peer, silently dropped NAT
+    // mapping, etc.) never fires `onclose` on its own, so we force the issue.
+    let lastMsgAt = now();
+    // The backoff exponent is reset only once real traffic has been seen on a socket, not merely
+    // on open: a server that accepts a connection and then immediately closes it (or never speaks)
+    // must not repeatedly reset us back to the fastest retry pace.
+    let gotFirstMessage = false;
     sock.onopen = () => {
       if (ws !== sock) return;
       isOpen = true;
-      attempt = 0;
       status.emit('open');
       send({ method: 'subscribe', subscription: { type: 'allMids' } });
       for (const c of coins) sub(c);
-      pingTimer = setInterval(() => send({ method: 'ping' }), pingMs);
+      pingTimer = setInterval(() => {
+        if (now() - lastMsgAt > 2 * pingMs) {
+          sock.close();
+          return;
+        }
+        send({ method: 'ping' });
+      }, pingMs);
     };
     sock.onmessage = (ev) => {
       if (ws !== sock) return;
+      lastMsgAt = now();
+      if (!gotFirstMessage) {
+        gotFirstMessage = true;
+        attempt = 0;
+      }
       let msg: { channel?: unknown; data?: unknown };
       try {
         msg = JSON.parse(String(ev.data));

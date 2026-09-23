@@ -216,6 +216,68 @@ describe('createHlFeed', () => {
     expect(mids).toEqual([]);
   });
 
+  it('closes and reconnects the socket if no message (including pong) arrives for over 2x pingMs', () => {
+    const feed = createHlFeed({
+      wsFactory: (u) => new FakeWs(u),
+      pingMs: 1_000,
+      reconnectBaseMs: 10,
+    });
+    feed.start();
+    latest().open();
+    expect(FakeWs.all).toHaveLength(1);
+    vi.advanceTimersByTime(1_000); // elapsed 1_000: within budget, sends a ping
+    expect(latest().sent).toContainEqual({ method: 'ping' });
+    expect(FakeWs.all).toHaveLength(1);
+    vi.advanceTimersByTime(1_000); // elapsed 2_000: not yet strictly over 2x pingMs
+    expect(FakeWs.all).toHaveLength(1);
+    vi.advanceTimersByTime(1_000); // elapsed 3_000: over budget, watchdog closes the socket
+    expect(FakeWs.all).toHaveLength(1);
+    vi.advanceTimersByTime(10); // reconnect fires after the base backoff delay
+    expect(FakeWs.all).toHaveLength(2);
+  });
+
+  it('a pong message counts as liveness and keeps the watchdog from tripping', () => {
+    const feed = createHlFeed({
+      wsFactory: (u) => new FakeWs(u),
+      pingMs: 1_000,
+      reconnectBaseMs: 10,
+    });
+    feed.start();
+    latest().open();
+    vi.advanceTimersByTime(1_000);
+    latest().emit({ channel: 'pong' }); // resets lastMsgAt
+    vi.advanceTimersByTime(1_000);
+    expect(FakeWs.all).toHaveLength(1);
+    vi.advanceTimersByTime(1_000);
+    // elapsed since the pong is now 2_000: still within budget, no reconnect yet
+    expect(FakeWs.all).toHaveLength(1);
+  });
+
+  it('does not reset the backoff exponent merely on open, only after the first message', () => {
+    const feed = createHlFeed({
+      wsFactory: (u) => new FakeWs(u),
+      reconnectBaseMs: 100,
+      reconnectMaxMs: 100_000,
+    });
+    feed.start();
+    latest().open();
+    latest().close(); // opened without ever receiving a message; attempt 0 -> delay 100
+    vi.advanceTimersByTime(100);
+    expect(FakeWs.all).toHaveLength(2);
+    latest().open();
+    latest().close(); // again no message; attempt 1 -> delay 200
+    vi.advanceTimersByTime(199);
+    expect(FakeWs.all).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(FakeWs.all).toHaveLength(3);
+    latest().open();
+    latest().close(); // again no message; attempt 2 -> delay 400
+    vi.advanceTimersByTime(399);
+    expect(FakeWs.all).toHaveLength(3);
+    vi.advanceTimersByTime(1);
+    expect(FakeWs.all).toHaveLength(4);
+  });
+
   it('stop() resets the reconnect backoff exponent', () => {
     // Never opens any socket, so `attempt` can only be reset by stop() itself,
     // not by the onopen handler (which also resets it to 0).
