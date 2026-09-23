@@ -28,6 +28,16 @@ describe('amm', () => {
     expect(multiplier(q.pool)).toBeGreaterThan(1);
   });
 
+  it('sell proceeds match the formula', () => {
+    const p = createPool(1_000);
+    const q = quoteSell(p, 100, 50);
+    if (!q.ok) throw new Error(q.error);
+    const y2 = (1_000 * 1_000) / 1_100;
+    expect(q.cash).toBeCloseTo(50 * (1_000 - y2) * (1 - PARAMS.feeRate), 8);
+    expect(q.pool.x).toBe(1_100);
+    expect(multiplier(q.pool)).toBeLessThan(1);
+  });
+
   it('rejects bad input and draining below the reserve floor', () => {
     const p = createPool(1_000);
     expect(quoteBuy(p, 0, 10)).toEqual({ ok: false, error: 'INVALID_QTY' });

@@ -1,6 +1,7 @@
-import { type AmmError, multiplier, type Pool, quoteBuy, quoteSell } from './amm';
+import { type AmmError, multiplier, type Pool, quoteBuy, quoteSell, sharePrice } from './amm';
 import { PARAMS, type Params } from './params';
 import type { CompanyStatus } from './types';
+import { isValidPx } from './validity';
 
 export interface Holding {
   longQty: number;
@@ -43,6 +44,8 @@ export interface Fill {
   nav: number;
   multiplierBefore: number;
   multiplierAfter: number;
+  /** 0 unless a forced COVER's cost exceeded the released collateral; the excess, written off. */
+  writeOffUsd: number;
 }
 
 export interface ExecContext {
@@ -80,6 +83,17 @@ function withHolding(pf: Portfolio, companyId: string, h: Holding, cash: number)
   return { cash, holdings };
 }
 
+/**
+ * Once a short shrinks below EPS, any stray collateral (e.g. float dust from a partial cover)
+ * is swept into cash and zeroed rather than silently dropped when the holding is cleaned up.
+ */
+function sweepShortDust(h: Holding, cash: number): { holding: Holding; cash: number } {
+  if (h.shortQty < EPS && h.shortCollateral !== 0) {
+    return { holding: { ...h, shortQty: 0, shortCollateral: 0 }, cash: cash + h.shortCollateral };
+  }
+  return { holding: h, cash };
+}
+
 export function executeOrder(
   pf: Portfolio,
   pool: Pool,
@@ -91,7 +105,7 @@ export function executeOrder(
   if (!Number.isFinite(order.qty) || order.qty <= 0) return reject('INVALID_QTY');
   const h = pf.holdings[order.companyId] ?? EMPTY_HOLDING;
   const muBefore = multiplier(pool);
-  const fill = (qty: number, cash: number, next: Pool): Fill => ({
+  const fill = (qty: number, cash: number, next: Pool, writeOffUsd = 0): Fill => ({
     companyId: order.companyId,
     side: order.side,
     qty,
@@ -100,6 +114,7 @@ export function executeOrder(
     nav: ctx.nav,
     multiplierBefore: muBefore,
     multiplierAfter: multiplier(next),
+    writeOffUsd,
   });
 
   switch (order.side) {
@@ -107,7 +122,7 @@ export function executeOrder(
       if (h.shortQty > EPS) return reject('COVER_SHORT_FIRST');
       const q = quoteBuy(pool, order.qty, ctx.nav, params);
       if (!q.ok) return reject(fromAmm(q.error));
-      if (!ctx.forced && q.cash > pf.cash + EPS) return reject('INSUFFICIENT_CASH');
+      if (q.cash > pf.cash + EPS) return reject('INSUFFICIENT_CASH');
       if (ctx.ipoRemainingCash !== undefined && q.cash > ctx.ipoRemainingCash + EPS) {
         return reject('IPO_ALLOCATION_EXCEEDED');
       }
@@ -139,7 +154,7 @@ export function executeOrder(
       if (!q.ok) return reject(fromAmm(q.error));
       const m = params.shortCollateralMultiple;
       const matching = (m - 1) * q.cash;
-      if (!ctx.forced && matching > pf.cash + EPS) return reject('INSUFFICIENT_CASH');
+      if (matching > pf.cash + EPS) return reject('INSUFFICIENT_CASH');
       const next: Holding = {
         ...h,
         shortQty: h.shortQty + order.qty,
@@ -156,33 +171,63 @@ export function executeOrder(
       if (h.shortQty < order.qty - EPS) return reject('INSUFFICIENT_SHARES');
       const qty = Math.min(order.qty, h.shortQty);
       const q = quoteBuy(pool, qty, ctx.nav, params);
-      if (!q.ok) return reject(fromAmm(q.error));
+      let cost: number;
+      let nextPool: Pool;
+      if (q.ok) {
+        cost = q.cash;
+        nextPool = q.pool;
+      } else if (ctx.forced && q.error === 'INSUFFICIENT_LIQUIDITY') {
+        // The AMM floor can't quote this buy-back; fall back to the NAV share price so a
+        // forced auto-cover can never dead-end. The pool itself is left untouched.
+        cost = sharePrice(ctx.nav, pool) * qty * (1 + params.feeRate);
+        nextPool = pool;
+      } else {
+        return reject(fromAmm(q.error));
+      }
       const released = h.shortCollateral * (qty / h.shortQty);
-      const net = released - q.cash;
-      if (!ctx.forced && pf.cash + net < -EPS) return reject('INSUFFICIENT_CASH');
-      const cash = Math.max(0, pf.cash + net);
-      const next: Holding = {
+
+      let cash: number;
+      let writeOffUsd = 0;
+      if (ctx.forced) {
+        // A short's loss is capped at its collateral whenever the engine forces the outcome:
+        // any cost beyond what was released is written off, never drawn from free cash.
+        writeOffUsd = Math.max(0, cost - released);
+        cash = pf.cash + Math.max(0, released - cost);
+      } else {
+        const net = released - cost;
+        if (pf.cash + net < -EPS) return reject('INSUFFICIENT_CASH');
+        cash = Math.max(0, pf.cash + net);
+      }
+
+      const rawNext: Holding = {
         ...h,
         shortQty: h.shortQty - qty,
         shortCollateral: h.shortCollateral - released,
       };
+      const swept = sweepShortDust(rawNext, cash);
       return {
         ok: true,
-        portfolio: withHolding(pf, order.companyId, next, cash),
-        pool: q.pool,
-        fill: fill(qty, q.cash, q.pool),
+        portfolio: withHolding(pf, order.companyId, swept.holding, swept.cash),
+        pool: nextPool,
+        fill: fill(qty, cost, nextPool, writeOffUsd),
       };
     }
   }
 }
 
+/** A short's loss is capped at its collateral, same as settleHolding. */
 export function holdingValue(h: Holding, price: number): number {
-  return h.longQty * price + (h.shortCollateral - h.shortQty * price);
+  return h.longQty * price + Math.max(0, h.shortCollateral - h.shortQty * price);
 }
 
-export function netWorth(pf: Portfolio, prices: Readonly<Record<string, number>>): number {
+/** null if any held company's price is missing or invalid, rather than silently pricing it at 0. */
+export function netWorth(pf: Portfolio, prices: Readonly<Record<string, number>>): number | null {
   let total = pf.cash;
-  for (const [id, h] of Object.entries(pf.holdings)) total += holdingValue(h, prices[id] ?? 0);
+  for (const [id, h] of Object.entries(pf.holdings)) {
+    const price = prices[id];
+    if (!isValidPx(price)) return null;
+    total += holdingValue(h, price);
+  }
   return total;
 }
 

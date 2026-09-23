@@ -4,6 +4,7 @@ import {
   createPool,
   type ExecContext,
   executeOrder,
+  holdingValue,
   needsAutoCover,
   netWorth,
   newPortfolio,
@@ -105,6 +106,105 @@ describe('ledger', () => {
     );
     const price = sharePrice(100, b.pool);
     expect(netWorth(b.portfolio, { c: price })).toBeCloseTo(b.portfolio.cash + 10 * price, 8);
+  });
+
+  it('netWorth accounts for a short position', () => {
+    const sh = ok(
+      executeOrder(newPortfolio(), createPool(), { companyId: 'c', side: 'SHORT', qty: 10 }, CTX),
+    );
+    const h = sh.portfolio.holdings.c;
+    if (!h) throw new Error('missing holding');
+    const price = sharePrice(100, sh.pool);
+    expect(netWorth(sh.portfolio, { c: price })).toBeCloseTo(
+      sh.portfolio.cash + holdingValue(h, price),
+      8,
+    );
+  });
+
+  it('netWorth is null when a held company has no valid price', () => {
+    const b = ok(
+      executeOrder(newPortfolio(), createPool(), { companyId: 'c', side: 'BUY', qty: 10 }, CTX),
+    );
+    expect(netWorth(b.portfolio, {})).toBeNull();
+    expect(netWorth(b.portfolio, { c: Number.NaN })).toBeNull();
+    expect(netWorth(b.portfolio, { c: 0 })).toBeNull();
+    expect(netWorth(b.portfolio, { c: -5 })).toBeNull();
+  });
+
+  it('holdingValue caps a blown short at zero (never negative)', () => {
+    expect(holdingValue({ longQty: 0, longCost: 0, shortQty: 10, shortCollateral: 100 }, 50)).toBe(
+      0,
+    );
+    expect(holdingValue({ longQty: 5, longCost: 0, shortQty: 10, shortCollateral: 100 }, 50)).toBe(
+      5 * 50 + 0,
+    );
+  });
+
+  it('forced COVER with a shortfall writes off the excess without touching cash', () => {
+    const sh = ok(
+      executeOrder(newPortfolio(), createPool(), { companyId: 'c', side: 'SHORT', qty: 100 }, CTX),
+    );
+    const cashBeforeCover = sh.portfolio.cash;
+    const h = sh.portfolio.holdings.c;
+    if (!h) throw new Error('missing holding');
+    const highNav = 300; // a big adverse move: buy-back cost now exceeds the locked collateral
+    const q = quoteBuy(sh.pool, h.shortQty, highNav);
+    if (!q.ok) throw new Error(q.error);
+    expect(q.cash).toBeGreaterThan(h.shortCollateral); // sanity: this really is a shortfall
+
+    const r = ok(
+      executeOrder(
+        sh.portfolio,
+        sh.pool,
+        { companyId: 'c', side: 'COVER', qty: 100 },
+        { status: 'ACTIVE', nav: highNav, forced: true },
+      ),
+    );
+    expect(r.fill.writeOffUsd).toBeCloseTo(q.cash - h.shortCollateral, 6);
+    expect(r.portfolio.cash).toBeCloseTo(cashBeforeCover, 8); // cash untouched by the shortfall
+    expect(r.portfolio.holdings.c).toBeUndefined(); // fully covered, dust swept
+  });
+
+  it('forced COVER falls back to the share price and leaves the pool unchanged when the floor blocks the quote', () => {
+    const pool = { x: 300, y: 5_000, l0: 5_000 }; // near the 5% floor of a 5,000-depth pool
+    const pf = {
+      cash: 0,
+      holdings: { c: { longQty: 0, longCost: 0, shortQty: 100, shortCollateral: 50_000 } },
+    };
+    expect(quoteBuy(pool, 100, 100)).toEqual({ ok: false, error: 'INSUFFICIENT_LIQUIDITY' });
+
+    const r = ok(
+      executeOrder(
+        pf,
+        pool,
+        { companyId: 'c', side: 'COVER', qty: 100 },
+        { status: 'ACTIVE', nav: 100, forced: true },
+      ),
+    );
+    expect(r.pool).toEqual(pool); // pool untouched
+    const expectedCost = sharePrice(100, pool) * 100 * (1 + PARAMS.feeRate);
+    expect(r.fill.cash).toBeCloseTo(expectedCost, 8);
+    expect(r.portfolio.holdings.c).toBeUndefined();
+  });
+
+  it('forced BUY and SHORT still require cash', () => {
+    const pool = createPool();
+    expect(
+      executeOrder(
+        newPortfolio(0),
+        pool,
+        { companyId: 'c', side: 'BUY', qty: 5 },
+        { status: 'HALTED', nav: 100, forced: true },
+      ),
+    ).toEqual({ ok: false, reason: 'INSUFFICIENT_CASH' });
+    expect(
+      executeOrder(
+        newPortfolio(0),
+        pool,
+        { companyId: 'c', side: 'SHORT', qty: 5 },
+        { status: 'HALTED', nav: 100, forced: true },
+      ),
+    ).toEqual({ ok: false, reason: 'INSUFFICIENT_CASH' });
   });
 
   it('needsAutoCover triggers when buy-back cost reaches 95% of collateral', () => {
