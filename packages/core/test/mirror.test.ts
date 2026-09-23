@@ -123,4 +123,54 @@ describe('mirror policy', () => {
     );
     expect(d.allow || d.refusals.map((r) => r.code)).toEqual(['LEVERAGE_CAP']);
   });
+
+  it('fails closed on NaN in numeric guards', () => {
+    // NaN in hp should refuse NEAR_LIQUIDATION
+    const nanHp = evaluateMirror(req(), ctx({ hp: Number.NaN }));
+    expect(nanHp.allow).toBe(false);
+    if (!nanHp.allow) {
+      expect(nanHp.refusals.find((r) => r.code === 'NEAR_LIQUIDATION')).toBeDefined();
+    }
+
+    // NaN in snapshotAgeMs should refuse STALE_DATA
+    const nanSnapshot = evaluateMirror(req(), ctx({ snapshotAgeMs: Number.NaN }));
+    expect(nanSnapshot.allow).toBe(false);
+    if (!nanSnapshot.allow) {
+      expect(nanSnapshot.refusals.find((r) => r.code === 'STALE_DATA')).toBeDefined();
+    }
+
+    // NaN in playerOpenMirrors should refuse TOO_MANY_OPEN
+    const nanOpenMirrors = evaluateMirror(req(), ctx({ playerOpenMirrors: Number.NaN }));
+    expect(nanOpenMirrors.allow).toBe(false);
+    if (!nanOpenMirrors.allow) {
+      expect(nanOpenMirrors.refusals.find((r) => r.code === 'TOO_MANY_OPEN')).toBeDefined();
+    }
+
+    // NaN in playerDailyNotionalUsd should refuse DAILY_CAP
+    const nanDaily = evaluateMirror(req(), ctx({ playerDailyNotionalUsd: Number.NaN }));
+    expect(nanDaily.allow).toBe(false);
+    if (!nanDaily.allow) {
+      expect(nanDaily.refusals.find((r) => r.code === 'DAILY_CAP')).toBeDefined();
+    }
+
+    // NaN in traderPosition.entryPx should refuse ANTI_FOMO
+    const nanEntryPx = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: 100,
+          entryPx: Number.NaN,
+          liqPx: 30,
+          leverage: 10,
+          marginUsed: 400,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    expect(nanEntryPx.allow).toBe(false);
+    if (!nanEntryPx.allow) {
+      expect(nanEntryPx.refusals.find((r) => r.code === 'ANTI_FOMO')).toBeDefined();
+    }
+  });
 });

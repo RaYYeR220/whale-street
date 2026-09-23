@@ -65,7 +65,7 @@ export function evaluateMirror(
 
   if (ctx.companyStatus !== 'ACTIVE')
     refuse('COMPANY_NOT_ACTIVE', `company is ${ctx.companyStatus.toLowerCase()}`);
-  if (ctx.snapshotAgeMs > m.maxSnapshotAgeMs)
+  if (!(ctx.snapshotAgeMs <= m.maxSnapshotAgeMs))
     refuse('STALE_DATA', 'trader data is older than 60 seconds');
   if (!ctx.coinSupported)
     refuse('COIN_UNSUPPORTED', `${req.coin} cannot be traded through the Nansen Trading API`);
@@ -75,9 +75,9 @@ export function evaluateMirror(
       `size must be between $${m.minNotionalUsd} and $${m.maxNotionalUsd}`,
     );
   }
-  if (ctx.playerOpenMirrors >= m.maxOpen)
+  if (!(ctx.playerOpenMirrors < m.maxOpen))
     refuse('TOO_MANY_OPEN', `at most ${m.maxOpen} open mirrors`);
-  if (ctx.playerDailyNotionalUsd + req.notionalUsd > m.dailyCapUsd)
+  if (!(ctx.playerDailyNotionalUsd + req.notionalUsd <= m.dailyCapUsd))
     refuse('DAILY_CAP', `daily mirror cap is $${m.dailyCapUsd}`);
   if (!(slPct > 0 && slPct <= m.maxStopLossPct)) {
     refuse(
@@ -85,8 +85,13 @@ export function evaluateMirror(
       `stop-loss must risk at most ${Math.round(m.maxStopLossPct * 100)}% of margin`,
     );
   }
-  if (ctx.hp < m.minHp)
-    refuse('NEAR_LIQUIDATION', `trader is ${Math.round(ctx.hp * 100)}% from liquidation`);
+  if (!(ctx.hp >= m.minHp))
+    refuse(
+      'NEAR_LIQUIDATION',
+      Number.isFinite(ctx.hp)
+        ? `trader is ${Math.round(ctx.hp * 100)}% from liquidation`
+        : 'health data unavailable',
+    );
 
   const tp = ctx.traderPosition;
   if (!tp || tp.size === 0) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
@@ -101,10 +106,12 @@ export function evaluateMirror(
       const adverse = long
         ? (ctx.mark - tp.entryPx) / tp.entryPx
         : (tp.entryPx - ctx.mark) / tp.entryPx;
-      if (adverse >= m.antiFomoPct) {
+      if (!(adverse < m.antiFomoPct)) {
         refuse(
           'ANTI_FOMO',
-          `you'd enter ${(adverse * 100).toFixed(1)}% worse than the trader — that's how FOMO loses money`,
+          Number.isFinite(adverse)
+            ? `you'd enter ${(adverse * 100).toFixed(1)}% worse than the trader — that's how FOMO loses money`
+            : 'cannot compare with the trader entry price',
         );
       }
     }
