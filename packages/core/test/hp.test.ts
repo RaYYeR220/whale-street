@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { computeHp, marginCallCrossed, type Position, positionHp } from '../src/index';
+import {
+  computeHp,
+  computeHpStrict,
+  marginCallCrossed,
+  type Position,
+  positionHp,
+} from '../src/index';
 
 const long: Position = {
   coin: 'BTC',
@@ -42,6 +48,28 @@ describe('hp', () => {
     expect(computeHp([long, short], { BTC: 90, ETH: 105 })).toBeCloseTo(0.5, 10);
     expect(computeHp([long, short], { ETH: 105 })).toBeCloseTo(0.75, 10);
     expect(computeHp([], {})).toBe(1);
+  });
+
+  it('computeHp also ignores a mark of zero or negative (invalid px)', () => {
+    expect(computeHp([long, short], { BTC: 0, ETH: 105 })).toBeCloseTo(0.75, 10);
+    expect(computeHp([long, short], { BTC: -10, ETH: 105 })).toBeCloseTo(0.75, 10);
+  });
+
+  it('computeHpStrict is null when any position lacks a valid mark', () => {
+    expect(computeHpStrict([long, short], { BTC: 90 })).toBeNull();
+    expect(computeHpStrict([long, short], { BTC: 90, ETH: 0 })).toBeNull();
+    expect(computeHpStrict([long, short], {})).toBeNull();
+  });
+
+  it('computeHpStrict is null when any position is not sane', () => {
+    expect(computeHpStrict([{ ...long, size: 0 }, short], { BTC: 90, ETH: 105 })).toBeNull();
+  });
+
+  it('computeHpStrict equals computeHp when every position has a valid mark', () => {
+    expect(computeHpStrict([long, short], { BTC: 90, ETH: 105 })).toBe(
+      computeHp([long, short], { BTC: 90, ETH: 105 }),
+    );
+    expect(computeHpStrict([], {})).toBe(1);
   });
 
   it('detects a downward margin-call crossing only', () => {
