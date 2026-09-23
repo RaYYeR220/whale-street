@@ -44,6 +44,9 @@ describe('parsers', () => {
     });
     expect(parseMids(null)).toEqual({});
   });
+  it('parseMids rejects boolean values', () => {
+    expect(parseMids({ mids: { BTC: true, ETH: '5' } })).toEqual({ ETH: 5 });
+  });
   it('parseTrades maps and lowercases users', () => {
     const t = parseTrades([
       {
@@ -69,6 +72,20 @@ describe('parsers', () => {
       },
     ]);
     expect(parseTrades('nope')).toEqual([]);
+  });
+  it('parseTrades skips null and other non-object rows', () => {
+    const valid = {
+      coin: 'BTC',
+      side: 'B',
+      px: '1',
+      sz: '1',
+      time: 1,
+      hash: 'h',
+      users: ['0x1', '0x2'],
+    };
+    expect(parseTrades([null, 5, 'x', valid])).toEqual([
+      { coin: 'BTC', side: 'B', px: 1, sz: 1, time: 1, hash: 'h', users: ['0x1', '0x2'] },
+    ]);
   });
 });
 
@@ -154,5 +171,59 @@ describe('createHlFeed', () => {
     feed.stop();
     vi.advanceTimersByTime(10_000);
     expect(FakeWs.all).toHaveLength(1);
+  });
+
+  it('ignores messages from a superseded socket after reconnect', () => {
+    const feed = createHlFeed({ wsFactory: (u) => new FakeWs(u), reconnectBaseMs: 10 });
+    const mids: unknown[] = [];
+    feed.onMids((m) => mids.push(m));
+    feed.start();
+    const sock1 = latest();
+    sock1.open();
+    sock1.close();
+    vi.advanceTimersByTime(10);
+    const sock2 = latest();
+    expect(sock2).not.toBe(sock1);
+    sock1.emit({ channel: 'allMids', data: { mids: { ETH: '1' } } });
+    expect(mids).toEqual([]);
+    sock2.open();
+    sock2.emit({ channel: 'allMids', data: { mids: { BTC: '1' } } });
+    expect(mids).toEqual([{ BTC: 1 }]);
+  });
+
+  it('ignores a late message on a socket after stop()', () => {
+    const feed = createHlFeed({ wsFactory: (u) => new FakeWs(u) });
+    const mids: unknown[] = [];
+    feed.onMids((m) => mids.push(m));
+    feed.start();
+    const sock = latest();
+    sock.open();
+    feed.stop();
+    sock.emit({ channel: 'allMids', data: { mids: { BTC: '1' } } });
+    expect(mids).toEqual([]);
+  });
+
+  it('stop() resets the reconnect backoff exponent', () => {
+    // Never opens any socket, so `attempt` can only be reset by stop() itself,
+    // not by the onopen handler (which also resets it to 0).
+    const feed = createHlFeed({
+      wsFactory: (u) => new FakeWs(u),
+      reconnectBaseMs: 100,
+      reconnectMaxMs: 100_000,
+    });
+    feed.start();
+    latest().close(); // attempt 0 -> delay 100, attempt becomes 1
+    vi.advanceTimersByTime(100);
+    expect(FakeWs.all).toHaveLength(2);
+    latest().close(); // attempt 1 -> delay 200, attempt becomes 2; reconnect not yet fired
+    feed.stop(); // cancels the pending 200ms reconnect and should reset attempt to 0
+    expect(FakeWs.all).toHaveLength(2);
+    feed.start(); // reconnects immediately
+    expect(FakeWs.all).toHaveLength(3);
+    latest().close(); // if attempt was reset, delay is 100 again (not 400)
+    vi.advanceTimersByTime(99);
+    expect(FakeWs.all).toHaveLength(3);
+    vi.advanceTimersByTime(1);
+    expect(FakeWs.all).toHaveLength(4);
   });
 });

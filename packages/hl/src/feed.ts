@@ -38,8 +38,9 @@ export function parseMids(data: unknown): Marks {
   const out: Record<string, number> = {};
   for (const [coin, v] of Object.entries(mids as Record<string, unknown>)) {
     if (coin.startsWith('@')) continue;
+    if (typeof v !== 'number' && typeof v !== 'string') continue;
     const n = typeof v === 'number' ? v : Number(v);
-    if (typeof v !== 'object' && Number.isFinite(n) && n > 0) out[coin] = n;
+    if (Number.isFinite(n) && n > 0) out[coin] = n;
   }
   return out;
 }
@@ -47,7 +48,9 @@ export function parseMids(data: unknown): Marks {
 export function parseTrades(data: unknown): HlTrade[] {
   if (!Array.isArray(data)) return [];
   const out: HlTrade[] = [];
-  for (const t of data as Array<Record<string, unknown>>) {
+  for (const row of data) {
+    if (typeof row !== 'object' || row === null) continue;
+    const t = row as Record<string, unknown>;
     const users = t.users;
     if (!Array.isArray(users) || users.length !== 2) continue;
     const px = Number(t.px);
@@ -134,6 +137,7 @@ export function createHlFeed(
       pingTimer = setInterval(() => send({ method: 'ping' }), pingMs);
     };
     sock.onmessage = (ev) => {
+      if (ws !== sock) return;
       let msg: { channel?: unknown; data?: unknown };
       try {
         msg = JSON.parse(String(ev.data));
@@ -178,6 +182,7 @@ export function createHlFeed(
     },
     stop() {
       running = false;
+      attempt = 0;
       clearTimers();
       const sock = ws;
       ws = null;
