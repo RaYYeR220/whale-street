@@ -29,6 +29,12 @@ importers:
 
   packages/core: {}
 
+  packages/hl:
+    dependencies:
+      '@whale-street/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/nansen:
     dependencies:
       '@whale-street/core':
