@@ -45,6 +45,21 @@ describe('recorder', () => {
     expect(JSON.stringify(recs)).not.toContain('secret');
   });
 
+  it('rebuilds a null-body status (204) instead of throwing on a body-bearing Response', async () => {
+    const recs: NansenRecord[] = [];
+    const inner = (async () => new Response(null, { status: 204 })) as unknown as typeof fetch;
+    const f = recordingFetch(
+      inner,
+      (r) => recs.push(r),
+      () => 1,
+    );
+    const res = await f('https://api.nansen.ai/api/v1/z', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(204);
+    expect(recs).toEqual([
+      { t: 1, k: 'nansen', key: 'POST /api/v1/z {}', path: '/api/v1/z', status: 204, body: null },
+    ]);
+  });
+
   it('replays the latest record at or before now, earliest otherwise, 503 when missing', async () => {
     const key = 'POST /api/v1/y {"a":1}';
     const recs: NansenRecord[] = [

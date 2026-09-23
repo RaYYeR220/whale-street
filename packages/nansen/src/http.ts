@@ -38,12 +38,15 @@ export interface RequestOptions {
   query?: Record<string, string>;
 }
 
+/** Caps how long we'll honor a server-supplied Retry-After header, so a misbehaving or hostile
+ * response can't stall a caller indefinitely. */
+const MAX_RETRY_AFTER_MS = 60_000;
+
 export const DEFAULT_ENDPOINT_LIMITS: Record<string, WindowLimit[]> = {
   '/api/v1/profiler/perp-trades': [{ limit: 5, windowMs: 60_000 }],
 };
 
-let counter = 0;
-const nextId = () => `nc_${(++counter).toString(36)}_${randomUUID().replace(/-/g, '').slice(0, 6)}`;
+const nextId = () => `nc_${randomUUID()}`;
 
 function messageOf(text: string): string {
   try {
@@ -57,6 +60,11 @@ function messageOf(text: string): string {
 }
 
 export class NansenHttp {
+  // True (ES) private fields: unlike `private` (a TypeScript-only annotation), these are excluded
+  // from JSON.stringify, Object.keys/entries and util.inspect, so the api key never leaks via
+  // logging or serializing an instance.
+  #apiKey: string;
+  #onCall: ((r: CallRecord) => void) | undefined;
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly clock: Clock;
@@ -65,7 +73,9 @@ export class NansenHttp {
   private readonly global: RateLimiter;
   private readonly perEndpoint = new Map<string, RateLimiter>();
 
-  constructor(private readonly o: NansenHttpOptions) {
+  constructor(o: NansenHttpOptions) {
+    this.#apiKey = o.apiKey;
+    this.#onCall = o.onCall;
     this.baseUrl = o.baseUrl ?? 'https://api.nansen.ai';
     this.fetchImpl = o.fetch ?? fetch;
     this.clock = o.clock ?? realClock;
@@ -105,7 +115,7 @@ export class NansenHttp {
       responseHash: string | null,
       started: number,
     ): ApiResult<T> => {
-      this.o.onCall?.({
+      this.#onCall?.({
         id,
         method,
         path,
@@ -132,7 +142,7 @@ export class NansenHttp {
         res = await this.fetchImpl(`${this.baseUrl}${path}${query}`, {
           method,
           headers: {
-            apikey: this.o.apiKey,
+            apikey: this.#apiKey,
             accept: 'application/json',
             ...(body === undefined ? {} : { 'content-type': 'application/json' }),
           },
@@ -167,9 +177,11 @@ export class NansenHttp {
       if (res.status === 429 || res.status >= 500) {
         if (attempts <= retries) {
           const ra = Number(res.headers.get('retry-after'));
-          await this.clock.sleep(
-            Number.isFinite(ra) && ra > 0 ? ra * 1_000 : 500 * 2 ** (attempts - 1),
-          );
+          const sleepMs =
+            Number.isFinite(ra) && ra > 0
+              ? Math.min(ra * 1_000, MAX_RETRY_AFTER_MS)
+              : 500 * 2 ** (attempts - 1);
+          await this.clock.sleep(sleepMs);
           continue;
         }
         return finish(

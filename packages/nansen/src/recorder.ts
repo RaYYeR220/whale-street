@@ -52,6 +52,11 @@ function describeRequest(
   return { method, url, body };
 }
 
+/** Statuses the Fetch spec forbids a Response body on. Rebuilding a recorded response with a
+ * (possibly empty) text body at one of these statuses throws `TypeError: Response constructor:
+ * Invalid response status code`; pass `null` instead. */
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([101, 204, 205, 304]);
+
 export function recordingFetch(
   inner: typeof fetch,
   sink: (r: NansenRecord) => void,
@@ -75,7 +80,10 @@ export function recordingFetch(
       status: res.status,
       body,
     });
-    return new Response(text, { status: res.status, headers: res.headers });
+    return new Response(NULL_BODY_STATUSES.has(res.status) ? null : text, {
+      status: res.status,
+      headers: res.headers,
+    });
   }) as typeof fetch;
 }
 

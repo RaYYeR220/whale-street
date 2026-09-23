@@ -1,3 +1,4 @@
+import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
 import { type CallRecord, type Clock, NansenHttp } from '../src/index';
 
@@ -133,6 +134,42 @@ describe('NansenHttp', () => {
       query: { wallet_address: '0xabc' },
     });
     expect(seen[0]?.url).toBe('https://api.nansen.ai/api/v1/perp/builder-fee?wallet_address=0xabc');
+  });
+
+  it('never exposes the api key on the instance (JSON.stringify / util.inspect)', () => {
+    const http = new NansenHttp({
+      apiKey: 'super-secret-key',
+      fetch: fakeFetch([]),
+      clock: new FakeClock(),
+    });
+    expect(JSON.stringify(http)).not.toContain('super-secret-key');
+    expect(inspect(http)).not.toContain('super-secret-key');
+  });
+
+  it('uses a full randomUUID for call ids', async () => {
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: fakeFetch([{ status: 200, body: '{}' }]),
+      clock: new FakeClock(),
+    });
+    const r = await http.request('GET', '/api/v1/account', undefined, parseAny);
+    expect(r.callId).toMatch(/^nc_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  });
+
+  it('caps the Retry-After sleep at 60,000 ms', async () => {
+    const clock = new FakeClock();
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: fakeFetch([
+        { status: 429, body: '{"message":"slow down"}', headers: { 'Retry-After': '3600' } },
+        { status: 200, body: '{"n":2}' },
+      ]),
+      clock,
+    });
+    const r = await http.request('GET', '/api/v1/account', undefined, parseAny);
+    expect(r.ok).toBe(true);
+    expect(clock.sleeps).toContain(60_000);
+    expect(clock.sleeps).not.toContain(3_600_000);
   });
 
   it('applies the per-endpoint limit for profiler/perp-trades', async () => {
