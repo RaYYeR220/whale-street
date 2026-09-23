@@ -1,0 +1,126 @@
+import { describe, expect, it } from 'vitest';
+import { evaluateMirror, type MirrorContext, type MirrorRequest } from '../src/index';
+
+const ctx = (o: Partial<MirrorContext> = {}): MirrorContext => ({
+  companyStatus: 'ACTIVE',
+  snapshotAgeMs: 5_000,
+  coinSupported: true,
+  traderPosition: {
+    coin: 'HYPE',
+    size: 100,
+    entryPx: 40,
+    liqPx: 30,
+    leverage: 10,
+    marginUsed: 400,
+    unrealizedPnl: 0,
+  },
+  mark: 41,
+  hp: 0.8,
+  playerOpenMirrors: 0,
+  playerDailyNotionalUsd: 0,
+  ...o,
+});
+const req = (o: Partial<MirrorRequest> = {}): MirrorRequest => ({
+  coin: 'HYPE',
+  notionalUsd: 50,
+  leverage: 3,
+  ...o,
+});
+
+describe('mirror policy', () => {
+  it('allows a sane request and builds the order with a mandatory stop', () => {
+    const d = evaluateMirror(req(), ctx());
+    if (!d.allow) throw new Error(JSON.stringify(d.refusals));
+    expect(d.order).toMatchObject({
+      coin: 'HYPE',
+      isBuy: true,
+      notionalUsd: 50,
+      leverage: 3,
+      markPx: 41,
+    });
+    expect(d.order.size).toBeCloseTo(50 / 41, 10);
+    expect(d.order.stopLossPx).toBeCloseTo(41 * (1 - 0.25 / 3), 10);
+  });
+
+  it('short side places the stop above the mark', () => {
+    const d = evaluateMirror(
+      req(),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: -5,
+          entryPx: 42,
+          liqPx: 60,
+          leverage: 5,
+          marginUsed: 0,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    if (!d.allow) throw new Error('refused');
+    expect(d.order.isBuy).toBe(false);
+    expect(d.order.stopLossPx).toBeGreaterThan(41);
+  });
+
+  it('ANTI_FOMO when the mark ran away from the trader entry', () => {
+    const d = evaluateMirror(req(), ctx({ mark: 42.2 }));
+    expect(d.allow).toBe(false);
+    if (d.allow) return;
+    const r = d.refusals.find((x) => x.code === 'ANTI_FOMO');
+    expect(r?.message).toContain("you'd enter 5.5% worse than the trader");
+  });
+
+  it('collects every refusal', () => {
+    const d = evaluateMirror(
+      req({ notionalUsd: 500, leverage: 20, stopLossPct: 0.9 }),
+      ctx({
+        companyStatus: 'HALTED',
+        snapshotAgeMs: 120_000,
+        coinSupported: false,
+        hp: 0.1,
+        playerOpenMirrors: 3,
+        playerDailyNotionalUsd: 290,
+      }),
+    );
+    expect(d.allow).toBe(false);
+    if (d.allow) return;
+    expect(d.refusals.map((r) => r.code).sort()).toEqual(
+      [
+        'COIN_UNSUPPORTED',
+        'COMPANY_NOT_ACTIVE',
+        'DAILY_CAP',
+        'LEVERAGE_CAP',
+        'NEAR_LIQUIDATION',
+        'NOTIONAL_OUT_OF_RANGE',
+        'STALE_DATA',
+        'STOP_LOSS_TOO_LOOSE',
+        'TOO_MANY_OPEN',
+      ].sort(),
+    );
+  });
+
+  it('refuses without a trader position or mark', () => {
+    const a = evaluateMirror(req(), ctx({ traderPosition: null }));
+    const b = evaluateMirror(req(), ctx({ mark: null }));
+    expect(a.allow || a.refusals.map((r) => r.code)).toEqual(['NO_POSITION']);
+    expect(b.allow || b.refusals.map((r) => r.code)).toEqual(['NO_MARK']);
+  });
+
+  it('leverage above the trader leverage is refused even under the global cap', () => {
+    const d = evaluateMirror(
+      req({ leverage: 4 }),
+      ctx({
+        traderPosition: {
+          coin: 'HYPE',
+          size: 1,
+          entryPx: 41,
+          liqPx: 20,
+          leverage: 2,
+          marginUsed: 0,
+          unrealizedPnl: 0,
+        },
+      }),
+    );
+    expect(d.allow || d.refusals.map((r) => r.code)).toEqual(['LEVERAGE_CAP']);
+  });
+});
