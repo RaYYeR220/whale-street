@@ -1,0 +1,26 @@
+# deps / builds
+node_modules/
+dist/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
+.turbo/
+.vercel/
+*.tsbuildinfo
+
+# env / secrets / local data
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# os / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
