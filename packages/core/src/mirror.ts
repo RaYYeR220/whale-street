@@ -114,21 +114,21 @@ export function evaluateMirror(
   const tp = ctx.traderPosition;
   const hasPos = tp && Number.isFinite(tp.size) && tp.size !== 0;
   const hasValidMark = ctx.mark !== null && Number.isFinite(ctx.mark) && ctx.mark > 0;
+  const pos = hasPos && tp ? tp : null;
+  const mark = hasValidMark ? ctx.mark : null;
 
   if (!hasPos) refuse('NO_POSITION', `trader has no open ${req.coin} position`);
   if (!hasValidMark) refuse('NO_MARK', 'no live mark price');
 
-  if (hasPos) {
-    const allowedLev = Math.min(tp!.leverage, m.maxLeverage);
+  if (pos) {
+    const allowedLev = Math.min(pos.leverage, m.maxLeverage);
     if (!(req.leverage >= 1 && req.leverage <= allowedLev))
       refuse('LEVERAGE_CAP', `leverage is capped at ${allowedLev}x`);
   }
 
-  if (hasPos && hasValidMark) {
-    const long = tp!.size > 0;
-    const adverse = long
-      ? (ctx.mark! - tp!.entryPx) / tp!.entryPx
-      : (tp!.entryPx - ctx.mark!) / tp!.entryPx;
+  if (pos && mark !== null) {
+    const long = pos.size > 0;
+    const adverse = long ? (mark - pos.entryPx) / pos.entryPx : (pos.entryPx - mark) / pos.entryPx;
     if (!(adverse < m.antiFomoPct)) {
       refuse(
         'ANTI_FOMO',
@@ -139,10 +139,11 @@ export function evaluateMirror(
     }
   }
 
-  if (refusals.length > 0 || !hasPos || !hasValidMark) return { allow: false, refusals };
+  if (refusals.length > 0) return { allow: false, refusals };
+  if (!pos || mark === null) return { allow: false, refusals };
 
-  // At this point, hasPos and hasValidMark are both true, so tp and ctx.mark are valid
-  const long = tp!.size > 0;
+  // At this point, pos and mark are valid
+  const long = pos.size > 0;
   const move = slPct / req.leverage;
   return {
     allow: true,
@@ -150,10 +151,10 @@ export function evaluateMirror(
       coin: req.coin,
       isBuy: long,
       notionalUsd: req.notionalUsd,
-      size: req.notionalUsd / ctx.mark!,
+      size: req.notionalUsd / mark,
       leverage: req.leverage,
-      stopLossPx: long ? ctx.mark! * (1 - move) : ctx.mark! * (1 + move),
-      markPx: ctx.mark!,
+      stopLossPx: long ? mark * (1 - move) : mark * (1 + move),
+      markPx: mark,
     },
   };
 }
