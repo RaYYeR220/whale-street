@@ -187,7 +187,50 @@ describe('NansenClient', () => {
     });
   });
 
-  it('leaderboard drops invalid addresses', async () => {
+  it('perp trades: an ISO timestamp without an offset is treated as UTC', async () => {
+    const c = clientWith({
+      data: [
+        {
+          timestamp: '2025-10-08T18:46:11.452000',
+          side: 'Long',
+          action: 'Close',
+          token_symbol: 'SOL',
+          price: '1',
+          size: '1',
+          value_usd: '1',
+          closed_pnl: '0',
+          fee_usd: '0',
+        },
+      ],
+    });
+    const r = await c.perpTrades(A, '2025-09-23', '2026-09-23');
+    expect(r).toMatchObject({
+      ok: true,
+      value: [{ at: Date.parse('2025-10-08T18:46:11.452Z') }],
+    });
+  });
+
+  it('perp trades: an empty timestamp fails rather than fabricating a time', async () => {
+    const c = clientWith({
+      data: [
+        {
+          timestamp: '',
+          side: 'Long',
+          action: 'Close',
+          token_symbol: 'SOL',
+          price: '1',
+          size: '1',
+          value_usd: '1',
+          closed_pnl: '0',
+          fee_usd: '0',
+        },
+      ],
+    });
+    const r = await c.perpTrades(A, '2025-09-23', '2026-09-23');
+    expect(r.ok).toBe(false);
+  });
+
+  it('leaderboard drops invalid addresses and keeps null numeric fields', async () => {
     const c = clientWith({
       data: [
         {
@@ -198,6 +241,13 @@ describe('NansenClient', () => {
           total_trades: 12,
         },
         { trader_address: 'not-an-address', total_pnl: 1, roi: 0, total_trades: 1 },
+        {
+          trader_address: '0x00000000000000000000000000000000000000cd',
+          total_pnl: null,
+          roi: null,
+          account_value: null,
+          total_trades: null,
+        },
       ],
     });
     const r = await c.perpLeaderboard('2026-08-23', '2026-09-23');
@@ -210,6 +260,13 @@ describe('NansenClient', () => {
           roi: 0.5,
           accountValue: 50_000,
           totalTrades: 12,
+        },
+        {
+          address: '0x00000000000000000000000000000000000000cd',
+          totalPnl: null,
+          roi: null,
+          accountValue: null,
+          totalTrades: null,
         },
       ],
     });
@@ -231,6 +288,22 @@ describe('NansenClient', () => {
     expect(sm).toMatchObject({
       ok: true,
       value: [{ address: A, coin: 'ETH', valueUsd: 250_000, at: 1_758_000_000_000 }],
+    });
+
+    const smMissingSideAndValue = await clientWith({
+      data: [
+        {
+          trader_address: A,
+          token_symbol: 'ETH',
+          action: 'Open',
+          value_usd: null,
+          block_timestamp: 1_758_000_000,
+        },
+      ],
+    }).smartMoneyPerpTrades(24, true);
+    expect(smMissingSideAndValue).toMatchObject({
+      ok: true,
+      value: [{ address: A, coin: 'ETH', side: '', valueUsd: null, at: 1_758_000_000_000 }],
     });
 
     const pi = await clientWith({
@@ -284,6 +357,14 @@ describe('NansenClient', () => {
     expect(cp).toMatchObject({
       ok: true,
       value: [{ address: A, interactions: 7, volumeUsd: 900 }],
+    });
+
+    const cpNull = await clientWith({
+      data: [{ counterparty_address: A, interaction_count: null, total_volume_usd: null }],
+    }).counterparties(A, 'arbitrum', '2026-06-01', '2026-09-01');
+    expect(cpNull).toMatchObject({
+      ok: true,
+      value: [{ address: A, interactions: null, volumeUsd: null }],
     });
 
     expect(await clientWith({ plan: 'free', credits_remaining: 1100 }).account()).toMatchObject({

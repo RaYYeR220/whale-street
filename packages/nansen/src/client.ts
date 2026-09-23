@@ -38,17 +38,17 @@ export interface PerpTradeRow {
 }
 export interface LeaderboardRow {
   address: Address;
-  totalPnl: number;
-  roi: number;
+  totalPnl: number | null;
+  roi: number | null;
   accountValue: number | null;
-  totalTrades: number;
+  totalTrades: number | null;
 }
 export interface SmPerpTrade {
   address: Address;
   coin: string;
   side: string;
   action: string;
-  valueUsd: number;
+  valueUsd: number | null;
   at: number;
 }
 export interface CohortPositioning {
@@ -70,8 +70,8 @@ export interface FirstFunder {
 }
 export interface Counterparty {
   address: Address;
-  interactions: number;
-  volumeUsd: number;
+  interactions: number | null;
+  volumeUsd: number | null;
 }
 export interface AccountInfo {
   plan: string;
@@ -83,12 +83,29 @@ export function isAddress(s: unknown): s is Address {
 }
 const addr = (s: string): Address | null => (isAddress(s) ? (s.toLowerCase() as Address) : null);
 
+/** Bare decimal (int or float) string, used to detect epoch-second/millisecond strings before
+ * falling back to ISO date parsing. */
+const NUMERIC_TS_RE = /^-?\d+(\.\d+)?$/;
+/** An ISO timestamp with an explicit UTC/offset marker at the end. */
+const HAS_OFFSET_RE = /[zZ]|[+-]\d\d:?\d\d$/;
+
 function toMs(v: number | string): number {
-  if (typeof v === 'number') return v < 1e12 ? v * 1_000 : v;
-  const n = Number(v);
-  if (Number.isFinite(n)) return n < 1e12 ? n * 1_000 : n;
-  const t = Date.parse(v);
-  if (!Number.isFinite(t)) throw new Error(`bad timestamp: ${v}`);
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v) || v <= 0) throw new Error(`bad timestamp: ${v}`);
+    return v < 1e12 ? v * 1_000 : v;
+  }
+  const s = v.trim();
+  if (s === '') throw new Error('bad timestamp: empty string');
+  if (NUMERIC_TS_RE.test(s)) {
+    const n = Number(s);
+    const t = n < 1e12 ? n * 1_000 : n;
+    if (Number.isFinite(t) && t > 0) return t;
+    throw new Error(`bad timestamp: ${v}`);
+  }
+  // An ISO string with no offset is ambiguous in local time; Nansen's data is UTC, so append Z.
+  const iso = HAS_OFFSET_RE.test(s) ? s : `${s}Z`;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t) || t <= 0) throw new Error(`bad timestamp: ${v}`);
   return t;
 }
 
@@ -216,7 +233,7 @@ export class NansenClient {
               {
                 address: a,
                 coin: t.token_symbol,
-                side: t.side,
+                side: t.side ?? '',
                 action: t.action,
                 valueUsd: t.value_usd,
                 at: toMs(t.block_timestamp),

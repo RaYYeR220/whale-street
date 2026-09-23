@@ -124,10 +124,10 @@ export const LeaderboardResponse = z.looseObject({
   data: z.array(
     z.looseObject({
       trader_address: z.string(),
-      total_pnl: num,
-      roi: num,
+      total_pnl: numOrNull,
+      roi: numOrNull,
       account_value: numOrNull,
-      total_trades: num,
+      total_trades: numOrNull,
     }),
   ),
 });
@@ -137,9 +137,9 @@ export const SmPerpTradesResponse = z.looseObject({
     z.looseObject({
       trader_address: z.string(),
       token_symbol: z.string(),
-      side: z.string(),
+      side: z.string().nullish(),
       action: z.string(),
-      value_usd: num,
+      value_usd: numOrNull,
       block_timestamp: tsValue,
     }),
   ),
@@ -177,8 +177,8 @@ export const CounterpartiesResponse = z.looseObject({
   data: z.array(
     z.looseObject({
       counterparty_address: z.string(),
-      interaction_count: num,
-      total_volume_usd: num,
+      interaction_count: numOrNull,
+      total_volume_usd: numOrNull,
     }),
   ),
 });
