@@ -82,7 +82,7 @@ describe('ledger', () => {
       PARAMS.seasonStartCash - proceeds + 2 * proceeds - cv.fill.cash,
       8,
     );
-    expect(cv.portfolio.cash).toBeLessThan(PARAMS.seasonStartCash); // fees
+    expect(cv.portfolio.cash).toBeLessThan(PARAMS.seasonStartCash);
   });
 
   it('forbids long and short in the same company', () => {
@@ -147,10 +147,10 @@ describe('ledger', () => {
     const cashBeforeCover = sh.portfolio.cash;
     const h = sh.portfolio.holdings.c;
     if (!h) throw new Error('missing holding');
-    const highNav = 300; // a big adverse move: buy-back cost now exceeds the locked collateral
+    const highNav = 300;
     const q = quoteBuy(sh.pool, h.shortQty, highNav);
     if (!q.ok) throw new Error(q.error);
-    expect(q.cash).toBeGreaterThan(h.shortCollateral); // sanity: this really is a shortfall
+    expect(q.cash).toBeGreaterThan(h.shortCollateral);
 
     const r = ok(
       executeOrder(
@@ -161,12 +161,12 @@ describe('ledger', () => {
       ),
     );
     expect(r.fill.writeOffUsd).toBeCloseTo(q.cash - h.shortCollateral, 6);
-    expect(r.portfolio.cash).toBeCloseTo(cashBeforeCover, 8); // cash untouched by the shortfall
-    expect(r.portfolio.holdings.c).toBeUndefined(); // fully covered, dust swept
+    expect(r.portfolio.cash).toBeCloseTo(cashBeforeCover, 8);
+    expect(r.portfolio.holdings.c).toBeUndefined();
   });
 
   it('forced COVER falls back to the share price and leaves the pool unchanged when the floor blocks the quote', () => {
-    const pool = { x: 300, y: 5_000, l0: 5_000 }; // near the 5% floor of a 5,000-depth pool
+    const pool = { x: 300, y: 5_000, l0: 5_000 };
     const pf = {
       cash: 0,
       holdings: { c: { longQty: 0, longCost: 0, shortQty: 100, shortCollateral: 50_000 } },
@@ -181,7 +181,7 @@ describe('ledger', () => {
         { status: 'ACTIVE', nav: 100, forced: true },
       ),
     );
-    expect(r.pool).toEqual(pool); // pool untouched
+    expect(r.pool).toEqual(pool);
     const expectedCost = sharePrice(100, pool) * 100 * (1 + PARAMS.feeRate);
     expect(r.fill.cash).toBeCloseTo(expectedCost, 8);
     expect(r.portfolio.holdings.c).toBeUndefined();

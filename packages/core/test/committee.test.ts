@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   avgLeverage,
+  type Decision,
   downgrade,
   evaluateListing,
   type ListingEvidence,
@@ -139,42 +140,54 @@ describe('listing committee', () => {
     return ev;
   }
 
-  it('never approves a hedged cluster when a price or size is corrupted', () => {
-    // NaN mark: falls back to entryPx (still valid), so the hedge is still correctly detected -> DENIED.
-    const nanMark = hedgedFixture();
-    nanMark.marks = { BTC: Number.NaN };
-    expect(evaluateListing(nanMark).decision).not.toBe('APPROVED');
-    expect(evaluateListing(nanMark).decision).toBe('DENIED');
-
-    // Mark of zero: same fallback recovery -> DENIED.
-    const zeroMark = hedgedFixture();
-    zeroMark.marks = { BTC: 0 };
-    expect(evaluateListing(zeroMark).decision).not.toBe('APPROVED');
-    expect(evaluateListing(zeroMark).decision).toBe('DENIED');
-
-    // Negative mark: same fallback recovery -> DENIED.
-    const negMark = hedgedFixture();
-    negMark.marks = { BTC: -60_000 };
-    expect(evaluateListing(negMark).decision).not.toBe('APPROVED');
-    expect(evaluateListing(negMark).decision).toBe('DENIED');
-
-    // NaN applicant size: not sane, no size-based fallback exists -> DEFERRED.
-    const nanAppSize = hedgedFixture();
-    nanAppSize.positions = some([pos('BTC', Number.NaN, 60_000)]);
-    expect(evaluateListing(nanAppSize).decision).not.toBe('APPROVED');
-    expect(evaluateListing(nanAppSize).decision).toBe('DEFERRED');
-
-    // NaN linked size: not sane, no size-based fallback exists -> DEFERRED.
-    const nanLinkedSize = hedgedFixture();
-    nanLinkedSize.linked = some([
-      {
-        address: LINK,
-        relation: 'first_funder',
-        positions: some([pos('BTC', Number.NaN, 60_000)]),
+  it.each<{ name: string; mutate: (ev: ListingEvidence) => void; decision: Decision }>([
+    {
+      name: 'NaN mark',
+      mutate: (ev) => {
+        ev.marks = { BTC: Number.NaN };
       },
-    ]);
-    expect(evaluateListing(nanLinkedSize).decision).not.toBe('APPROVED');
-    expect(evaluateListing(nanLinkedSize).decision).toBe('DEFERRED');
+      decision: 'DENIED',
+    },
+    {
+      name: 'zero mark',
+      mutate: (ev) => {
+        ev.marks = { BTC: 0 };
+      },
+      decision: 'DENIED',
+    },
+    {
+      name: 'negative mark',
+      mutate: (ev) => {
+        ev.marks = { BTC: -60_000 };
+      },
+      decision: 'DENIED',
+    },
+    {
+      name: 'NaN applicant size',
+      mutate: (ev) => {
+        ev.positions = some([pos('BTC', Number.NaN, 60_000)]);
+      },
+      decision: 'DEFERRED',
+    },
+    {
+      name: 'NaN linked size',
+      mutate: (ev) => {
+        ev.linked = some([
+          {
+            address: LINK,
+            relation: 'first_funder',
+            positions: some([pos('BTC', Number.NaN, 60_000)]),
+          },
+        ]);
+      },
+      decision: 'DEFERRED',
+    },
+  ])('never approves a hedged cluster when $name is corrupted', ({ mutate, decision }) => {
+    const ev = hedgedFixture();
+    mutate(ev);
+    const v = evaluateListing(ev);
+    expect(v.decision).not.toBe('APPROVED');
+    expect(v.decision).toBe(decision);
   });
 
   it('denies a hedged cluster once the wallets that loaded already reach the offset threshold, even if another wallet timed out', () => {
@@ -248,7 +261,7 @@ describe('listing committee', () => {
       },
     };
     expect(scoreToRating(11, lenient)).toBe('AAA');
-    expect(scoreToRating(11)).not.toBe('AAA'); // default PARAMS is untouched
+    expect(scoreToRating(11)).not.toBe('AAA');
   });
 
   it('rating helpers', () => {

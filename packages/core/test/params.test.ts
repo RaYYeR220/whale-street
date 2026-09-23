@@ -17,11 +17,9 @@ describe('PARAMS', () => {
 
     const before = PARAMS.committee.minEquityUsd;
     try {
-      // @ts-expect-error intentional mutation attempt to prove the freeze holds
+      // @ts-expect-error
       PARAMS.committee.minEquityUsd = 0;
-    } catch {
-      // strict mode throws on a frozen object; sloppy mode would silently no-op either way
-    }
+    } catch {}
     expect(PARAMS.committee.minEquityUsd).toBe(before);
   });
 
@@ -29,7 +27,7 @@ describe('PARAMS', () => {
     const custom = { ...PARAMS, mirror: { ...PARAMS.mirror, antiFomoPct: 0.1 } };
     expect(custom.mirror.antiFomoPct).toBe(0.1);
     expect(custom.committee).toBe(PARAMS.committee);
-    expect(PARAMS.mirror.antiFomoPct).toBe(0.05); // original untouched
+    expect(PARAMS.mirror.antiFomoPct).toBe(0.05);
   });
 
   it('exposes the rating, style and PnL-band thresholds used by the committee', () => {
