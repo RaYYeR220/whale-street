@@ -1,0 +1,147 @@
+import { describe, expect, it } from 'vitest';
+import { createCreditMonitor } from '../src/ingest/credits';
+import { refreshMood, topCoinsByNotional } from '../src/ingest/mood';
+import { runScout, SCOUT_MAX_EVALUATIONS } from '../src/ingest/scout';
+import { silentLogger } from '../src/log';
+import { deniedKey } from '../src/services/ipo';
+import { createListingService } from '../src/services/listing';
+import { FakeInfo } from './helpers/fake-hl';
+import { FakeNansen, fail } from './helpers/fake-nansen';
+import { programCleanTrader, programHedgedTrader } from './helpers/traders';
+import { addCompany, makeWorld, pos } from './helpers/world';
+
+const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as `0x${string}`;
+
+describe('credit monitor', () => {
+  it('switches credit-saver below 1,500 and the floor below 200, visibly', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    const monitor = createCreditMonitor({ ...w, nansen, log: silentLogger });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 5_000 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({
+      creditSaver: false,
+      creditFloor: false,
+      creditsRemaining: 5_000,
+    });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 1_499 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({ creditSaver: true, creditFloor: false });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 150 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({ creditSaver: true, creditFloor: true });
+    expect(w.events.filter((e) => e.t === 'status')).toHaveLength(3);
+    nansen.accountInfo = fail('timeout');
+    await monitor.check();
+    expect(w.state.flags.creditsRemaining).toBe(150);
+    expect(w.repos.kv.getJson('credits')).toMatchObject({ remaining: 150 });
+  });
+});
+
+describe('street mood', () => {
+  it('fetches cohort positioning for the top coins by listed notional', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    addCompany(w, {
+      id: addr(1),
+      ticker: 'AAA',
+      positions: [pos('BTC', 1, 60_000), pos('DOGE', 1_000, 0.1)],
+    });
+    addCompany(w, { id: addr(2), ticker: 'BBB', positions: [pos('ETH', -30, 3_000)] });
+    expect(topCoinsByNotional(w.state)).toEqual(['ETH', 'BTC', 'DOGE']);
+    nansen.cohorts.set('BTC', {
+      smartLongs: 10,
+      smartShorts: 2,
+      whaleLongs: 0,
+      whaleShorts: 0,
+      publicLongs: 0,
+      publicShorts: 0,
+    });
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    expect([...w.state.mood.keys()]).toEqual(['BTC']);
+    expect(nansen.count('positionIntelligence')).toBe(3);
+    expect(w.state.moodAt).toBe(w.clock.now());
+  });
+});
+
+describe('scout', () => {
+  function setup(target = 3) {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    const info = new FakeInfo();
+    const listing = createListingService({ ...w, nansen });
+    const run = () =>
+      runScout({ ...w, nansen, info, listing, log: silentLogger, targetCompanies: target });
+    return { w, nansen, info, run };
+  }
+
+  it('lists approved candidates from the leaderboard and smart-money trades, remembers denials', async () => {
+    const { w, nansen, info, run } = setup(2);
+    const now = w.clock.now();
+    programCleanTrader(nansen, info, addr(1), now);
+    programHedgedTrader(nansen, info, addr(2), addr(99), now);
+    programCleanTrader(nansen, info, addr(3), now);
+    nansen.leaderboard = [
+      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
+      { address: addr(4), totalPnl: 1, roi: 1, accountValue: 1_000, totalTrades: 10 },
+      { address: addr(2), totalPnl: 1, roi: 1, accountValue: null, totalTrades: 10 },
+    ];
+    nansen.smTrades = [
+      { address: addr(3), coin: 'BTC', side: 'Long', action: 'Open', valueUsd: 1, at: now },
+    ];
+    const r = await run();
+    expect(r.evaluated).toBe(3);
+    expect(r.listed).toHaveLength(2);
+    expect(w.state.get(addr(1))?.source).toBe('SCOUT');
+    expect(w.state.get(addr(3))?.source).toBe('SCOUT');
+    expect(w.state.get(addr(4))).toBeUndefined();
+    expect(w.repos.kv.get(deniedKey(addr(2)))).toBe(String(now));
+  });
+
+  it('never stores raw leaderboard data', async () => {
+    const { w, nansen, run } = setup(1);
+    nansen.leaderboard = [
+      { address: addr(7), totalPnl: 123_456_789, roi: 42, accountValue: 999_999, totalTrades: 77 },
+    ];
+    await run();
+    const dump = JSON.stringify([
+      w.repos.companies.all(),
+      w.repos.filings.recent(100),
+      w.repos.kv.get('scout:last'),
+    ]);
+    expect(dump).not.toContain('123456789');
+    expect(dump).not.toContain('999999');
+  });
+
+  it('skips listed, cooling-down and recently denied addresses; caps evaluations per run', async () => {
+    const { w, nansen, run } = setup(20);
+    const now = w.clock.now();
+    addCompany(w, { id: addr(1), ticker: 'AAA' });
+    w.repos.kv.set(deniedKey(addr(2)), String(now - 86_400_000));
+    nansen.leaderboard = Array.from({ length: 10 }, (_, i) => ({
+      address: addr(i + 1),
+      totalPnl: 1,
+      roi: 1,
+      accountValue: null,
+      totalTrades: 1,
+    }));
+    const r = await run();
+    expect(r.evaluated).toBe(SCOUT_MAX_EVALUATIONS);
+    const evaluated = nansen.calls
+      .filter((c) => c.method === 'perpPnlSummary')
+      .map((c) => c.args[0]);
+    expect(evaluated).not.toContain(addr(1));
+    expect(evaluated).not.toContain(addr(2));
+  });
+
+  it('does nothing below the credit floor or when the target is met', async () => {
+    const a = setup(1);
+    a.w.state.flags.creditFloor = true;
+    expect(await a.run()).toEqual({ evaluated: 0, listed: [] });
+    expect(a.nansen.calls).toHaveLength(0);
+    const b = setup(1);
+    addCompany(b.w, { id: addr(1), ticker: 'AAA' });
+    expect(await b.run()).toEqual({ evaluated: 0, listed: [] });
+    expect(b.nansen.calls).toHaveLength(0);
+  });
+});
