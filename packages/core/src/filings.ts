@@ -1,5 +1,6 @@
 import { PARAMS, type Params } from './params';
 import type { Marks, Position, Snapshot } from './types';
+import { isValidPx } from './validity';
 
 export type FilingKind =
   | 'OPEN'
@@ -39,6 +40,23 @@ function crossedLiq(p: Position, mark: number): boolean {
   return p.size > 0 ? mark <= p.liqPx : mark >= p.liqPx;
 }
 
+/** First valid price in the fallback chain, or undefined if none are valid. */
+function firstValidPx(...candidates: (number | undefined)[]): number | undefined {
+  return candidates.find(isValidPx);
+}
+
+/** notionalUsd/realizedPnlUsd for a filing, omitted entirely (never NaN) if mark is unknown. */
+function amounts(
+  qty: number,
+  mark: number | undefined,
+  closed?: { size: number; entryPx: number },
+): Pick<Filing, 'notionalUsd' | 'realizedPnlUsd'> {
+  if (mark === undefined) return {};
+  const notionalUsd = Math.abs(qty) * mark;
+  if (!closed) return { notionalUsd };
+  return { notionalUsd, realizedPnlUsd: closed.size * (mark - closed.entryPx) };
+}
+
 export function diffSnapshots(
   prev: Snapshot,
   next: Snapshot,
@@ -57,7 +75,7 @@ export function diffSnapshots(
     const a = p?.size ?? 0;
     const b = n?.size ?? 0;
     if (a === b) continue;
-    const mark = marks[coin] ?? n?.entryPx ?? p?.entryPx ?? 0;
+    const mark = firstValidPx(marks[coin], n?.entryPx, p?.entryPx);
     const base = {
       coin,
       sizeBefore: a,
@@ -67,40 +85,36 @@ export function diffSnapshots(
     };
 
     if (a === 0) {
-      filings.push({ ...base, kind: 'OPEN', notionalUsd: Math.abs(b) * mark });
+      filings.push({ ...base, kind: 'OPEN', ...amounts(b, mark) });
       continue;
     }
     const prevPos = p as Position;
-    const realizedOn = (closed: number) => closed * (mark - prevPos.entryPx);
 
     if (b !== 0 && Math.sign(a) !== Math.sign(b)) {
       filings.push({
         ...base,
         kind: 'FLIP',
-        notionalUsd: Math.abs(b) * mark,
-        realizedPnlUsd: realizedOn(a),
+        ...amounts(b, mark, { size: a, entryPx: prevPos.entryPx }),
       });
       continue;
     }
     if (Math.abs(b) > Math.abs(a)) {
-      filings.push({ ...base, kind: 'ADD', notionalUsd: Math.abs(b - a) * mark });
+      filings.push({ ...base, kind: 'ADD', ...amounts(b - a, mark) });
       continue;
     }
     const closed = a - b;
-    if (crossedLiq(prevPos, mark)) {
+    if (mark !== undefined && crossedLiq(prevPos, mark)) {
       liquidated = true;
       filings.push({
         ...base,
         kind: 'LIQUIDATION',
-        notionalUsd: Math.abs(closed) * mark,
-        realizedPnlUsd: realizedOn(closed),
+        ...amounts(closed, mark, { size: closed, entryPx: prevPos.entryPx }),
       });
     } else {
       filings.push({
         ...base,
         kind: b === 0 ? 'CLOSE' : 'REDUCE',
-        notionalUsd: Math.abs(closed) * mark,
-        realizedPnlUsd: realizedOn(closed),
+        ...amounts(closed, mark, { size: closed, entryPx: prevPos.entryPx }),
       });
     }
   }

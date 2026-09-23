@@ -71,4 +71,26 @@ describe('diffSnapshots', () => {
     const r = diffSnapshots(S([]), S([P('SOL', 1, 1), P('ARB', 1, 1)]), { SOL: 1, ARB: 1 });
     expect(r.filings.map((f) => f.coin)).toEqual(['ARB', 'SOL']);
   });
+
+  it('falls back to next.entryPx when the live mark is a NaN', () => {
+    const r = diffSnapshots(S([P('BTC', 1, 100)]), S([P('BTC', 3, 150)]), { BTC: Number.NaN });
+    expect(r.filings[0]).toMatchObject({ kind: 'ADD', notionalUsd: 2 * 150 });
+  });
+
+  it('falls back to prev.entryPx when the live mark is NaN and there is no next position', () => {
+    const r = diffSnapshots(S([P('ETH', -5, 100)]), S([]), { ETH: Number.NaN });
+    expect(r.filings[0]).toMatchObject({ kind: 'CLOSE', notionalUsd: 500 });
+    expect(r.filings[0]?.realizedPnlUsd).toBeCloseTo(0, 10);
+  });
+
+  it('omits notionalUsd/realizedPnlUsd and never fires LIQUIDATION when no fallback mark is valid', () => {
+    const prev = S([P('BTC', 1, Number.NaN, 90)]);
+    const next = S([]);
+    const r = diffSnapshots(prev, next, { BTC: Number.NaN });
+    expect(r.filings).toHaveLength(1);
+    expect(r.filings[0]?.kind).toBe('CLOSE');
+    expect(r.filings[0]?.notionalUsd).toBeUndefined();
+    expect(r.filings[0]?.realizedPnlUsd).toBeUndefined();
+    expect(r.liquidated).toBe(false);
+  });
 });
