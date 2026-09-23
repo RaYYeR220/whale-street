@@ -117,13 +117,14 @@ export function ratingScore(i: {
   return win + hist + pnl + lev + eq;
 }
 
-export function scoreToRating(score: number): Rating {
-  if (score >= 85) return 'AAA';
-  if (score >= 75) return 'AA';
-  if (score >= 65) return 'A';
-  if (score >= 55) return 'BBB';
-  if (score >= 45) return 'BB';
-  if (score >= 35) return 'B';
+export function scoreToRating(score: number, params: Params = PARAMS): Rating {
+  const t = params.committee.ratingThresholds;
+  if (score >= t.AAA) return 'AAA';
+  if (score >= t.AA) return 'AA';
+  if (score >= t.A) return 'A';
+  if (score >= t.BBB) return 'BBB';
+  if (score >= t.BB) return 'BB';
+  if (score >= t.B) return 'B';
   return 'CCC';
 }
 
@@ -132,19 +133,22 @@ export function downgrade(r: Rating, notches: number): Rating {
   return RATINGS[i] as Rating;
 }
 
-function pnlBand(usd: number): string {
+function pnlBand(usd: number, bands: Params['committee']['pnlBands']): string {
   if (usd < 0) return 'Net loss';
-  if (usd < 10_000) return 'Under $10k';
-  if (usd < 100_000) return '$10k–$100k';
-  if (usd < 1_000_000) return '$100k–$1M';
-  if (usd < 10_000_000) return '$1M–$10M';
+  if (usd < bands.under10k) return 'Under $10k';
+  if (usd < bands.under100k) return '$10k–$100k';
+  if (usd < bands.under1m) return '$100k–$1M';
+  if (usd < bands.under10m) return '$1M–$10M';
   return '$10M+';
 }
 
-function styleOf(avgHoldMinutes: number): Prospectus['style'] {
-  if (avgHoldMinutes < 60) return 'Scalper';
-  if (avgHoldMinutes < 1_440) return 'Day Trader';
-  if (avgHoldMinutes < 10_080) return 'Swing Trader';
+function styleOf(
+  avgHoldMinutes: number,
+  minutes: Params['committee']['styleMinutes'],
+): Prospectus['style'] {
+  if (avgHoldMinutes < minutes.scalper) return 'Scalper';
+  if (avgHoldMinutes < minutes.dayTrader) return 'Day Trader';
+  if (avgHoldMinutes < minutes.swingTrader) return 'Swing Trader';
   return 'Position Trader';
 }
 
@@ -330,10 +334,10 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
   if (ev.pnl.ok && ev.positions.ok && history !== null) {
     const hold = (Math.max(1, history) * 1_440) / Math.max(1, ev.pnl.value.closedTrades);
     prospectus = {
-      style: styleOf(hold),
+      style: styleOf(hold, c.styleMinutes),
       historyDays: Math.floor(history),
       winRate: ev.pnl.value.winRate,
-      realizedPnlBand: pnlBand(ev.pnl.value.realizedPnlUsd),
+      realizedPnlBand: pnlBand(ev.pnl.value.realizedPnlUsd, c.pnlBands),
       avgLeverage: avgLeverage(ev.positions.value, ev.marks),
       favoriteCoins: ev.pnl.value.topCoins.slice(0, 3),
       linkedWallets: ev.linked.ok ? ev.linked.value.length : 0,
@@ -356,6 +360,7 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
         avgLeverage: avgLeverage(ev.positions.value, ev.marks),
         equityUsd: ev.equityUsd.value,
       }),
+      params,
     );
     const flagged = checks.some((x) => x.id === 'CONCENTRATION' && x.status === 'FLAG');
     rating = flagged ? downgrade(base, c.concentrationNotches) : base;

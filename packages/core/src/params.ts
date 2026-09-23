@@ -1,5 +1,5 @@
 /** Default tunables. Values mirror the design spec; every function takes a params override. */
-export const PARAMS = {
+const PARAMS_MUTABLE = {
   navStart: 100,
   poolDepth: 5_000,
   minReserveFrac: 0.05,
@@ -27,6 +27,12 @@ export const PARAMS = {
     concentrationThreshold: 0.6,
     concentrationNotches: 2,
     cooldownDays: 14,
+    /** scoreToRating cutoffs; CCC is the implicit catch-all below B. */
+    ratingThresholds: { AAA: 85, AA: 75, A: 65, BBB: 55, BB: 45, B: 35 },
+    /** Prospectus style cutoffs, in average-hold minutes. */
+    styleMinutes: { scalper: 60, dayTrader: 1_440, swingTrader: 10_080 },
+    /** Prospectus realized-PnL band edges, in USD. */
+    pnlBands: { under10k: 10_000, under100k: 100_000, under1m: 1_000_000, under10m: 10_000_000 },
   },
   mirror: {
     minNotionalUsd: 10,
@@ -41,5 +47,16 @@ export const PARAMS = {
     maxSnapshotAgeMs: 60_000,
   },
 };
+
+type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
+
+function deepFreeze<T>(o: T): DeepReadonly<T> {
+  for (const value of Object.values(o as Record<string, unknown>)) {
+    if (value !== null && typeof value === 'object') deepFreeze(value);
+  }
+  return Object.freeze(o) as DeepReadonly<T>;
+}
+
+export const PARAMS = deepFreeze(PARAMS_MUTABLE);
 
 export type Params = typeof PARAMS;

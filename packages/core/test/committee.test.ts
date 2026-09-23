@@ -5,6 +5,7 @@ import {
   evaluateListing,
   type ListingEvidence,
   none,
+  PARAMS,
   type Position,
   ratingScore,
   scoreToRating,
@@ -221,6 +222,18 @@ describe('listing committee', () => {
     const v = evaluateListing(ev);
     expect(v.checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe('UNKNOWN');
     expect(v.decision).toBe('DEFERRED');
+  });
+
+  it('scoreToRating reads its cutoffs from params (spread override)', () => {
+    const lenient = {
+      ...PARAMS,
+      committee: {
+        ...PARAMS.committee,
+        ratingThresholds: { ...PARAMS.committee.ratingThresholds, AAA: 10 },
+      },
+    };
+    expect(scoreToRating(11, lenient)).toBe('AAA');
+    expect(scoreToRating(11)).not.toBe('AAA'); // default PARAMS is untouched
   });
 
   it('rating helpers', () => {
