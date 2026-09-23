@@ -35,6 +35,7 @@ export interface NavState {
 }
 
 export function initNav(snapshot: Snapshot, start: number = PARAMS.navStart): NavState {
+  if (!isSaneSnapshot(snapshot)) throw new Error('initNav: snapshot failed sanity checks');
   const uSnap = snapshotUnrealized(snapshot);
   return {
     nav: start,

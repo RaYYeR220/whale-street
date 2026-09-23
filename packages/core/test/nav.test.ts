@@ -32,6 +32,11 @@ describe('nav', () => {
     expect(initNav(snap({})).nav).toBe(100);
   });
 
+  it('rejects an insane snapshot', () => {
+    const insane = snap({ positions: [pos({ coin: 'BTC', size: Number.NaN, entryPx: 100 })] });
+    expect(() => initNav(insane)).toThrow('initNav: snapshot failed sanity checks');
+  });
+
   it('moves with unrealized PnL relative to equity', () => {
     const s0 = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
     let st = initNav(s0);
