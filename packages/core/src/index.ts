@@ -1,4 +1,5 @@
 export * from './amm';
+export * from './committee';
 export * from './filings';
 export * from './hp';
 export * from './identity';
