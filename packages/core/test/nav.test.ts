@@ -1,0 +1,105 @@
+import fc from 'fast-check';
+import { describe, expect, it } from 'vitest';
+import { applySnapshot, initNav, type Position, type Snapshot, tickNav } from '../src/index';
+
+const ADDR = '0x00000000000000000000000000000000000000aa' as const;
+
+function pos(p: Partial<Position> & { coin: string; size: number; entryPx: number }): Position {
+  return { liqPx: null, leverage: 1, marginUsed: 0, unrealizedPnl: 0, ...p };
+}
+
+function snap(p: Partial<Snapshot>): Snapshot {
+  return {
+    address: ADDR,
+    positions: [],
+    accountValue: 1_000,
+    realizedSinceAnchor: 0,
+    fetchedAt: 0,
+    provenance: [],
+    ...p,
+  };
+}
+
+describe('nav', () => {
+  it('starts at 100', () => {
+    expect(initNav(snap({})).nav).toBe(100);
+  });
+
+  it('moves with unrealized PnL relative to equity', () => {
+    const s0 = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
+    let st = initNav(s0);
+    st = tickNav(st, { BTC: 110 }); // +10 on 1000 equity = +1%
+    expect(st.nav).toBeCloseTo(101, 10);
+    expect(st.equity).toBeCloseTo(1_010, 10);
+    st = tickNav(st, { BTC: 121 }); // +11 on 1010 equity
+    expect(st.nav).toBeCloseTo(101 * (1 + 11 / 1_010), 10);
+  });
+
+  it('short positions gain when price falls', () => {
+    const st = tickNav(
+      initNav(snap({ positions: [pos({ coin: 'ETH', size: -2, entryPx: 50 })] })),
+      {
+        ETH: 45,
+      },
+    );
+    expect(st.nav).toBeCloseTo(101, 10); // +10 on 1000
+  });
+
+  it('freezes when a mark is missing', () => {
+    const st0 = initNav(snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] }));
+    expect(tickNav(st0, {})).toBe(st0);
+  });
+
+  it('closing a position at the current mark keeps NAV continuous', () => {
+    const open = snap({ positions: [pos({ coin: 'BTC', size: 1, entryPx: 100 })] });
+    let st = tickNav(initNav(open), { BTC: 110 });
+    const before = st.nav;
+    const closed = snap({ positions: [], realizedSinceAnchor: 10, accountValue: 1_010 });
+    st = applySnapshot(st, closed, { BTC: 110 });
+    expect(st.nav).toBeCloseTo(before, 10);
+  });
+
+  it('a deposit or withdrawal never moves NAV (flow-neutral)', () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.double({ min: -500, max: 5_000, noNaN: true }), {
+          minLength: 1,
+          maxLength: 20,
+        }),
+        (flows) => {
+          // Reported uPnL (5) equals live uPnL at mark 110 (0.5 · 10), so only flows vary.
+          const positions = [pos({ coin: 'BTC', size: 0.5, entryPx: 100, unrealizedPnl: 5 })];
+          let equity = 2_000;
+          let st = initNav(snap({ positions, accountValue: equity }));
+          for (const f of flows) {
+            equity = Math.max(100, equity + f);
+            st = applySnapshot(st, snap({ positions, accountValue: equity }), { BTC: 110 });
+            expect(st.equity).toBeCloseTo(equity, 8);
+          }
+          expect(st.nav).toBeCloseTo(100, 10);
+        },
+      ),
+    );
+  });
+
+  it('a liquidation loss drops NAV by the realized loss over equity', () => {
+    const open = snap({
+      positions: [pos({ coin: 'SOL', size: 10, entryPx: 100, liqPx: 91 })],
+      accountValue: 100,
+    });
+    let st = initNav(open);
+    st = tickNav(st, { SOL: 95 }); // -50 on 100 equity
+    expect(st.nav).toBeCloseTo(50, 10);
+    const liquidated = snap({ positions: [], realizedSinceAnchor: -90, accountValue: 10 });
+    st = applySnapshot(st, liquidated, { SOL: 91 }); // cum -90 vs -50, equity 50 => -80%
+    expect(st.nav).toBeCloseTo(50 * (1 - 40 / 50), 8);
+  });
+
+  it('never goes negative', () => {
+    const st = tickNav(
+      initNav(snap({ positions: [pos({ coin: 'X', size: 100, entryPx: 10 })], accountValue: 10 })),
+      { X: 1 },
+    );
+    expect(st.nav).toBe(0);
+  });
+});
