@@ -1,0 +1,434 @@
+import type { IRequestTransport } from '@nktkas/hyperliquid';
+import { ApproveAgentTypes, ApproveBuilderFeeTypes } from '@nktkas/hyperliquid/api/exchange';
+import { PARAMS } from '@whale-street/core';
+import { type Hex, recoverTypedDataAddress, serializeSignature } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { describe, expect, it } from 'vitest';
+import { linkMessage as engineLinkMessage } from '../../engine/src/services/players';
+import type { Api } from '../lib/api';
+import type { MirrorReceipt, PrepareView } from '../lib/api-types';
+import {
+  AGENT_BASE_NAME,
+  agentName,
+  isUsable,
+  newAgent,
+  RENEW_MARGIN_MS,
+} from '../lib/mirror/agent';
+import { runMirror } from '../lib/mirror/flow';
+import {
+  approveAgentOnHl,
+  approveBuilderFeeOnHl,
+  builderFeeRate,
+  hlErrorText,
+} from '../lib/mirror/hl';
+import { createIdbKeyStore, createMemoryKeyStore } from '../lib/mirror/keystore';
+import { linkMessage, linkWallet } from '../lib/mirror/link';
+import { checkRows, mirrorUsage, previewContext, previewMirror } from '../lib/mirror/policy';
+import { signStep } from '../lib/mirror/sign';
+import { companyView, T0 } from './helpers';
+
+// Well-known test keys (never used for anything real).
+const MASTER_KEY: Hex = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+const AGENT_KEY: Hex = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
+const master = privateKeyToAccount(MASTER_KEY);
+const agent = privateKeyToAccount(AGENT_KEY);
+const ARBITRUM = '0xa4b1';
+
+function capture() {
+  const sent: Array<{ endpoint: string; payload: Record<string, unknown> }> = [];
+  const transport: IRequestTransport = {
+    isTestnet: false,
+    async request(endpoint, payload) {
+      sent.push({ endpoint, payload: payload as Record<string, unknown> });
+      return { status: 'ok', response: { type: 'default' } } as never;
+    },
+  };
+  return { sent, transport };
+}
+
+const hlDomain = {
+  name: 'HyperliquidSignTransaction',
+  version: '1',
+  chainId: 42161,
+  verifyingContract: '0x0000000000000000000000000000000000000000',
+} as const;
+
+describe('agent keys', () => {
+  it('names the agent so it never replaces the player’s own Hyperliquid session', () => {
+    const r = newAgent(master.address, T0);
+    expect(r.master).toBe(master.address.toLowerCase());
+    expect(r.agentName).toBe(`${AGENT_BASE_NAME} valid_until ${r.validUntil}`);
+    expect(r.validUntil - T0).toBe(180 * 86_400_000);
+    expect(privateKeyToAccount(r.privateKey).address).toBe(r.agentAddress);
+    expect(newAgent(master.address, T0).privateKey).not.toBe(r.privateKey);
+  });
+
+  it('is usable only once approved and until a day before expiry', () => {
+    const r = newAgent(master.address, T0);
+    expect(isUsable(r, T0)).toBe(false);
+    const approved = { ...r, approvedAt: T0 };
+    expect(isUsable(approved, T0)).toBe(true);
+    expect(isUsable(approved, r.validUntil - RENEW_MARGIN_MS)).toBe(false);
+    expect(isUsable(null, T0)).toBe(false);
+  });
+
+  it('keeps records per master wallet, case-insensitively', async () => {
+    const store = createMemoryKeyStore();
+    const r = newAgent(master.address, T0);
+    await store.save(r);
+    expect(await store.load(master.address.toUpperCase().replace('0X', '0x'))).toEqual(r);
+    await store.remove(master.address);
+    expect(await store.load(master.address)).toBeNull();
+  });
+
+  it('refuses to pretend it stored a key when IndexedDB is missing', async () => {
+    const store = createIdbKeyStore(undefined);
+    await expect(store.save(newAgent(master.address, T0))).rejects.toThrow(/IndexedDB/);
+  });
+});
+
+describe('Hyperliquid approvals (user-signed by the master wallet)', () => {
+  it('approveAgent is signed by the master over HyperliquidSignTransaction', async () => {
+    const { sent, transport } = capture();
+    const name = agentName(T0 + 86_400_000);
+    await approveAgentOnHl(
+      { wallet: master, transport, signatureChainId: ARBITRUM },
+      { agentAddress: agent.address, agentName: name },
+    );
+    expect(sent).toHaveLength(1);
+    const { endpoint, payload } = sent[0] as (typeof sent)[number];
+    expect(endpoint).toBe('exchange');
+    const action = payload.action as Record<string, unknown>;
+    expect(action).toMatchObject({
+      type: 'approveAgent',
+      signatureChainId: ARBITRUM,
+      hyperliquidChain: 'Mainnet',
+      agentAddress: agent.address.toLowerCase(),
+      agentName: name,
+    });
+    const sig = payload.signature as { r: Hex; s: Hex; v: number };
+    const signer = await recoverTypedDataAddress({
+      domain: hlDomain,
+      types: ApproveAgentTypes,
+      primaryType: 'HyperliquidTransaction:ApproveAgent',
+      message: {
+        hyperliquidChain: 'Mainnet',
+        agentAddress: agent.address.toLowerCase() as Hex,
+        agentName: name,
+        nonce: BigInt(action.nonce as number),
+      },
+      signature: serializeSignature({ r: sig.r, s: sig.s, v: BigInt(sig.v) }),
+    });
+    expect(signer).toBe(master.address);
+  });
+
+  it('approveBuilderFee sends the ceiling as a percent string and a lowercase builder', async () => {
+    const { sent, transport } = capture();
+    const builder = '0xAbC0000000000000000000000000000000000DeF';
+    await approveBuilderFeeOnHl(
+      { wallet: master, transport, signatureChainId: ARBITRUM },
+      { builder, tenthsBp: 80 },
+    );
+    const action = (sent[0]?.payload.action ?? {}) as Record<string, unknown>;
+    expect(action).toMatchObject({
+      type: 'approveBuilderFee',
+      maxFeeRate: '0.08%',
+      builder: builder.toLowerCase(),
+    });
+    const sig = sent[0]?.payload.signature as { r: Hex; s: Hex; v: number };
+    const signer = await recoverTypedDataAddress({
+      domain: hlDomain,
+      types: ApproveBuilderFeeTypes,
+      primaryType: 'HyperliquidTransaction:ApproveBuilderFee',
+      message: {
+        hyperliquidChain: 'Mainnet',
+        maxFeeRate: '0.08%',
+        builder: builder.toLowerCase() as Hex,
+        nonce: BigInt(action.nonce as number),
+      },
+      signature: serializeSignature({ r: sig.r, s: sig.s, v: BigInt(sig.v) }),
+    });
+    expect(signer).toBe(master.address);
+  });
+
+  it('converts tenths of a basis point to Hyperliquid’s percent string', () => {
+    expect(builderFeeRate(80)).toBe('0.08%');
+    expect(builderFeeRate(10)).toBe('0.01%');
+    expect(builderFeeRate(5)).toBe('0.005%');
+  });
+
+  it('turns wallet and Hyperliquid errors into plain sentences', () => {
+    expect(hlErrorText(new Error('User rejected the request.'))).toBe(
+      'You declined the signature in your wallet.',
+    );
+    expect(hlErrorText(new Error('Must deposit before performing actions'))).toMatch(
+      /Deposit USDC/,
+    );
+  });
+});
+
+describe('agent signatures for Nansen steps', () => {
+  const eip712 = {
+    domain: {
+      name: 'Exchange',
+      version: '1',
+      chainId: 1337,
+      verifyingContract: '0x0000000000000000000000000000000000000000',
+    },
+    types: {
+      Agent: [
+        { name: 'source', type: 'string' },
+        { name: 'connectionId', type: 'bytes32' },
+      ],
+    },
+    primaryType: 'Agent',
+    message: { source: 'a', connectionId: `0x${'11'.repeat(32)}` },
+  };
+
+  it('signs exactly the payload the engine sent, recoverable to the agent address', async () => {
+    const sig = await signStep(AGENT_KEY, eip712);
+    expect([27, 28]).toContain(sig.v);
+    const signer = await recoverTypedDataAddress({
+      domain: eip712.domain as never,
+      types: eip712.types,
+      primaryType: 'Agent',
+      message: eip712.message as never,
+      signature: serializeSignature({ r: sig.r as Hex, s: sig.s as Hex, v: BigInt(sig.v) }),
+    });
+    expect(signer).toBe(agent.address);
+  });
+});
+
+describe('wallet link', () => {
+  it('signs the same message the engine verifies', () => {
+    expect(linkMessage(master.address, 'n1')).toBe(engineLinkMessage(master.address, 'n1'));
+  });
+
+  it('links with a personal_sign of the nonce message', async () => {
+    const signed: string[] = [];
+    const api: Pick<Api, 'authNonce' | 'authLink'> = {
+      authNonce: async () => ({ ok: true, data: { nonce: 'abc', message: '' } }),
+      authLink: async (_t, address, signature) =>
+        signature === 'sig'
+          ? {
+              ok: true,
+              data: {
+                player: {
+                  id: 'p1',
+                  handle: 'h',
+                  kind: 'human',
+                  walletAddress: address,
+                  createdAt: 0,
+                },
+              },
+            }
+          : { ok: false, status: 401, error: 'BAD_SIGNATURE', message: 'bad signature' },
+    };
+    const r = await linkWallet(api, 'tok', master.address, async (m) => {
+      signed.push(m);
+      return 'sig';
+    });
+    expect(r.ok).toBe(true);
+    expect(signed).toEqual([`Whale Street: link wallet ${master.address.toLowerCase()} nonce abc`]);
+    const declined = await linkWallet(api, 'tok', master.address, async () => {
+      throw new Error('User rejected the request');
+    });
+    expect(declined).toEqual({ ok: false, message: 'You declined the signature.' });
+  });
+});
+
+describe('policy preview', () => {
+  const view = companyView({
+    lastSnapshotAt: T0 - 12_000,
+    hp: 0.82,
+    positions: [
+      {
+        coin: 'BTC',
+        size: 10,
+        entryPx: 111_200,
+        liqPx: 58_400,
+        leverage: 2,
+        marginUsed: 1,
+        unrealizedPnl: 0,
+        mark: 113_950,
+        hp: 0.82,
+      },
+    ],
+  });
+
+  it('counts open mirrors and today’s notional from the order log', () => {
+    const base = {
+      groupId: 'g',
+      ticker: 'OOH',
+      coin: 'BTC',
+      refusals: null,
+      hlOid: null,
+      avgPx: null,
+      error: null,
+      explorerUrl: '',
+      kind: 'order' as const,
+    };
+    const usage = mirrorUsage(
+      [
+        { ...base, id: '1', status: 'FILLED', notionalUsd: 50, createdAt: T0 - 1000 },
+        { ...base, id: '2', status: 'CLOSED', notionalUsd: 60, createdAt: T0 - 2000 },
+        { ...base, id: '3', status: 'REFUSED', notionalUsd: 70, createdAt: T0 - 3000 },
+        { ...base, id: '4', status: 'FILLED', notionalUsd: 80, createdAt: T0 - 2 * 86_400_000 },
+      ],
+      T0,
+    );
+    expect(usage).toEqual({ open: 1, dailyUsd: 110 });
+  });
+
+  it('refuses a late entry (anti-FOMO) and marks that stamp failed', () => {
+    const ctx = previewContext(view, 'BTC', T0, { open: 0, dailyUsd: 0 });
+    const req = { coin: 'BTC', notionalUsd: 50, leverage: 2, stopLossPct: 0.25 };
+    const decision = previewMirror(req, ctx);
+    expect(decision.allow).toBe(true);
+    const late = previewContext(
+      companyView({
+        ...view,
+        positions: [
+          { ...(view.positions[0] as (typeof view.positions)[number]), mark: 111_200 * 1.08 },
+        ],
+      }),
+      'BTC',
+      T0,
+      { open: 0, dailyUsd: 0 },
+    );
+    const refused = previewMirror(req, late);
+    expect(refused.allow).toBe(false);
+    const rows = checkRows(req, late, refused, 'OOH');
+    expect(rows).toHaveLength(12);
+    expect(rows.filter((r) => r.fail).map((r) => r.code)).toEqual(['ANTI_FOMO']);
+    expect(PARAMS.mirror.antiFomoPct).toBeLessThan(0.08);
+  });
+});
+
+describe('runMirror', () => {
+  const order = {
+    coin: 'BTC',
+    isBuy: true,
+    notionalUsd: 50,
+    size: 0.00044,
+    leverage: 2,
+    stopLossPx: 99_706,
+    markPx: 113_950,
+  };
+  const step = (kind: 'leverage' | 'order', stepId: string) => ({
+    stepId,
+    kind,
+    eip712: {
+      domain: {
+        name: 'Exchange',
+        version: '1',
+        chainId: 1337,
+        verifyingContract: '0x0000000000000000000000000000000000000000',
+      },
+      types: { Agent: [{ name: 'source', type: 'string' }] },
+      primaryType: 'Agent',
+      message: { source: stepId },
+    },
+  });
+  const prepared: PrepareView = {
+    ok: true,
+    groupId: 'g1',
+    order,
+    steps: [step('leverage', 's1'), step('order', 's2')],
+  };
+  const receipt = (
+    stepId: string,
+    status: MirrorReceipt['status'],
+    o: Partial<MirrorReceipt> = {},
+  ): MirrorReceipt => ({
+    stepId,
+    kind: stepId === 's1' ? 'leverage' : 'order',
+    status,
+    hlOid: null,
+    avgPx: null,
+    error: null,
+    explorerUrl: '',
+    ...o,
+  });
+  type ExecResult = Awaited<ReturnType<Api['mirrorExecute']>>;
+  const fake = (
+    results: ExecResult[],
+    prep: Awaited<ReturnType<Api['mirrorPrepare']>> = { ok: true, data: prepared },
+  ) => {
+    const executed: string[] = [];
+    const api: Pick<Api, 'mirrorPrepare' | 'mirrorExecute'> = {
+      mirrorPrepare: async () => prep,
+      mirrorExecute: async (_t, stepId) => {
+        executed.push(stepId);
+        return results.shift() as ExecResult;
+      },
+    };
+    return { api, executed };
+  };
+  const body = { ticker: 'OOH', coin: 'BTC', notionalUsd: 50, leverage: 2, stopLossPct: 0.25 };
+
+  it('signs and executes leverage then order, and reports the fill', async () => {
+    const { api, executed } = fake([
+      { ok: true, data: receipt('s1', 'FILLED') },
+      { ok: true, data: receipt('s2', 'FILLED', { hlOid: 42, avgPx: 113_990 }) },
+    ]);
+    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY });
+    expect(executed).toEqual(['s1', 's2']);
+    expect(r).toMatchObject({ kind: 'filled', groupId: 'g1', warning: null });
+  });
+
+  it('returns the committee refusals from prepare', async () => {
+    const refusals = [{ code: 'ANTI_FOMO', message: 'entry 5.5% worse than the trader' }];
+    const { api, executed } = fake([], { ok: true, data: { ok: true, groupId: 'g2', refusals } });
+    expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toEqual({
+      kind: 'refused',
+      refusals,
+      groupId: 'g2',
+    });
+    expect(executed).toEqual([]);
+  });
+
+  it('stops before the order when the leverage change is unconfirmed', async () => {
+    const { api, executed } = fake([{ ok: true, data: receipt('s1', 'UNKNOWN') }]);
+    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY });
+    expect(r).toMatchObject({ kind: 'error', code: 'LEVERAGE_UNCONFIRMED' });
+    expect(executed).toEqual(['s1']);
+  });
+
+  it('reports an order timeout as unknown and never re-sends it', async () => {
+    const { api, executed } = fake([
+      { ok: true, data: receipt('s1', 'FILLED') },
+      { ok: false, status: 0, error: 'TIMEOUT', message: 'the engine did not answer in time' },
+    ]);
+    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY });
+    expect(r).toMatchObject({
+      kind: 'unknown',
+      groupId: 'g1',
+      detail: 'the engine did not answer in time',
+    });
+    expect(executed).toEqual(['s1', 's2']);
+  });
+
+  it('treats a 202 UNKNOWN receipt as unknown, not as filled', async () => {
+    const { api } = fake([
+      { ok: true, data: receipt('s1', 'FILLED') },
+      { ok: true, data: receipt('s2', 'UNKNOWN', { error: 'Hyperliquid did not answer' }) },
+    ]);
+    expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toMatchObject({
+      kind: 'unknown',
+      detail: 'Hyperliquid did not answer',
+    });
+  });
+
+  it('surfaces a policy change between prepare and execute as a refusal', async () => {
+    const refusals = [{ code: 'POLICY_CHANGED', message: 'the trader closed BTC' }];
+    const { api } = fake([
+      { ok: false, status: 409, error: 'REFUSED', message: 'refused', refusals },
+    ]);
+    expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toEqual({
+      kind: 'refused',
+      refusals,
+      groupId: 'g1',
+    });
+  });
+});
