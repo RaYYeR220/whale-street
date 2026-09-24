@@ -42,11 +42,83 @@ function series(n: number, from: number, to: number, wobble: number, seed0: numb
   );
 }
 
-function Mark({ ok }: { ok: boolean }) {
+/** A check stamp; `null` is a check the committee could not answer (never shown as a fail). */
+function Mark({ ok }: { ok: boolean | null }) {
   return (
-    <span className="ws-stamp" data-tone={ok ? 'blue' : 'red'}>
-      <span className="ws-stamp__t">{ok ? 'PASS' : 'FAIL'}</span>
+    <span className="ws-stamp" data-tone={ok === null ? undefined : ok ? 'blue' : 'red'}>
+      <span className="ws-stamp__t">{ok === null ? '?' : ok ? 'PASS' : 'FAIL'}</span>
     </span>
+  );
+}
+
+/**
+ * Applicant, linked wallet and the edge between them. Null addresses draw the labelled example
+ * (placeholder faces and addresses); real ones come from the verdict's hedge link.
+ */
+function HedgeGraph({
+  applicant,
+  applicantSlip,
+  linked,
+  linkedSlip,
+  edge,
+}: {
+  applicant: string | null;
+  applicantSlip: ['LONG' | 'SHORT', string];
+  linked: string | null;
+  linkedSlip: ['LONG' | 'SHORT', string];
+  edge: string;
+}) {
+  return (
+    <div className="lp-graph">
+      <div className="lp-node">
+        <span className="lp-node__who">Applicant</span>
+        <Portrait
+          className="lp-node__face lp-face"
+          seed={applicant ?? 'example-applicant'}
+          hp={0.8}
+          size={164}
+          label="Applicant"
+        />
+        <span className="lp-node__addr">{applicant ? shortAddress(applicant) : '0x7a3f…c91e'}</span>
+        <span className={`lp-slip lp-slip--${applicantSlip[0].toLowerCase()}`}>
+          {applicantSlip.join(' ')}
+        </span>
+      </div>
+      <div className="lp-edge">
+        <svg viewBox="0 0 200 30" preserveAspectRatio="none" aria-hidden="true">
+          <path
+            d="M4 15 L196 15"
+            stroke="#1a1714"
+            strokeWidth="3"
+            strokeDasharray="9 7"
+            vectorEffect="non-scaling-stroke"
+          />
+          <path
+            d="M4 15 l12 -8 M4 15 l12 8 M196 15 l-12 -8 M196 15 l-12 8"
+            stroke="#1a1714"
+            strokeWidth="3"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+            fill="none"
+          />
+        </svg>
+        <span className="lp-edge__label">{edge}</span>
+      </div>
+      <div className="lp-node">
+        <span className="lp-node__who">Linked wallet</span>
+        <Portrait
+          className="lp-node__face lp-face"
+          seed={linked ?? 'example-linked'}
+          hp={0.8}
+          size={164}
+          label="Linked wallet"
+        />
+        <span className="lp-node__addr">{linked ? shortAddress(linked) : '0x19c2…04ab'}</span>
+        <span className={`lp-slip lp-slip--${linkedSlip[0].toLowerCase()}`}>
+          {linkedSlip.join(' ')}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -574,69 +646,36 @@ export function LandingView({
                 {denied ? 'a real verdict from this engine' : 'no denial on this engine yet'}
               </small>
             </figcaption>
-            <p className="lp-deny__why">
-              <b>{link ? 'Hidden hedge: failed.' : 'Denied.'}</b>{' '}
-              {denied?.reason
-                ? denied.reason.replace(/^[A-Z_]+: /, '')
-                : 'Most of this trader’s long was cancelled out by a wallet funded from the same source. The limit is 50%.'}
-            </p>
-            <div className="lp-graph">
-              <div className="lp-node">
-                <span className="lp-node__who">Applicant</span>
-                <Portrait
-                  className="lp-node__face lp-face"
-                  seed={denied?.address ?? 'example-applicant'}
-                  hp={0.8}
-                  size={164}
-                  label="Applicant"
-                />
-                <span className="lp-node__addr">
-                  {denied ? shortAddress(denied.address) : '0x7a3f…c91e'}
-                </span>
-                <span
-                  className={`lp-slip lp-slip--${link && link.side === 'LONG' ? 'short' : 'long'}`}
-                >
-                  {link ? `${link.side === 'LONG' ? 'SHORT' : 'LONG'} ${link.coin}` : 'LONG BTC'}
-                </span>
-              </div>
-              <div className="lp-edge">
-                <svg viewBox="0 0 200 30" preserveAspectRatio="none" aria-hidden="true">
-                  <path
-                    d="M4 15 L196 15"
-                    stroke="#1a1714"
-                    strokeWidth="3"
-                    strokeDasharray="9 7"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <path
-                    d="M4 15 l12 -8 M4 15 l12 8 M196 15 l-12 -8 M196 15 l-12 8"
-                    stroke="#1a1714"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                    vectorEffect="non-scaling-stroke"
-                    fill="none"
-                  />
-                </svg>
-                <span className="lp-edge__label">Linked through Nansen’s wallet graph</span>
-              </div>
-              <div className="lp-node">
-                <span className="lp-node__who">Linked wallet</span>
-                <Portrait
-                  className="lp-node__face lp-face"
-                  seed={link?.address ?? 'example-linked'}
-                  hp={0.8}
-                  size={164}
-                  label="Linked wallet"
-                />
-                <span className="lp-node__addr">
-                  {link ? shortAddress(link.address) : '0x19c2…04ab'}
-                </span>
-                <span className={`lp-slip lp-slip--${link ? link.side.toLowerCase() : 'short'}`}>
-                  {link ? `${link.side} ${link.coin} ${compact(link.notionalUsd)}` : 'SHORT BTC'}
-                </span>
-              </div>
-            </div>
-            {offset !== null || !denied ? (
+            {/* A real denial shows only what the engine recorded; the example is labelled as one. */}
+            {denied ? (
+              <p className="lp-deny__why">
+                <b>{link ? 'Hidden hedge: failed.' : 'Denied.'}</b>
+                {denied.reason ? ` ${denied.reason.replace(/^[A-Z_]+: /, '')}` : null}
+              </p>
+            ) : (
+              <p className="lp-deny__why">
+                <b>Hidden hedge: failed.</b> Most of this trader’s long was cancelled out by a
+                wallet funded from the same source. The limit is 50%.
+              </p>
+            )}
+            {denied && link ? (
+              <HedgeGraph
+                applicant={denied.address}
+                applicantSlip={[link.side === 'LONG' ? 'SHORT' : 'LONG', link.coin]}
+                linked={link.address}
+                linkedSlip={[link.side, `${link.coin} ${compact(link.notionalUsd)}`]}
+                edge="Linked through Nansen’s wallet graph"
+              />
+            ) : denied ? null : (
+              <HedgeGraph
+                applicant={null}
+                applicantSlip={['LONG', 'BTC']}
+                linked={null}
+                linkedSlip={['SHORT', 'BTC']}
+                edge="Example: linked through Nansen’s wallet graph"
+              />
+            )}
+            {(denied && link && offset !== null) || !denied ? (
               <div className="lp-offset">
                 <span>Exposure that cancels out</span>
                 {/* biome-ignore lint/a11y/useSemanticElements: a drawn bar; the native <meter> cannot take this design */}
@@ -655,10 +694,18 @@ export function LandingView({
               </div>
             ) : null}
             <ol className="lp-checks" aria-label="The six committee checks">
-              {(deniedChecks ?? []).length > 0
-                ? (deniedChecks ?? []).map((c) => (
+              {deniedChecks
+                ? deniedChecks.map((c) => (
                     <li key={c.id}>
-                      <Mark ok={c.status === 'PASS' || c.status === 'FLAG'} />
+                      <Mark
+                        ok={
+                          c.status === 'PASS' || c.status === 'FLAG'
+                            ? true
+                            : c.status === 'FAIL'
+                              ? false
+                              : null
+                        }
+                      />
                       {c.id
                         .replace(/_/g, ' ')
                         .toLowerCase()
