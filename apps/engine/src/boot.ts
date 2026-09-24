@@ -40,7 +40,12 @@ export async function boot(runtime: Runtime): Promise<{ engine: Engine; app: Fas
       if (ev.t === 'mood')
         for (const [coin, positioning] of engine.state.mood) recorder.mood(coin, positioning);
     });
-    recorder.attachFeed(runtime.deps.hl.feed, () => engine.state.heldCoins());
+    recorder.attachFeed(
+      runtime.deps.hl.feed,
+      () => engine.state.heldCoins(),
+      () =>
+        new Set([...engine.state.listed().map((rt) => rt.id), ...engine.ipo.pendingAddresses()]),
+    );
     engine.log.info('recording session', { path: recorder.path });
   }
   const app = await buildApp(engine);

@@ -19,6 +19,7 @@ import { silentLogger } from '../src/log';
 import { filterSessionLines } from '../src/replay/filter';
 import { loadReplaySession, parseSession } from '../src/replay/load';
 import { createSessionRecorder } from '../src/replay/record';
+import { REPLAY_ALLOWED_PATHS } from '../src/replay/session';
 import { SYNTHETIC_A, SYNTHETIC_B, SYNTHETIC_T0, syntheticSession } from '../src/replay/synthetic';
 import { FakeFeed, hlTrade } from './helpers/fake-hl';
 import { NANSEN_BUILDER } from './helpers/fake-trading';
@@ -53,7 +54,11 @@ describe('session recorder', () => {
       body: JSON.stringify({ address: SYNTHETIC_A }),
     });
     const feed = new FakeFeed();
-    rec.attachFeed(feed, () => new Set(['BTC']));
+    rec.attachFeed(
+      feed,
+      () => new Set(['BTC']),
+      () => new Set([SYNTHETIC_A]),
+    );
     t = 2_000;
     feed.emitMids({ BTC: 1, DOGE: 2 }, t);
     feed.emitTrades([hlTrade('BTC', [SYNTHETIC_A, SYNTHETIC_B], t)]);
@@ -84,6 +89,66 @@ describe('session recorder', () => {
       },
     ]);
     expect([s.startT, s.endT]).toEqual([1_000, 2_000]);
+  });
+
+  it('records only HL trades involving a known address (listed companies, pending applicants)', () => {
+    const dir = join(tmpdir(), `ws-rec-${randomUUID()}`);
+    dirs.push(dir);
+    const rec = createSessionRecorder(join(dir, 's.ndjson'), () => 5_000);
+    const feed = new FakeFeed();
+    const known = new Set([SYNTHETIC_A]);
+    rec.attachFeed(
+      feed,
+      () => new Set(['BTC']),
+      () => known,
+    );
+    const STRANGER = '0x00000000000000000000000000000000000000e5';
+    // An unrelated trade on a held coin: not written.
+    feed.emitTrades([hlTrade('BTC', [STRANGER, COUNTERPARTY], 1)]);
+    // A mixed batch keeps only the known address's trade (matched case-insensitively).
+    feed.emitTrades([
+      hlTrade('BTC', [STRANGER, COUNTERPARTY], 2),
+      hlTrade('BTC', [COUNTERPARTY, SYNTHETIC_A.toUpperCase().replace('0X', '0x')], 3),
+    ]);
+    // An applicant that became known later is recorded from then on.
+    known.add(SYNTHETIC_B);
+    feed.emitTrades([hlTrade('BTC', [SYNTHETIC_B, COUNTERPARTY], 4)]);
+    feed.emitMids({ BTC: 1 }, 5_000);
+
+    const s = parseSession(readFileSync(rec.path, 'utf8'));
+    const trades = s.hl.flatMap((r) => (r.channel === 'trades' ? r.data : []));
+    expect(trades.map((t) => t.time)).toEqual([3, 4]);
+    expect(s.hl.filter((r) => r.channel === 'mids')).toHaveLength(1);
+  });
+
+  it('never writes non-redistributable bodies: leaderboard, smart money, cohort data, labels', async () => {
+    const dir = join(tmpdir(), `ws-rec-${randomUUID()}`);
+    dirs.push(dir);
+    const rec = createSessionRecorder(join(dir, 's.ndjson'), () => 7_000);
+    const bodies: Record<string, unknown> = {
+      '/api/v1/perp-leaderboard': { data: [{ trader_address: SYNTHETIC_A, total_pnl: 1 }] },
+      '/api/v1/smart-money/perp-trades': { data: [{ trader_address: SYNTHETIC_A }] },
+      '/api/v1/tgm/position-intelligence': { data: [{ smart_trader_longs_usd: 5 }] },
+      '/api/v1/profiler/address/first-funder': {
+        data: [{ first_funder_address: SYNTHETIC_B, first_funder_name: 'Secret Fund' }],
+      },
+      '/api/v1/profiler/perp-positions': { data: { assetPositions: [] } },
+    };
+    const f = rec.wrapFetch((async (input: string | URL | Request) => {
+      const path = new URL(String(input)).pathname;
+      return new Response(JSON.stringify(bodies[path]), { status: 200 });
+    }) as typeof fetch);
+    for (const path of Object.keys(bodies))
+      await f(`https://api.nansen.ai${path}`, { method: 'POST', body: '{}' });
+
+    const text = readFileSync(rec.path, 'utf8');
+    expect(text).not.toContain('trader_address');
+    expect(text).not.toContain('smart_trader_longs_usd');
+    expect(text).not.toContain('Secret Fund');
+    expect(parseSession(text).nansen.map((r) => r.path)).toEqual([
+      '/api/v1/profiler/address/first-funder',
+      '/api/v1/profiler/perp-positions',
+    ]);
   });
 });
 
@@ -343,6 +408,9 @@ describe('LIVE recording privacy', () => {
     const recorder = runtime.recorder;
     if (!recorder) throw new Error('RECORD=1 must create a recorder');
     expect(recorder.path.startsWith(join(dir, 'sessions'))).toBe(true);
+    // A test-driven HL feed in place of the real websocket.
+    const feed = new FakeFeed();
+    runtime.deps.hl = { ...runtime.deps.hl, feed };
     const { engine, app } = await boot(runtime);
 
     // A company listed through the real read path (recorded) → an IPO filing → a seed line.
@@ -360,6 +428,17 @@ describe('LIVE recording privacy', () => {
       positions: positions.value,
     });
     expect((await engine.hl.info.clearinghouse(SYNTHETIC_B)).ok).toBe(true);
+    // The HL tape: trades of the listed company and of a pending IPO applicant are kept.
+    const STRANGER = '0x00000000000000000000000000000000000000e5';
+    const APPLICANT = '0x00000000000000000000000000000000000000d7';
+    expect(engine.ipo.apply(engine.players.create('human').player.id, APPLICANT).ok).toBe(true);
+    feed.emitTrades([
+      hlTrade('BTC', [STRANGER, COUNTERPARTY], 11),
+      hlTrade('BTC', [SYNTHETIC_A, COUNTERPARTY], 12),
+      hlTrade('BTC', [COUNTERPARTY, APPLICANT], 13),
+    ]);
+    await engine.ipo.drained();
+    feed.emitTrades([hlTrade('BTC', [APPLICANT, COUNTERPARTY], 14)]);
     // The first tick runs the street-mood job: its derived cohort positioning is recorded.
     engine.tick();
     await engine.settle();
@@ -388,6 +467,12 @@ describe('LIVE recording privacy', () => {
     expect(s.nansen.some((r) => r.key.includes(SYNTHETIC_B))).toBe(true);
     expect(s.seeds.map((x) => x.address)).toEqual([SYNTHETIC_A]);
     expect(s.moods.map((m) => [m.coin, m.positioning])).toEqual([['BTC', COHORT]]);
+    // Once decided (not listed), the applicant's trades are no longer recorded.
+    const tape = s.hl.flatMap((r) => (r.channel === 'trades' ? r.data : []));
+    expect(tape.map((t) => t.time)).toEqual([12, 13]);
+    // The raw cohort body (and the scout's / credit check's calls) never reach the disk.
+    expect(text).not.toContain('smart_trader_longs_usd');
+    expect(s.nansen.filter((r) => !REPLAY_ALLOWED_PATHS.has(r.path))).toEqual([]);
     expect(text).not.toContain('/api/v1/perp/');
     expect(text.toLowerCase()).not.toContain(MASTER);
     expect(text).not.toContain('wallet_address');

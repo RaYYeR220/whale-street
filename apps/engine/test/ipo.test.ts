@@ -128,6 +128,20 @@ describe('ipo service', () => {
     expect(ipo.apply('p2', APP).ok).toBe(true);
   });
 
+  it('knows which applicants are still pending (the session recorder keeps their trades)', async () => {
+    const { w, nansen, info, ipo } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    expect(ipo.pendingAddresses().size).toBe(0);
+    expect(ipo.apply('p1', APP.toUpperCase().replace('0X', '0x')).ok).toBe(true);
+    expect([...ipo.pendingAddresses()]).toEqual([APP]);
+    await ipo.drained();
+    expect(ipo.pendingAddresses().size).toBe(0);
+    // Decided on the spot: never pending.
+    w.state.flags.creditFloor = true;
+    expect(ipo.apply('p1', LINK).ok).toBe(true);
+    expect(ipo.pendingAddresses().size).toBe(0);
+  });
+
   it('defers immediately below the credit floor and for unrecorded addresses in REPLAY', async () => {
     const a = setup();
     a.w.state.flags.creditFloor = true;

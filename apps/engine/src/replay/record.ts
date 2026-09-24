@@ -2,14 +2,25 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type HlFeed, recordFeed } from '@whale-street/hl';
 import { type CohortPositioning, recordingFetch } from '@whale-street/nansen';
-import type { SeedCompany, SessionLine } from './session';
+import { redistributable, type SeedCompany, type SessionLine } from './session';
 
 export interface SessionRecorder {
   readonly path: string;
-  /** Wraps a fetch so every response (Nansen or HL info) is appended as a NansenRecord line; headers are never stored. */
+  /**
+   * Wraps a fetch so every redistributable response (allowlisted Nansen path or HL info, labels
+   * scrubbed) is appended as a NansenRecord line; headers are never stored.
+   */
   wrapFetch(inner: typeof fetch): typeof fetch;
-  /** Records HL mids (throttled to 1/s) and trades for the given coins. */
-  attachFeed(feed: HlFeed, coins: () => ReadonlySet<string>): () => void;
+  /**
+   * Records HL mids (throttled to 1/s) for the given coins, and of the trades on those coins only
+   * the ones involving an address known at that moment (`addresses`: listed companies and pending
+   * IPO applicants; the engine reacts to no other trade).
+   */
+  attachFeed(
+    feed: HlFeed,
+    coins: () => ReadonlySet<string>,
+    addresses: () => ReadonlySet<string>,
+  ): () => void;
   seed(company: SeedCompany): void;
   /** Records the street mood the engine derived for one coin (never the raw Nansen body). */
   mood(coin: string, positioning: CohortPositioning): void;
@@ -17,16 +28,32 @@ export interface SessionRecorder {
 
 /**
  * LIVE + RECORD=1: appends NDJSON lines to `path` (under DATA_DIR/sessions, never inside the repo).
- * Only wrap the market-data reads with it: trading calls and the Mirror's reads of a player's own
- * wallet must go through an unwrapped fetch so no wallet, EIP-712 payload or signature is recorded.
+ * Every line passes the same redistribution policy as the bundler and the REPLAY loader, so raw
+ * leaderboard, smart-money or cohort bodies and label/name fields never land on disk (the engine
+ * still uses those responses in memory). Only wrap the market-data reads with it: trading calls
+ * and the Mirror's reads of a player's own wallet must go through an unwrapped fetch so no
+ * wallet, EIP-712 payload or signature is recorded.
  */
 export function createSessionRecorder(path: string, now: () => number = Date.now): SessionRecorder {
   mkdirSync(dirname(path), { recursive: true });
-  const write = (line: SessionLine) => appendFileSync(path, `${JSON.stringify(line)}\n`);
+  const write = (line: SessionLine) => {
+    const kept = redistributable(line);
+    if (kept) appendFileSync(path, `${JSON.stringify(kept)}\n`);
+  };
   return {
     path,
     wrapFetch: (inner) => recordingFetch(inner, write, now),
-    attachFeed: (feed, coins) => recordFeed(feed, write, { coins, now }),
+    attachFeed: (feed, coins, addresses) =>
+      recordFeed(
+        feed,
+        (r) => {
+          if (r.channel !== 'trades') return write(r);
+          const known = addresses();
+          const data = r.data.filter((t) => t.users.some((u) => known.has(u.toLowerCase())));
+          if (data.length > 0) write({ ...r, data });
+        },
+        { coins, now },
+      ),
     seed: (company) => write({ t: now(), k: 'seed', company }),
     mood: (coin, positioning) => write({ t: now(), k: 'mood', coin, positioning }),
   };

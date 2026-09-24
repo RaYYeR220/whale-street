@@ -59,6 +59,8 @@ export interface IpoService {
   apply(playerId: string | null, address: string): ApplyResult;
   get(id: string): IpoView | null;
   recent(limit: number): IpoView[];
+  /** Addresses of applications queued or under evaluation (not yet decided). */
+  pendingAddresses(): ReadonlySet<string>;
   /** Resolves when the application queue is empty. */
   drained(): Promise<void>;
 }
@@ -87,6 +89,8 @@ export function createIpoService(d: IpoDeps): IpoService {
   const params = d.params ?? PARAMS;
   const wallNow = d.wallNow ?? (() => d.clock.now());
   const queue: string[] = [];
+  /** Application id → address, while queued or under evaluation. */
+  const pending = new Map<string, string>();
   let running: Promise<void> | null = null;
 
   for (const stale of d.repos.ipoApps.recent(1_000).filter((a) => a.status === 'PENDING')) {
@@ -105,6 +109,7 @@ export function createIpoService(d: IpoDeps): IpoService {
     ticker: string | null = null,
   ) => {
     d.repos.ipoApps.update(id, { status, verdict, reason, ticker, decidedAt: d.clock.now() });
+    pending.delete(id);
     d.bus.emit({ t: 'ipo', update: { appId: id, kind: 'decided', status, ticker, reason } });
   };
 
@@ -210,6 +215,7 @@ export function createIpoService(d: IpoDeps): IpoService {
           'not in recording: REPLAY mode can only evaluate recorded addresses',
         );
       } else {
+        pending.set(id, address);
         queue.push(id);
         pump();
       }
@@ -224,6 +230,7 @@ export function createIpoService(d: IpoDeps): IpoService {
     recent(limit) {
       return d.repos.ipoApps.recent(limit).map(view);
     },
+    pendingAddresses: () => new Set(pending.values()),
     async drained() {
       while (running) await running;
     },

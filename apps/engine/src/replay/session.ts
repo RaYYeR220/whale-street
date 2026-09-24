@@ -62,10 +62,10 @@ export function scrubLabels(v: unknown): unknown {
 }
 
 /**
- * The redistribution policy for one record, shared by the bundler and the REPLAY loader: seed
- * lines, HL feed records and derived street-mood lines pass; Nansen / HL-info records only on an
- * allowlisted path, with label/name fields scrubbed from the body. `null` = must never be bundled
- * or served.
+ * The redistribution policy for one record, shared by the session recorder, the bundler and the
+ * REPLAY loader: seed lines, HL feed records and derived street-mood lines pass; Nansen / HL-info
+ * records only on an allowlisted path, with label/name fields scrubbed from the body. `null` =
+ * must never be recorded, bundled or served.
  */
 export function redistributable(r: SessionLine): SessionLine | null {
   if (r.k !== 'nansen') return r;
