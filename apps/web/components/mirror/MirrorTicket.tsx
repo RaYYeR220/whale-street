@@ -9,9 +9,11 @@ import { coinPx, pctAbs, shortAddress, usd } from '../../lib/format';
 import { isUsable, newAgent } from '../../lib/mirror/agent';
 import { type MirrorOutcome, type MirrorProgress, runMirror } from '../../lib/mirror/flow';
 import { approveAgentOnHl, approveBuilderFeeOnHl, hlErrorText } from '../../lib/mirror/hl';
-import { createIdbKeyStore } from '../../lib/mirror/keystore';
+import { createIdbKeyStore, type KeyStore } from '../../lib/mirror/keystore';
 import { linkWallet } from '../../lib/mirror/link';
 import {
+  ageText,
+  type CheckState,
   checkRows,
   MIRROR,
   mirrorUsage,
@@ -75,7 +77,15 @@ const QMARK = (
   </svg>
 );
 
-const store = typeof window === 'undefined' ? null : createIdbKeyStore();
+/** Stamp per check state: seal style, kanji, spoken label. */
+const SEAL: Record<CheckState, [string, string, string]> = {
+  pass: ['pass', '可', 'Passed'],
+  fail: ['fail', '否', 'Failed'],
+  warn: ['flag', '注', 'Fails on this page’s data; the engine decides'],
+  wait: ['wait', '?', 'Checked by the engine when you send'],
+};
+
+const browserStore = typeof window === 'undefined' ? null : createIdbKeyStore();
 
 function hint(r: MirrorReason, view: CompanyView, coin: string): string {
   const p = view.positions.find((x) => x.coin === coin);
@@ -91,7 +101,7 @@ function hint(r: MirrorReason, view: CompanyView, coin: string): string {
         ? 'Mirror reopens when trading resumes.'
         : 'A bankrupt company has nothing left to copy.';
     case 'STALE_DATA':
-      return 'We only copy positions seen in the last minute. The engine fetches a fresh snapshot when you send.';
+      return `We only copy positions seen in the last ${Math.round(MIRROR.maxSnapshotAgeMs / 1000)} seconds, and the engine could not refresh this trader's snapshot. Try again in a moment.`;
     case 'NOTIONAL_OUT_OF_RANGE':
       return `Enter between $${MIRROR.minNotionalUsd} and $${MIRROR.maxNotionalUsd}.`;
     case 'DAILY_CAP':
@@ -119,7 +129,15 @@ function hint(r: MirrorReason, view: CompanyView, coin: string): string {
 }
 
 /** "Mirror with real money": wallet → link → agent key → position → size → committee → sign → receipt. */
-export function MirrorTicket({ view }: { view: CompanyView }) {
+export function MirrorTicket({
+  view,
+  keyStore,
+}: {
+  view: CompanyView;
+  /** Where the agent key lives; defaults to this browser's IndexedDB (injectable for tests). */
+  keyStore?: KeyStore | null;
+}) {
+  const store = keyStore === undefined ? browserStore : keyStore;
   const api = useApi();
   const { token, player, refresh } = usePlayer();
   const now = useEngineNow();
@@ -177,7 +195,7 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, store]);
 
   useEffect(() => {
     if (coin && view.positions.some((p) => p.coin === coin)) return;
@@ -196,9 +214,9 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
   const usage = useMemo(() => mirrorUsage(orders, now ?? Date.now()), [orders, now]);
   const req = { coin: coin ?? '', notionalUsd: usdAmt, leverage: lev, stopLossPct: sl };
   const ctx = previewContext(view, coin ?? '', now ?? Date.now(), usage);
-  const decision = previewMirror(req, ctx);
-  const rows = checkRows(req, ctx, decision, view.ticker);
-  const fails = rows.filter((r) => r.fail).length;
+  // Advisory: only the player's own inputs block a send; the engine decides the rest on a fresh snapshot.
+  const preview = previewMirror(req, ctx);
+  const rows = checkRows(req, ctx, preview, view.ticker);
 
   const current: Step = !conn.address
     ? 'connect'
@@ -266,7 +284,7 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
   };
 
   const doSend = async () => {
-    if (!token || !address || !store || !coin || !decision.allow) return;
+    if (!token || !address || !store || !coin || !preview.canSend) return;
     const rec = await store.load(address);
     if (!isUsable(rec, Date.now())) {
       setAgentReady(false);
@@ -366,7 +384,7 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
     const ki = order.indexOf(key);
     if (current === 'size' && (key === 'size' || key === 'sign'))
       return key === 'sign' ? (outcome ? 'now' : 'future') : 'now';
-    if (current === 'size' && key === 'check') return decision.allow ? 'now' : 'bad';
+    if (current === 'size' && key === 'check') return preview.canSend ? 'now' : 'bad';
     if (ki < ci) return 'done';
     if (ki === ci) return 'now';
     return 'future';
@@ -556,7 +574,8 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
               />
               <span className="co-mctl__note" id="m-usd-note">
                 Used today <b>${usage.dailyUsd}</b> of ${MIRROR.dailyCapUsd}. Open mirrors{' '}
-                <b>{usage.open}</b> of {MIRROR.maxOpen}.
+                <b>{usage.open}</b> of {MIRROR.maxOpen}. That is this player's log; the engine
+                counts every order from this wallet and has the final say.
               </span>
             </div>
             <div className="co-mctl">
@@ -625,25 +644,50 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
         if (current !== 'size' || outcome) return null;
         return (
           <div>
-            {decision.allow ? (
+            {!preview.canSend ? (
               <div className="co-verdict">
-                <Hanko kanji="承認" word="CLEARED" tone="blue" label="Cleared" />
+                <Hanko kanji="否決" word="REFUSED" label="Refused" />
                 <p>
-                  <b>All 12 checks pass here.</b>The engine checks again on a fresh snapshot when
-                  you send.
+                  <b>
+                    Refused: {preview.blocking.length} of {rows.length} checks failed.
+                  </b>
+                  Nothing will be sent to Hyperliquid.
+                </p>
+              </div>
+            ) : preview.advisory.length > 0 ? (
+              <div className="co-verdict">
+                <p>
+                  <b>The engine will probably refuse this.</b>
+                  On this page's data {preview.advisory.length} of {rows.length} checks fail. The
+                  engine checks again on a fresh snapshot when you send, and nothing is signed
+                  unless it passes.
                 </p>
               </div>
             ) : (
               <div className="co-verdict">
-                <Hanko kanji="否決" word="REFUSED" label="Refused" />
+                <Hanko kanji="承認" word="CLEARED" tone="blue" label="Cleared" />
                 <p>
-                  <b>Refused: {fails} of 12 checks failed.</b>Nothing will be sent to Hyperliquid.
+                  <b>Every check this page can run passes.</b>The engine checks again on a fresh
+                  snapshot when you send, and only its answer counts.
                 </p>
               </div>
             )}
-            {decision.allow ? null : (
-              <ul className="co-refusals" aria-label="Why the committee refused">
-                {decision.refusals.map((r) => (
+            {preview.staleMs !== null ? (
+              <p className="co-sub" style={{ margin: '8px 0' }}>
+                The trader's snapshot here is {ageText(preview.staleMs)} old. The engine refreshes
+                it when you send.
+              </p>
+            ) : null}
+            {preview.blocking.length > 0 || preview.advisory.length > 0 ? (
+              <ul
+                className="co-refusals"
+                aria-label={
+                  preview.canSend
+                    ? 'What the engine will likely refuse'
+                    : 'Why the committee refused'
+                }
+              >
+                {[...preview.blocking, ...preview.advisory].map((r) => (
                   <li key={r.code} className="co-refusal">
                     <span className="co-refusal__code">{r.code}</span>
                     <q>{r.message}</q>
@@ -651,21 +695,21 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
                   </li>
                 ))}
               </ul>
-            )}
+            ) : null}
             <ul className={`co-mchecks${reduce ? '' : ' is-stamping'}`} aria-label="Policy checks">
               {rows.map((r, i) => (
                 <li
                   key={r.code}
-                  className={r.fail ? 'is-fail' : undefined}
+                  className={r.state === 'fail' ? 'is-fail' : undefined}
                   style={{ ['--i' as string]: i }}
                 >
                   <span
                     className="co-seal co-seal--sm"
-                    data-s={r.fail ? 'fail' : 'pass'}
+                    data-s={SEAL[r.state][0]}
                     role="img"
-                    aria-label={r.fail ? 'Failed' : 'Passed'}
+                    aria-label={SEAL[r.state][2]}
                   >
-                    <span>{r.fail ? '否' : '可'}</span>
+                    <span>{SEAL[r.state][1]}</span>
                   </span>
                   <span>
                     <b>{r.label}</b>
@@ -708,14 +752,14 @@ export function MirrorTicket({ view }: { view: CompanyView }) {
             <button
               className="ws-btn"
               type="button"
-              disabled={!decision.allow}
+              disabled={!preview.canSend}
               onClick={() => void doSend()}
             >
-              {decision.allow ? `Sign and send $${usdAmt} mirror` : 'Refused by the committee'}
+              {preview.canSend ? `Sign and send $${usdAmt} mirror` : 'Refused by the committee'}
             </button>
             <p>
-              {decision.allow
-                ? `Your agent key signs 2 actions for the Nansen Trading API: set ${coin} leverage to ${lev}x (cross), then a market ${pos && pos.size > 0 ? 'buy' : 'sell'} with your stop attached. Slippage limit 1%.`
+              {preview.canSend
+                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${coin} leverage to ${lev}x (cross), then a market ${pos && pos.size > 0 ? 'buy' : 'sell'} with your stop attached. Slippage limit 1%.`
                 : 'Nothing was signed or sent. Fix what the committee refused and the stamps re-check instantly.'}
             </p>
           </div>

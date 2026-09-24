@@ -256,7 +256,7 @@ describe('policy preview', () => {
     ],
   });
 
-  it('counts open mirrors and today’s notional from the order log', () => {
+  it('counts open mirrors of any age (as the engine does) and today’s notional', () => {
     const base = {
       groupId: 'g',
       ticker: 'OOH',
@@ -277,31 +277,67 @@ describe('policy preview', () => {
       ],
       T0,
     );
-    expect(usage).toEqual({ open: 1, dailyUsd: 110 });
+    expect(usage).toEqual({ open: 2, dailyUsd: 110 });
   });
 
-  it('refuses a late entry (anti-FOMO) and marks that stamp failed', () => {
-    const ctx = previewContext(view, 'BTC', T0, { open: 0, dailyUsd: 0 });
-    const req = { coin: 'BTC', notionalUsd: 50, leverage: 2, stopLossPct: 0.25 };
-    const decision = previewMirror(req, ctx);
-    expect(decision.allow).toBe(true);
-    const late = previewContext(
-      companyView({
-        ...view,
-        positions: [
-          { ...(view.positions[0] as (typeof view.positions)[number]), mark: 111_200 * 1.08 },
-        ],
-      }),
-      'BTC',
-      T0,
-      { open: 0, dailyUsd: 0 },
-    );
-    const refused = previewMirror(req, late);
-    expect(refused.allow).toBe(false);
-    const rows = checkRows(req, late, refused, 'OOH');
+  const req = { coin: 'BTC', notionalUsd: 50, leverage: 2, stopLossPct: 0.25 };
+  const at = (o: Partial<typeof view> = {}) =>
+    previewContext(companyView({ ...view, ...o }), 'BTC', T0, { open: 0, dailyUsd: 0 });
+
+  it('clears a good order', () => {
+    const p = previewMirror(req, at());
+    expect(p).toEqual({ canSend: true, blocking: [], advisory: [], staleMs: null });
+    expect(checkRows(req, at(), p, 'OOH').every((r) => r.state === 'pass')).toBe(true);
+  });
+
+  it('never blocks a send on snapshot age: the engine refreshes the snapshot at prepare', () => {
+    const ctx = at({ lastSnapshotAt: T0 - 5 * 60_000 });
+    const p = previewMirror(req, ctx);
+    expect(p.canSend).toBe(true);
+    expect(p.blocking).toEqual([]);
+    expect(p.advisory).toEqual([]);
+    expect(p.staleMs).toBe(5 * 60_000);
+    const row = checkRows(req, ctx, p, 'OOH').find((r) => r.code === 'STALE_DATA');
+    expect(row).toMatchObject({ state: 'wait' });
+    expect(row?.value).toBe('snapshot 5 min old, refreshed when you send');
+  });
+
+  it('keeps refusals on market data advisory: only the engine’s fresh check decides', () => {
+    const late = at({
+      positions: [
+        { ...(view.positions[0] as (typeof view.positions)[number]), mark: 111_200 * 1.08 },
+      ],
+    });
+    const p = previewMirror(req, late);
+    expect(p.canSend).toBe(true);
+    expect(p.blocking).toEqual([]);
+    expect(p.advisory.map((r) => r.code)).toEqual(['ANTI_FOMO']);
+    const rows = checkRows(req, late, p, 'OOH');
     expect(rows).toHaveLength(12);
-    expect(rows.filter((r) => r.fail).map((r) => r.code)).toEqual(['ANTI_FOMO']);
+    expect(rows.filter((r) => r.state !== 'pass').map((r) => [r.code, r.state])).toEqual([
+      ['ANTI_FOMO', 'warn'],
+    ]);
     expect(PARAMS.mirror.antiFomoPct).toBeLessThan(0.08);
+    const busy = previewMirror(
+      req,
+      previewContext(companyView(view), 'BTC', T0, { open: 3, dailyUsd: 280 }),
+    );
+    expect(busy.canSend).toBe(true);
+    expect(busy.advisory.map((r) => r.code)).toEqual(['TOO_MANY_OPEN', 'DAILY_CAP']);
+  });
+
+  it('blocks only the player’s own inputs out of range', () => {
+    for (const [bad, code] of [
+      [{ notionalUsd: 500 }, 'NOTIONAL_OUT_OF_RANGE'],
+      [{ stopLossPct: 0.9 }, 'STOP_LOSS_TOO_LOOSE'],
+      [{ leverage: 9 }, 'LEVERAGE_CAP'],
+    ] as const) {
+      const r = { ...req, ...bad };
+      const p = previewMirror(r, at());
+      expect(p.canSend, code).toBe(false);
+      expect(p.blocking.map((x) => x.code)).toEqual([code]);
+      expect(checkRows(r, at(), p, 'OOH').find((x) => x.code === code)?.state).toBe('fail');
+    }
   });
 });
 
