@@ -1,0 +1,43 @@
+import { expect, test } from '@playwright/test';
+import { listedTickers, watchErrors } from './helpers';
+
+test('the floor shows the REPLAY badge and ticks', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/floor');
+  const badge = page.locator('.ws-topbar [data-mode="replay"]');
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveText(/^REPLAY · /);
+  await expect(page.getByTestId('roster').locator('.ws-co').first()).toBeVisible();
+  await expect(page.getByText('Powered by Nansen API').first()).toBeVisible();
+
+  const strip = page.locator('.ws-strip');
+  await expect(strip).toHaveAttribute('data-market-at', /\d+/);
+  const first = Number(await strip.getAttribute('data-market-at'));
+  await expect
+    .poll(async () => Number(await strip.getAttribute('data-market-at')), { timeout: 10_000 })
+    .toBeGreaterThan(first);
+  expect(errors).toEqual([]);
+});
+
+test('a company page takes a play-money order', async ({ page, request }) => {
+  const [ticker] = await listedTickers(request);
+  expect(ticker, 'the engine lists at least one active company').toBeTruthy();
+  await page.goto(`/c/${ticker}`);
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(String(ticker));
+  // Wait for the anonymous player (the chip shows a handle once the engine answered).
+  await expect(page.locator('.ws-player')).toContainText('$10,000.00');
+  const buy = page.getByRole('button', { name: new RegExp(`^Buy [\\d.]+ ${ticker}$`) });
+  await expect(buy).toBeEnabled();
+  await buy.click();
+  await expect(page.locator('.ws-toast')).toContainText(`Bought`);
+  await expect(page.locator('.co-pos, .co-position').first()).toContainText('shares at');
+});
+
+test('Mirror says it is off when the engine has no trading key', async ({ page, request }) => {
+  const [ticker] = await listedTickers(request);
+  await page.goto(`/c/${ticker}`);
+  const off = page.getByTestId('mirror-off');
+  await expect(off).toBeVisible();
+  await expect(off).toContainText('Mirror is off on this engine');
+  await expect(page.getByTestId('mirror-on')).toHaveCount(0);
+});

@@ -7,12 +7,13 @@
     "node": "24.x"
   },
   "scripts": {
-    "dev": "pnpm --filter @whale-street/engine dev",
+    "dev": "node scripts/dev.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json && pnpm --filter @whale-street/web typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
+    "e2e": "pnpm --filter @whale-street/web e2e",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "devDependencies": {
