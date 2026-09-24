@@ -1,0 +1,1232 @@
+{
+  "portraits": [
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "381d151281ff64ac449f4fef544d4d650fa1fe9e37f452c35baa9f4827fdc912",
+      "length": 7940
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "61ff2dde9177fc5f5790ca20674e68289a26b05980dcd8906fdeb2d937528ccb",
+      "length": 4150
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "69d91801b29572255480a5ad6f58eaf0a4fa72f7dd1e41b06213b3c95051425e",
+      "length": 10342
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "232c07eb6a675657a984c29a02616378128e421720bb2ffff3e885f97de7ab7f",
+      "length": 8496
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "83278a5e4b1c0ad03ccc61cda40640b880b86070fa7cce1ef5729e1490465760",
+      "length": 4463
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "43d9c5becc9cd02b84ad8a96fb179e1af8237a7a3f026349db4c2830eec2e464",
+      "length": 4185
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "05de367f2e3aa771652fc25bb8f3e111a5724c6a1ca74ad5303ab00f378542e2",
+      "length": 4282
+    },
+    {
+      "opts": {
+        "seed": "OOH",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "adeaba36abd4b50c5b17eef3e9fdb7c9d058bedb7c2138e0701d855e1eb336f5",
+      "length": 4150
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "4da6ffdd55addfba3f0108f6f41ac8fd9b5a84472e6074e1c8614b6fdaad0478",
+      "length": 8114
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "e5389e588a9107c3981c8ca40a342b25f4224cabf1f372f87b0857270a991572",
+      "length": 4324
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "9f2cd296d5714e909dbadf42921a8c6cc50205360ed7b7e24c51b635522e7f43",
+      "length": 10516
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "895afcda34648a75f9e12abec176135d21b5498c5841adccfeb9f92b0274be66",
+      "length": 8670
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "2ba62afd49e501ecf38855d6020ef13b10173c3414d9e2367bb8710575662f37",
+      "length": 4637
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "7eae541fc7958d3a6bee3e633bcdae7505e4eedaad29c7dcd86eadfb85beffd9",
+      "length": 4359
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "f117a07053ae643e849ac6ebf12213b4d326af4bfb2fb15b076322540ebed407",
+      "length": 4456
+    },
+    {
+      "opts": {
+        "seed": "GBC",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "1d8cbfa279effba0362401f49fe347acd0c28c95788e2f8558bdf13fbe9bd47a",
+      "length": 4324
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "ebe7a105c567944055527494ad25231229b7dd4034c603fb2ab876f181babe20",
+      "length": 7557
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "3852b8247e4beca18fdae8da9c363b21c562b51a498f57c4f24db99d4b563540",
+      "length": 3767
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "311bd087da7d0f42135385151e9c49373c0c8f13cb6aa02bafa4074c5371a9ab",
+      "length": 9914
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "b2fca48395b7446adc3a0412b42223674f99a8f933452171a9b3b6396e294a6c",
+      "length": 8113
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "eeb02e8d7678f9030624ab357c76c5c8d58b2e68d22af9a2ec11816cca0c534f",
+      "length": 4080
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "4a801a8c0a321e9246a1525be4e3d6d322c07befcec1029ce15cce9fc21180f9",
+      "length": 3802
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "fb407040eef2a0d49fafe9a1d2145e2fe82d5a5c272efbacef0cf76380a06831",
+      "length": 3899
+    },
+    {
+      "opts": {
+        "seed": "CMP",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "98967967e9346e0c7ab35d3bb821663cff395191f0c88133c779c1c857f03291",
+      "length": 3767
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "fda9b1871039bdb88a79a3c4ad43adaba61785206862021d80a81fe1748ccf0c",
+      "length": 7019
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "7eaabc9dc170ca928c95843bd66e9851944e4c387ad218d77af6fcdf8e84b334",
+      "length": 3229
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "3702f8cacf96f6ff56a36ffa606c1bd79fae52e83b335ab0c9e56bc4fa782562",
+      "length": 9376
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "035f02d5afc795a409eb2f59b53cf440a5b7a3e84ab737884a82e40e0ba423ff",
+      "length": 7575
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "5a890d9a2639108a28b07d05cd094ae82bb6914d15ebf0ef735a3dbb8d8d5f50",
+      "length": 3542
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "c141baf9200ca7e2b67be39acbb4c82abad4fff714951e3881d1090c5eff6836",
+      "length": 3264
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "4c131f553e4bc73f0b4baf4d53633e654f9a7091ae63a40d22c2ef27228f5d81",
+      "length": 3361
+    },
+    {
+      "opts": {
+        "seed": "ISV",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "022110f7b254b06d6c861431ad967c16609e39611edc297369546487b511ca2e",
+      "length": 3229
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "5bb635a65c647bc8accf0574c0f91dfc7fae15ed409a793ae2a1866d54a1ef30",
+      "length": 7611
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "2aec6d8a48f2eb72551df375bb37728b9e781dfd8257c1cdcfa5a156e4197389",
+      "length": 3821
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "6d55d3b8573b3944a0c9476d02441a25c976844eb82cef1a4d37777f4dc6386d",
+      "length": 9968
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "b507aa4056f9751a626a00d0b7ae8b7047267a8975a83dad24104473939ab660",
+      "length": 8167
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "34c7b6214e4b0a7159be7776a4bfc84d4485b4610ce1279f6be86eeb7edca4ae",
+      "length": 4134
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "75a35729eee6eda0537ea82b4eb73e3fdc84ed677e9d32d01ad95dd2829fc3e3",
+      "length": 3856
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "a94153892307f295af3e6e77be3cfb3d31a7bcf0ed892b08ae7431376209a1db",
+      "length": 3953
+    },
+    {
+      "opts": {
+        "seed": "VPG",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "f95ca82bc06fadc945ccbad54a01766d74f0fb5fee959264241dcd6b06a37f4b",
+      "length": 3821
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "5438c3e15fccf9f35d1ad32597e9797e4fd020a163dacb544088016e86a737fd",
+      "length": 7988
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "b634b5b8afb33023501906927a9f9132221364143b88b0bc0bb9f3f3235154b7",
+      "length": 4198
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "dd9c6599b404a8263d19c985caafeafcc7a45ed5b1eec57a8a95f5d44e11dd5e",
+      "length": 10390
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "750ec119e6d27da10d5adb20ad13312a6aba7a40e78cfbdcfe5774ee85d39ae1",
+      "length": 8544
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "68aa193db6bc57b0a301f8f787d74ff6530c9ab3c8ebbabb6eb853e1f8163db7",
+      "length": 4511
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "556c2c658f672b8ee3aa29847b46f084d0e643dec9be1628b55727bc8c95585e",
+      "length": 4233
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "ba4cfe86270b41d4c276501a0e3774202cb73e7e3aa85b145fb6d46c880623b5",
+      "length": 4330
+    },
+    {
+      "opts": {
+        "seed": "LMH",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "eb1317b1b41d1db8e18accee502c4827cf43a9dc77d5fee21ce7c85966c3af0e",
+      "length": 4198
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "088dc71c16614972e54e28859017bc8c5253d8178d953ca119f135fac574f8f2",
+      "length": 7488
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "073c65abbc417e7c942fa1a213cd8330ab024dd30296d24089afcda02ce5af81",
+      "length": 3698
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "7b35a10ddfa6f99a120232b28cba6cfb8e990afae7e229e8cf49856c73e10066",
+      "length": 9845
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "8458e531b4e61c21fe6350dcc1c82b7b316dfe7ea2047367341a68f2216e3c74",
+      "length": 8044
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "a6737cda2ab20649598a8e77c20c2ce4d02b38373da178557cda2729538ad3ea",
+      "length": 4011
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "dd3c11d7617c8831a3d2fb9615d3ac9a8f304181e2a39239bb3459610fd7a8f0",
+      "length": 3733
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "5e7f1455b4deb467131da5b23b7219d46d6d6c50433bf6f7c2cfe7e757754038",
+      "length": 3830
+    },
+    {
+      "opts": {
+        "seed": "QLP",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "129c3ec2d73a237ba6306796adc18165bcb2b612246fbb6e67caeb7901b7e809",
+      "length": 3698
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "4406f2300ab66caef369302d6e31331f1e200f849aece58a8eb1ecc967490a2f",
+      "length": 7223
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "555ddc78280f87007071a432692d9c0a5afd679b6975f90c0b16bb747a4e04ba",
+      "length": 3433
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "75ead4833b365be58bfcff06b8385be8af29d24cd9ca380d412ee4406f25c756",
+      "length": 9580
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "277d59b9a66430db57e700a03b0f257a42f30490246ded96ac6adc81821b3a96",
+      "length": 7779
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "3c87a3a2919a607a3f38fe28644ab42b3a6355966e769e177b859d19032e1c6c",
+      "length": 3746
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "d197b5bb0253284abd6d6bd516c1f460f37e7b826a296c72004cad7beca603dc",
+      "length": 3468
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "2f053d333f90f8314a4b51ad5c2ff43b0aaa924fbe948d0eef41bacebfddf77d",
+      "length": 3565
+    },
+    {
+      "opts": {
+        "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "f765cfe5a81cdb104670884fc59b67d98f5e8c3da82f44cfcdaa377069188c11",
+      "length": 3433
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "2e5984b9adfb672a364874de1f8303fe3973463059c2929b4fafcf1704c9154d",
+      "length": 7571
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "94dac4f9fd54cccf975968de89d5f6bb927908e126f7b0f8434c777387cfba04",
+      "length": 3781
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "1986f4dbc4d21fbae750faacf0ffecb4fac42e56e5266710b0b23708c5fdbddf",
+      "length": 9928
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "40995d700db614aa7a3cfcde2068a49a5a9b070b9614764fe2e90edf7954aacd",
+      "length": 8127
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "7bf9dfd48839c35dc403ca742f4e66b4d2a1ec0e57038d5fdda4eb6e6f02b616",
+      "length": 4094
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "4c1cfaed9d8a31649cd55b7e85df0a98694608242321b6e92a787a566304a64f",
+      "length": 3816
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "608f6bf46385a5d0df921ce1d2355dc537bc3b402729b5578bcbe737043bc772",
+      "length": 3913
+    },
+    {
+      "opts": {
+        "seed": "Velvet Anchovy #412",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "bd57973e5143e72c467a6a44f50c53ec5cf7a6fa4ba19eecb19afef8f395e73d",
+      "length": 3781
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.82,
+        "trend": 0.052,
+        "hype": 0.117,
+        "status": "active",
+        "size": 212
+      },
+      "sha256": "c0ac42f07f8577621712c2b0e3f8fa2b05cde7dca88bd8adbb752b74c0a8031f",
+      "length": 7953
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.41,
+        "trend": -0.012,
+        "hype": -0.08,
+        "status": "active",
+        "size": 96
+      },
+      "sha256": "9c2d7e5a41f864134f574c07d103253c0e7a1bfb6552fc76e4b8cf72e15bfeda",
+      "length": 4163
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.12,
+        "trend": 0.009,
+        "hype": 0.103,
+        "status": "active",
+        "size": 150
+      },
+      "sha256": "324e898dc6b2e1009fcd4a748cc7b3a1b94c8076dfd13edf855d538b5a522ffb",
+      "length": 10355
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.27,
+        "trend": -0.031,
+        "hype": -0.167,
+        "status": "active",
+        "size": 64
+      },
+      "sha256": "b5afda76f157a3d3f86950c52a28838754ad4ac6bfbe81d4baed8af66d53a229",
+      "length": 8509
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.71,
+        "trend": 0.012,
+        "hype": 0.031,
+        "status": "ipo",
+        "size": 92
+      },
+      "sha256": "2a3d6a8edb6e348b781e0b264eccbaca79197b8033dc35b4c0d9d6bf79af13e3",
+      "length": 4476
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0.66,
+        "trend": 0,
+        "hype": 0.037,
+        "status": "halted",
+        "size": 92
+      },
+      "sha256": "d7954090145c5be33d093eca953d09c961f72b96d24920d438b72728e9d35164",
+      "length": 4198
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": 0,
+        "trend": -1,
+        "hype": 0,
+        "status": "bankrupt",
+        "size": 164
+      },
+      "sha256": "61c286b6e694af3a3669f7721b85a23ca2deb1b09f6fc2adf54e2898da01859e",
+      "length": 4295
+    },
+    {
+      "opts": {
+        "seed": "committee-kobayashi",
+        "hp": null,
+        "trend": 0,
+        "hype": 0,
+        "status": "active",
+        "size": 48
+      },
+      "sha256": "e2a02098f169814e016fd2959c9d84677589c3ceb47a86d4ee2d2eccae2487aa",
+      "length": 4163
+    }
+  ],
+  "traits": [
+    {
+      "seed": "OOH",
+      "traits": {
+        "face": "square",
+        "hair": "slick",
+        "hairTone": "ink",
+        "glasses": "round",
+        "accessory": "calculator",
+        "tie": "pink",
+        "jacket": "blue",
+        "facial": "none"
+      }
+    },
+    {
+      "seed": "GBC",
+      "traits": {
+        "face": "square",
+        "hair": "combover",
+        "hairTone": "ink",
+        "glasses": "round",
+        "accessory": "calculator",
+        "tie": "ink",
+        "jacket": "pinstripe",
+        "facial": "stubble"
+      }
+    },
+    {
+      "seed": "CMP",
+      "traits": {
+        "face": "long",
+        "hair": "bob",
+        "hairTone": "blue",
+        "glasses": "round",
+        "accessory": "none",
+        "tie": "pink",
+        "jacket": "ink",
+        "facial": "stubble"
+      }
+    },
+    {
+      "seed": "ISV",
+      "traits": {
+        "face": "long",
+        "hair": "slick",
+        "hairTone": "blue",
+        "glasses": "square",
+        "accessory": "none",
+        "tie": "ink",
+        "jacket": "pinstripe",
+        "facial": "moustache"
+      }
+    },
+    {
+      "seed": "VPG",
+      "traits": {
+        "face": "round",
+        "hair": "pompadour",
+        "hairTone": "ink",
+        "glasses": "round",
+        "accessory": "coffee",
+        "tie": "ink",
+        "jacket": "ink",
+        "facial": "none"
+      }
+    },
+    {
+      "seed": "LMH",
+      "traits": {
+        "face": "square",
+        "hair": "buzz",
+        "hairTone": "ink",
+        "glasses": "round",
+        "accessory": "phone",
+        "tie": "ink",
+        "jacket": "blue",
+        "facial": "stubble"
+      }
+    },
+    {
+      "seed": "QLP",
+      "traits": {
+        "face": "long",
+        "hair": "spiky",
+        "hairTone": "ink",
+        "glasses": "reading",
+        "accessory": "pencil",
+        "tie": "pink",
+        "jacket": "pinstripe",
+        "facial": "moustache"
+      }
+    },
+    {
+      "seed": "0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2",
+      "traits": {
+        "face": "round",
+        "hair": "side",
+        "hairTone": "ink",
+        "glasses": "none",
+        "accessory": "earpiece",
+        "tie": "blue",
+        "jacket": "blue",
+        "facial": "moustache"
+      }
+    },
+    {
+      "seed": "Velvet Anchovy #412",
+      "traits": {
+        "face": "round",
+        "hair": "side",
+        "hairTone": "ink",
+        "glasses": "shades",
+        "accessory": "pencil",
+        "tie": "blue",
+        "jacket": "blue",
+        "facial": "none"
+      }
+    },
+    {
+      "seed": "committee-kobayashi",
+      "traits": {
+        "face": "square",
+        "hair": "spiky",
+        "hairTone": "ink",
+        "glasses": "square",
+        "accessory": "coffee",
+        "tie": "blue",
+        "jacket": "ink",
+        "facial": "moustache"
+      }
+    }
+  ],
+  "sparks": [
+    {
+      "input": {
+        "nav": [100, 101, 102.5, 101.8, 103],
+        "price": [104, 103, 101, 102.4, 108]
+      },
+      "html": "<div class=\"ws-spark\" data-spark=\"sp0\" role=\"img\"><svg viewBox=\"0 0 100 40\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ws-spark__gap ws-spark__gap--up\" d=\"M0.00 20.00L25.00 24.03L25.00 32.10L0.00 36.13ZM25.00 24.03L39.29 28.64L39.29 28.64L25.00 32.10ZM67.86 28.06L75.00 26.45L75.00 28.87L67.86 28.06ZM75.00 26.45L100.00 3.87L100.00 24.03L75.00 28.87Z\"/><path class=\"ws-spark__gap ws-spark__gap--down\" d=\"M39.29 28.64L50.00 32.10L50.00 26.05L39.29 28.64ZM50.00 32.10L67.86 28.06L67.86 28.06L50.00 26.05Z\"/><path class=\"ws-spark__price\" d=\"M0.00 20.00 L25.00 24.03 L50.00 32.10 L75.00 26.45 L100.00 3.87 \" vector-effect=\"non-scaling-stroke\"/><path class=\"ws-spark__nav\" d=\"M0.00 36.13 L25.00 32.10 L50.00 26.05 L75.00 28.87 L100.00 24.03 \" vector-effect=\"non-scaling-stroke\"/></svg><i class=\"ws-spark__dot ws-spark__dot--price\" style=\"left:100.00%;top:9.68%\"></i><i class=\"ws-spark__dot ws-spark__dot--nav\" style=\"left:100.00%;top:60.08%\"></i><i class=\"ws-spark__x\" hidden></i></div>"
+    },
+    {
+      "input": {
+        "nav": [null, null, 100, 100.4, 99.8, 100.9],
+        "price": [null, null, 100, 101.2, 98.7, 103.3]
+      },
+      "html": "<div class=\"ws-spark\" data-spark=\"sp1\" role=\"img\"><svg viewBox=\"0 0 100 40\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ws-spark__gap ws-spark__gap--up\" d=\"M40.00 27.01L60.00 18.60L60.00 24.21L40.00 27.01ZM60.00 18.60L68.42 25.98L68.42 25.98L60.00 24.21ZM86.29 25.99L100.00 3.87L100.00 20.70L86.29 25.99Z\"/><path class=\"ws-spark__gap ws-spark__gap--down\" d=\"M68.42 25.98L80.00 36.13L80.00 28.42L68.42 25.98ZM80.00 36.13L86.29 25.99L86.29 25.99L80.00 28.42Z\"/><path class=\"ws-spark__price\" d=\"M40.00 27.01 L60.00 18.60 L80.00 36.13 L100.00 3.87 \" vector-effect=\"non-scaling-stroke\"/><path class=\"ws-spark__nav\" d=\"M40.00 27.01 L60.00 24.21 L80.00 28.42 L100.00 20.70 \" vector-effect=\"non-scaling-stroke\"/></svg><i class=\"ws-spark__dot ws-spark__dot--price\" style=\"left:100.00%;top:9.68%\"></i><i class=\"ws-spark__dot ws-spark__dot--nav\" style=\"left:100.00%;top:51.75%\"></i><i class=\"ws-spark__x\" hidden></i></div>"
+    },
+    {
+      "input": {
+        "nav": [50, 50, 50],
+        "price": [null, null, null]
+      },
+      "html": "<div class=\"ws-spark\" data-spark=\"sp2\" role=\"img\"><svg viewBox=\"0 0 100 40\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path class=\"ws-spark__gap ws-spark__gap--up\" d=\"\"/><path class=\"ws-spark__gap ws-spark__gap--down\" d=\"\"/><path class=\"ws-spark__price\" d=\"\" vector-effect=\"non-scaling-stroke\"/><path class=\"ws-spark__nav\" d=\"M0.00 20.00 L50.00 20.00 L100.00 20.00 \" vector-effect=\"non-scaling-stroke\"/></svg><i class=\"ws-spark__dot ws-spark__dot--nav\" style=\"left:100.00%;top:50.00%\"></i><i class=\"ws-spark__x\" hidden></i></div>"
+    }
+  ],
+  "hps": [
+    {
+      "hp": 0.95,
+      "band": "calm",
+      "html": "<div class=\"ws-hp\" data-band=\"calm\" style=\"--hp:0.950\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"95\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"></span></span><span class=\"ws-hp__v\">95%</span></div>"
+    },
+    {
+      "hp": 0.6,
+      "band": "calm",
+      "html": "<div class=\"ws-hp\" data-band=\"calm\" style=\"--hp:0.600\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"60\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"></span></span><span class=\"ws-hp__v\">60%</span></div>"
+    },
+    {
+      "hp": 0.45,
+      "band": "tense",
+      "html": "<div class=\"ws-hp\" data-band=\"tense\" style=\"--hp:0.450\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"45\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"9\" height=\"13\" viewBox=\"-0.5 -0.5 9 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">45%</span></div>"
+    },
+    {
+      "hp": 0.3,
+      "band": "tense",
+      "html": "<div class=\"ws-hp\" data-band=\"tense\" style=\"--hp:0.300\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"30\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"9\" height=\"13\" viewBox=\"-0.5 -0.5 9 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">30%</span></div>"
+    },
+    {
+      "hp": 0.2,
+      "band": "panic",
+      "html": "<div class=\"ws-hp\" data-band=\"panic\" style=\"--hp:0.200\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"20\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"16\" height=\"13\" viewBox=\"-0.5 -0.5 16 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(7 3)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">20%</span></div>"
+    },
+    {
+      "hp": 0.149,
+      "band": "meltdown",
+      "html": "<div class=\"ws-hp\" data-band=\"meltdown\" style=\"--hp:0.149\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"15\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"23\" height=\"13\" viewBox=\"-0.5 -0.5 23 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(7 3)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(14 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">15%</span></div>"
+    },
+    {
+      "hp": 0.05,
+      "band": "meltdown",
+      "html": "<div class=\"ws-hp\" data-band=\"meltdown\" style=\"--hp:0.050\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"5\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"23\" height=\"13\" viewBox=\"-0.5 -0.5 23 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(7 3)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(14 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">5%</span></div>"
+    },
+    {
+      "hp": 0,
+      "band": "meltdown",
+      "html": "<div class=\"ws-hp\" data-band=\"meltdown\" style=\"--hp:0.000\" role=\"meter\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"0\" aria-label=\"Distance to liquidation\"><span class=\"ws-hp__k\">HP</span><span class=\"ws-hp__bar\"><span class=\"ws-hp__fill\"></span><span class=\"ws-hp__drops\"><svg width=\"23\" height=\"13\" viewBox=\"-0.5 -0.5 23 13\" aria-hidden=\"true\"><path transform=\"translate(0 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(7 3)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/><path transform=\"translate(14 0)\" d=\"M3.5 0 Q7 5.5 3.5 9.5 Q0 5.5 3.5 0 Z\" fill=\"var(--ws-blue,#0078bf)\" stroke=\"var(--ws-ink,#1a1714)\" stroke-width=\"0.8\"/></svg></span></span><span class=\"ws-hp__v\">0%</span></div>"
+    }
+  ],
+  "fmt": [
+    {
+      "n": 0,
+      "price": "0.00",
+      "usd": "$0.00",
+      "compact": "$0"
+    },
+    {
+      "n": 0.5,
+      "price": "0.50",
+      "usd": "$0.50",
+      "compact": "$1"
+    },
+    {
+      "n": 12.3456,
+      "price": "12.35",
+      "usd": "$12.35",
+      "compact": "$12"
+    },
+    {
+      "n": 999.999,
+      "price": "1000.00",
+      "usd": "$1,000.00",
+      "compact": "$1000"
+    },
+    {
+      "n": 1000,
+      "price": "1,000.00",
+      "usd": "$1,000.00",
+      "compact": "$1k"
+    },
+    {
+      "n": 158.9,
+      "price": "158.90",
+      "usd": "$158.90",
+      "compact": "$159"
+    },
+    {
+      "n": 113950,
+      "price": "113,950.00",
+      "usd": "$113,950.00",
+      "compact": "$114k"
+    }
+  ],
+  "pct": [
+    {
+      "f": 0.117,
+      "pct": "+11.7%",
+      "pct2": "+11.70%"
+    },
+    {
+      "f": -0.034,
+      "pct": "−3.4%",
+      "pct2": "−3.40%"
+    },
+    {
+      "f": 0,
+      "pct": "0.0%",
+      "pct2": "0.00%"
+    },
+    {
+      "f": 1.2,
+      "pct": "+120.0%",
+      "pct2": "+120.00%"
+    },
+    {
+      "f": -1,
+      "pct": "−100.0%",
+      "pct2": "−100.00%"
+    }
+  ]
+}
