@@ -30,11 +30,11 @@ describe('market loop', () => {
     loop.tick(w.clock.now());
     expect(rt.nav.nav).toBeCloseTo(101, 8);
     expect(w.events.filter((e) => e.t === 'market')).toHaveLength(2);
-    expect(w.repos.navPoints.history(A, 0)).toHaveLength(1);
+    expect(w.repos.navPoints.history(A, 0, w.clock.now())).toHaveLength(1);
     w.clock.advance(60_000);
     w.state.setMarks({ BTC: 110 }, w.clock.now());
     loop.tick(w.clock.now());
-    expect(w.repos.navPoints.history(A, 0)).toHaveLength(2);
+    expect(w.repos.navPoints.history(A, 0, w.clock.now())).toHaveLength(2);
     expect(autoCover).toHaveBeenCalledTimes(3);
   });
 

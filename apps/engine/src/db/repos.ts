@@ -47,8 +47,10 @@ export interface Repos {
     tickers(): Set<string>;
   };
   navPoints: {
+    /** Writes one minute's point; a rewrite of the same minute (REPLAY's next loop) replaces it. */
     insert(p: NavPointRow): void;
-    history(companyId: string, sinceT: number): NavPointRow[];
+    /** Points with `sinceT <= t <= untilT`, oldest first (untilT: engine now, so no future points). */
+    history(companyId: string, sinceT: number, untilT: number): NavPointRow[];
     atOrBefore(companyId: string, t: number): NavPointRow | undefined;
   };
   filings: {
@@ -164,13 +166,25 @@ export function createRepos({ sqlite, db }: Db): Repos {
 
     navPoints: {
       insert: (p) => {
-        db.insert(navPoints).values(p).onConflictDoNothing().run();
+        db.insert(navPoints)
+          .values(p)
+          .onConflictDoUpdate({
+            target: [navPoints.companyId, navPoints.t],
+            set: { nav: p.nav, price: p.price },
+          })
+          .run();
       },
-      history: (companyId, sinceT) =>
+      history: (companyId, sinceT, untilT) =>
         db
           .select()
           .from(navPoints)
-          .where(and(eq(navPoints.companyId, companyId), gte(navPoints.t, sinceT)))
+          .where(
+            and(
+              eq(navPoints.companyId, companyId),
+              gte(navPoints.t, sinceT),
+              lte(navPoints.t, untilT),
+            ),
+          )
           .orderBy(navPoints.t)
           .all(),
       atOrBefore: (companyId, t) =>

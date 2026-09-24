@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHlFeed, createHlInfo, createReplayFeed, type ReplayFeed } from '@whale-street/hl';
@@ -22,6 +23,16 @@ export const NANSEN_DATA_BUDGET = {
   perSecond: NANSEN_KEY_LIMITS.perSecond - NANSEN_TRADING_BUDGET.perSecond,
   perMinute: NANSEN_KEY_LIMITS.perMinute - NANSEN_TRADING_BUDGET.perMinute,
 } as const;
+
+/**
+ * REPLAY database file of one session: named after the first 8 hex of the sha256 of the session
+ * content, so another bundle starts a fresh world while a restart on the same bundle keeps its
+ * players and portfolios.
+ */
+export function replayDbFile(sessionText: string): string {
+  const sha8 = createHash('sha256').update(sessionText).digest('hex').slice(0, 8);
+  return `whale-street-replay-${sha8}.db`;
+}
 
 export interface Runtime {
   deps: EngineDeps;
@@ -106,7 +117,9 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
       dropped: session.dropped,
     });
   const clock = createReplayClock(session.startT, session.endT, wallNow(), wallNow);
-  const db = openDb(o.dbPath ?? join(config.dataDir, 'whale-street-replay.db'));
+  const dbFile = replayDbFile(text);
+  o.log.info('replay database', { file: dbFile });
+  const db = openDb(o.dbPath ?? join(config.dataDir, dbFile));
   const repos = createRepos(db);
   // Nansen and HL info both answer from the recording; anything unrecorded is a 503 (fail closed).
   const recorded = replayFetch(session.nansen, () => clock.now());

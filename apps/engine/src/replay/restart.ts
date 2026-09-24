@@ -57,6 +57,7 @@ export async function seedReplayCompanies(
         rating: null,
         prospectus: null,
         positions: positions.value,
+        anchorDate: seed.anchorDate,
       });
       listed++;
     } catch (err) {

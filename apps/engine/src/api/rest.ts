@@ -131,7 +131,9 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     if (!params || !query) return reply;
     const rt = e.state.byTicker(params.ticker);
     if (!rt) return sendError(reply, 404, 'UNKNOWN_TICKER', 'no such ticker');
-    const points = e.repos.navPoints.history(rt.id, now() - query.minutes * MINUTE_MS);
+    // Never past engine now: in REPLAY the rest of the recording's minutes are already stored.
+    const until = now();
+    const points = e.repos.navPoints.history(rt.id, until - query.minutes * MINUTE_MS, until);
     return { ticker: rt.ticker, points: points.map(({ t, nav, price }) => ({ t, nav, price })) };
   });
 

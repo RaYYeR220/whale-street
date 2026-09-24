@@ -29,6 +29,11 @@ export interface ListingInput {
   prospectus: Prospectus | null;
   /** Positions the listing decision was made on (becomes the first snapshot). */
   positions: PositionsResult;
+  /**
+   * SEEDED (REPLAY): the recorded company's anchor date, used for its pnl-summary requests. Never
+   * recomputed from the looping replay clock. Absent: the listing day.
+   */
+  anchorDate?: string;
 }
 
 export interface ListingDeps {
@@ -67,7 +72,7 @@ export function createListingService(d: ListingDeps): ListingService {
       inProgress.add(address);
       try {
         const startedAt = d.clock.now();
-        const anchorDate = utcDate(startedAt);
+        const anchorDate = input.anchorDate ?? utcDate(startedAt);
         const summary = await d.nansen.perpPnlSummary(address, anchorDate, anchorDate);
         const now = d.clock.now();
         const provenance = [...input.positions.provenance, ...(summary.ok ? [summary.callId] : [])];

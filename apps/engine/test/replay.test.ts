@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requestKey } from '@whale-street/nansen';
 import { afterEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/boot';
 import { loadConfig } from '../src/config';
+import { DAY_MS, utcDate } from '../src/dates';
 import {
   buildRuntime,
   NANSEN_DATA_BUDGET,
@@ -332,10 +333,14 @@ describe('LIVE recording privacy', () => {
 
 const COUNTERPARTY = '0x00000000000000000000000000000000000000ff';
 
-/** Boots the real REPLAY runtime from session lines, with a test-controlled wall clock. */
-async function bootReplay(lines: readonly string[]) {
-  const dir = join(tmpdir(), `ws-replay-${randomUUID()}`);
-  dirs.push(dir);
+/**
+ * Boots the real REPLAY runtime from session lines, with a test-controlled wall clock. With
+ * `dir`, the session file and the SQLite database live in that DATA_DIR (as in production);
+ * otherwise the database is in memory.
+ */
+async function bootReplay(lines: readonly string[], o: { dir?: string } = {}) {
+  const dir = o.dir ?? join(tmpdir(), `ws-replay-${randomUUID()}`);
+  if (!o.dir) dirs.push(dir);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, 'session.ndjson');
   writeFileSync(file, `${lines.join('\n')}\n`);
@@ -345,7 +350,7 @@ async function bootReplay(lines: readonly string[]) {
   const wall = { t: 5_000_000 };
   const runtime = buildRuntime(config, {
     log: silentLogger,
-    dbPath: ':memory:',
+    ...(o.dir ? {} : { dbPath: ':memory:' }),
     wallNow: () => wall.t,
   });
   const { engine, app } = await boot(runtime);
@@ -404,6 +409,66 @@ describe('REPLAY loader', () => {
     expect(lb).toMatchObject({ ok: false, status: 503 });
     const ff = await r.runtime.deps.nansen.firstFunder(SYNTHETIC_A);
     expect(ff).toMatchObject({ ok: true, value: { funder: SYNTHETIC_B, funderName: null } });
+    await r.close();
+  });
+});
+
+describe('REPLAY database', () => {
+  it('is per session: another bundle starts a fresh world, the same bundle keeps its players', async () => {
+    const dir = join(tmpdir(), `ws-replay-db-${randomUUID()}`);
+    dirs.push(dir);
+    const OTHER = '0x00000000000000000000000000000000000000c7';
+    const first = syntheticSession();
+    // Same shape, but company A is somebody else: a different bundle.
+    const second = first.map((l) => l.replaceAll(SYNTHETIC_A.slice(2), OTHER.slice(2)));
+    const ids = (r: { engine: { state: { list(): Array<{ id: string }> } } }) =>
+      r.engine.state
+        .list()
+        .map((c) => c.id)
+        .sort();
+
+    const r1 = await bootReplay(first, { dir });
+    expect(ids(r1)).toEqual([SYNTHETIC_A, SYNTHETIC_B]);
+    const { player } = r1.engine.players.create('human');
+    await r1.close();
+
+    const r2 = await bootReplay(second, { dir });
+    expect(ids(r2)).toEqual([SYNTHETIC_B, OTHER]);
+    expect(r2.engine.status().companies).toBe(2);
+    expect(r2.engine.players.get(player.id)).toBeNull();
+    await r2.close();
+
+    const r3 = await bootReplay(first, { dir });
+    expect(ids(r3)).toEqual([SYNTHETIC_A, SYNTHETIC_B]);
+    expect(r3.engine.players.get(player.id)?.handle).toBe(player.handle);
+    await r3.close();
+
+    const dbs = readdirSync(dir).filter((f) => /^whale-street-replay-[0-9a-f]{8}\.db$/.test(f));
+    expect(dbs).toHaveLength(2);
+  });
+});
+
+describe('REPLAY listing anchor', () => {
+  it('lists a seed on its recorded anchor date, not the replay clock day', async () => {
+    const clockDay = utcDate(SYNTHETIC_T0);
+    const seedDay = utcDate(SYNTHETIC_T0 - DAY_MS);
+    // A recording made the day after company A was listed: its seed keeps the listing day.
+    const lines = syntheticSession().map((l) => {
+      const r = JSON.parse(l) as { k: string; company?: { address: string; anchorDate: string } };
+      if (r.k !== 'seed' || r.company?.address !== SYNTHETIC_A) return l;
+      return JSON.stringify({ ...r, company: { ...r.company, anchorDate: seedDay } });
+    });
+    const r = await bootReplay(lines);
+    const a = r.engine.state.get(SYNTHETIC_A);
+    expect(clockDay).not.toBe(seedDay);
+    expect(a?.anchorDate).toBe(seedDay);
+    // The recorded pnl-summary answered the listing's request.
+    expect(a?.summaryBaseline).not.toBeNull();
+    const summaries = r.engine.repos.nansenCalls
+      .recent(100)
+      .filter((c) => c.path === '/api/v1/profiler/perp-pnl-summary');
+    expect(summaries.length).toBeGreaterThan(0);
+    expect(summaries.every((c) => c.status === 200)).toBe(true);
     await r.close();
   });
 });
@@ -534,4 +599,36 @@ describe('REPLAY loop wrap', () => {
     expect(await signup()).toBe(201);
     await r.close();
   });
+
+  it('serves no history from the rest of the recording after a wrap; the latest point is this loop', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    engine.idle.clientConnected(engine.clock.now());
+    const a = engine.state.get(SYNTHETIC_A);
+    if (!a) throw new Error('company A missing');
+    type Point = { t: number; nav: number; price: number };
+    const history = async (): Promise<Point[]> =>
+      (await app.inject({ url: `/api/companies/${a.ticker}/history?minutes=60` })).json().points;
+
+    for (let s = 0; s < 599; s++) await r.step();
+    const loop0 = new Map((await history()).map((p) => [p.t, p.price]));
+    expect(loop0.size).toBeGreaterThan(5);
+    await r.step(); // the wrap
+    await r.step(61_000); // past the IPO window of the new loop
+    const { player } = engine.players.create('human');
+    expect(
+      engine.exchange.placeOrder(player.id, { ticker: a.ticker, side: 'BUY', cash: 5_000 }),
+    ).toMatchObject({ ok: true });
+    for (let s = 0; s < 61; s++) await r.step();
+
+    const now = engine.clock.now();
+    const points = await history();
+    expect(points.length).toBeGreaterThan(0);
+    expect(points.filter((p) => p.t > now)).toEqual([]);
+    const latest = points[points.length - 1] as Point;
+    expect(latest.t).toBe(Math.floor(now / 60_000) * 60_000);
+    // Rewritten in this loop, after the buy: not the previous loop's price for the same minute.
+    expect(latest.price).toBeGreaterThan((loop0.get(latest.t) ?? Number.POSITIVE_INFINITY) * 1.01);
+    await r.close();
+  }, 30_000);
 });

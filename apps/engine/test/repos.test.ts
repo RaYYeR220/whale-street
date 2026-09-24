@@ -19,13 +19,18 @@ describe('repos', () => {
     expect(r.companies.tickers()).toEqual(new Set(['AAA', 'BBB']));
   });
 
-  it('nav points: ignore duplicates, history and atOrBefore', () => {
+  it('nav points: a rewrite of the same minute wins, history is bounded on both ends', () => {
     const r = testRepos();
     r.navPoints.insert({ companyId: A, t: T0, nav: 100, price: 100 });
-    r.navPoints.insert({ companyId: A, t: T0, nav: 999, price: 999 });
+    // REPLAY writes the same minutes again in every loop: the current loop's value must win.
+    r.navPoints.insert({ companyId: A, t: T0, nav: 99, price: 98 });
     r.navPoints.insert({ companyId: A, t: T0 + 60_000, nav: 101, price: 102 });
-    expect(r.navPoints.history(A, T0).map((p) => p.nav)).toEqual([100, 101]);
-    expect(r.navPoints.atOrBefore(A, T0 + 59_999)?.nav).toBe(100);
+    expect(r.navPoints.history(A, T0, T0 + 60_000).map((p) => [p.nav, p.price])).toEqual([
+      [99, 98],
+      [101, 102],
+    ]);
+    expect(r.navPoints.history(A, T0, T0 + 59_999).map((p) => p.nav)).toEqual([99]);
+    expect(r.navPoints.atOrBefore(A, T0 + 59_999)?.nav).toBe(99);
     expect(r.navPoints.atOrBefore(A, T0 - 1)).toBeUndefined();
   });
 
