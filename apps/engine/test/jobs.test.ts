@@ -317,6 +317,28 @@ describe('scout', () => {
     expect(w.state.get(addr(1))?.nav.snapshot.positions.map((p) => p.coin)).toEqual(['BTC']);
   });
 
+  it('skips a candidate holding a HIP-3 position (a dex-prefixed coin): never listed', async () => {
+    const { w, nansen, info, run } = setup(1);
+    const now = w.clock.now();
+    programCleanTrader(nansen, info, addr(1), now);
+    nansen.positions.set(addr(1), {
+      positions: [pos('BTC', 2, 60_000, 40_000), pos('xyz:TSLA', 1, 100)],
+      accountValue: 600_000,
+      time: null,
+    });
+    nansen.leaderboard = [
+      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
+    ];
+    const r = await run();
+    expect(r.listed).toEqual([]);
+    expect(w.state.get(addr(1))).toBeUndefined();
+    expect(w.repos.kv.get(deniedKey(addr(1)))).toBeUndefined();
+    // Skipped before the rest of the committee evidence ran (no denial recorded either: this was
+    // never evaluated by the committee at all).
+    expect(nansen.count('relatedWallets')).toBe(0);
+    expect(info.calls).not.toContain(`isVault:${addr(1)}`);
+  });
+
   it('never stores raw leaderboard data', async () => {
     const { w, nansen, run } = setup(1);
     nansen.leaderboard = [

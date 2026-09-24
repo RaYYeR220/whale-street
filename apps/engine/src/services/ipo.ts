@@ -13,7 +13,7 @@ import type { Clock } from '../clock';
 import { DAY_MS, HOUR_MS } from '../dates';
 import type { IpoAppRow, Repos } from '../db/repos';
 import type { EventBus } from '../events';
-import { gatherEvidence } from '../ingest/evidence';
+import { gatherEvidence, HIP3_REASON } from '../ingest/evidence';
 import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
 import type { NansenPort } from '../ports';
@@ -173,9 +173,13 @@ export function createIpoService(d: IpoDeps): IpoService {
       return;
     }
     const address = app.address as Address;
-    const { ev, positions } = await gatherEvidence(address, d, (step, state) =>
+    const { ev, positions, hip3Coin } = await gatherEvidence(address, d, (step, state) =>
       d.bus.emit({ t: 'ipo', update: { appId: id, kind: 'progress', step, state } }),
     );
+    if (hip3Coin) {
+      decide(id, 'DEFERRED', null, HIP3_REASON);
+      return;
+    }
     const verdict = evaluateListing(ev, params);
     if (verdict.decision !== 'APPROVED') {
       // Wall time: the REPLAY engine clock loops, so a denial stamped on it would never lapse.

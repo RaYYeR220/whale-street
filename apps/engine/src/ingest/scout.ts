@@ -70,7 +70,11 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
     if (deniedRecently(d.repos, address, wall)) continue;
 
     result.evaluated++;
-    const { ev, positions } = await gatherEvidence(address, d);
+    const { ev, positions, hip3Coin } = await gatherEvidence(address, d);
+    if (hip3Coin) {
+      d.log.info('scout: skipped a HIP-3 holder', { address, coin: hip3Coin });
+      continue;
+    }
     const verdict = evaluateListing(ev, params);
     if (verdict.decision === 'APPROVED' && positions) {
       try {

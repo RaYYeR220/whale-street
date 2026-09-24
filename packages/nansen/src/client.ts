@@ -33,8 +33,8 @@ export interface PerpTradeRow {
   price: number;
   size: number;
   valueUsd: number;
-  closedPnl: number;
-  feeUsd: number;
+  closedPnl: number | null;
+  feeUsd: number | null;
 }
 export interface LeaderboardRow {
   address: Address;
@@ -177,8 +177,8 @@ export class NansenClient {
         price: t.price,
         size: t.size,
         valueUsd: t.value_usd,
-        closedPnl: t.closed_pnl ?? 0,
-        feeUsd: t.fee_usd ?? 0,
+        closedPnl: t.closed_pnl,
+        feeUsd: t.fee_usd,
       })),
     );
   }

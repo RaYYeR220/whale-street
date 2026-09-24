@@ -7,7 +7,7 @@ import { createListingService } from '../src/services/listing';
 import { companyRow } from './helpers/db';
 import { FakeInfo } from './helpers/fake-hl';
 import { FakeNansen, fail } from './helpers/fake-nansen';
-import { programCleanTrader, programHedgedTrader } from './helpers/traders';
+import { programCleanTrader, programHedgedTrader, tradeRow } from './helpers/traders';
 import { addCompany, makeWorld, pos } from './helpers/world';
 
 const APP = '0x00000000000000000000000000000000000000a1' as const;
@@ -87,6 +87,33 @@ describe('gatherEvidence', () => {
     expect(ev.equityUsd.ok).toBe(false);
     expect(positions).toBeNull();
   });
+
+  it('an unreported top-trade profit is unknown, never the same as having no top trade at all', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    nansen.topTrades.set(APP, [tradeRow({ closedPnl: null })]);
+    const { ev } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(ev.topTradePnlUsd.ok).toBe(false);
+  });
+
+  it('stops at a HIP-3 position (a dex-prefixed coin), before spending the rest of the committee budget', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    nansen.positions.set(APP, {
+      positions: [pos('BTC', 2, 60_000, 40_000), pos('xyz:TSLA', 1, 100)],
+      accountValue: 600_000,
+      time: null,
+    });
+    const { ev, positions, hip3Coin } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(hip3Coin).toBe('xyz:TSLA');
+    expect(positions).toBeNull();
+    // The remaining evidence calls (human, hedge, concentration) never ran.
+    expect(nansen.count('perpTrades')).toBe(1);
+    expect(info.calls).not.toContain(`isVault:${APP}`);
+    expect(nansen.count('relatedWallets')).toBe(0);
+    expect(ev.isVault.ok).toBe(false);
+    expect(ev.linked.ok).toBe(false);
+  });
 });
 
 describe('ipo service', () => {
@@ -141,6 +168,24 @@ describe('ipo service', () => {
     await ipo.drained();
     expect(ipo.get(r.app.id)).toMatchObject({ status: 'DEFERRED' });
     expect(ipo.get(r.app.id)?.reason).toContain('TRACK_RECORD');
+  });
+
+  it('defers an application holding a HIP-3 position with the visible reason, never lists it', async () => {
+    const { w, nansen, info, ipo } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    nansen.positions.set(APP, {
+      positions: [pos('BTC', 2, 60_000, 40_000), pos('xyz:TSLA', 1, 100)],
+      accountValue: 600_000,
+      time: null,
+    });
+    const r = ipo.apply('p1', APP);
+    if (!r.ok) throw new Error(r.message);
+    await ipo.drained();
+    expect(ipo.get(r.app.id)).toMatchObject({
+      status: 'DEFERRED',
+      reason: 'holds HIP-3 markets (not supported yet)',
+    });
+    expect(w.state.get(APP)).toBeUndefined();
   });
 
   it('rejects bad addresses and rate-limits players to 3 per hour', () => {

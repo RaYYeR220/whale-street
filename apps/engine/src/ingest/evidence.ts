@@ -4,10 +4,11 @@ import {
   type ListingEvidence,
   type Maybe,
   none,
+  type Position,
   some,
 } from '@whale-street/core';
 import type { HlInfo } from '@whale-street/hl';
-import { toMaybe } from '@whale-street/nansen';
+import { type ApiResult, type PerpTradeRow, toMaybe } from '@whale-street/nansen';
 import type { Clock } from '../clock';
 import { daysBefore, utcDate } from '../dates';
 import type { Repos } from '../db/repos';
@@ -30,9 +31,33 @@ export interface Evidence {
   ev: ListingEvidence;
   /** The positions fetch behind `ev.positions` (null when it failed); becomes the listing snapshot. */
   positions: PositionsResult | null;
+  /**
+   * A HIP-3 coin ("dex:COIN", e.g. "xyz:TSLA") found among the trader's open positions, or null.
+   * The engine's universe is standard Hyperliquid perps only (the feed carries default-dex mids
+   * only): a set value means evaluation stopped here and the address is never listed.
+   */
+  hip3Coin: string | null;
 }
 
 export const MAX_LINKED = 10;
+/** Visible reason an address holding a HIP-3 market is never evaluated further. */
+export const HIP3_REASON = 'holds HIP-3 markets (not supported yet)';
+
+/** The first HIP-3 coin ("dex:COIN") among open positions, or null: a standard perp coin has no dex prefix. */
+const hip3CoinOf = (positions: readonly Position[]): string | null =>
+  positions.find((p) => p.coin.includes(':'))?.coin ?? null;
+
+/**
+ * The committee's concentration evidence: no trade at all is a known zero-risk `null`, but a top
+ * trade whose own profit Nansen did not report is unknown (`none`) — never confused with "no
+ * trade" and never an invented zero.
+ */
+function topTradePnlUsd(top: ApiResult<PerpTradeRow[]>): Maybe<number | null> {
+  if (!top.ok) return none(top.error);
+  const trade = top.value[0];
+  if (!trade) return some(null);
+  return trade.closedPnl === null ? none('top trade profit not reported') : some(trade.closedPnl);
+}
 
 async function gatherLinked(
   address: Address,
@@ -92,6 +117,37 @@ export async function gatherEvidence(
   const pos = await fetchPositions(address, { nansen: d.nansen, info: d.info, creditSaver: false });
   onProgress('size', 'done');
 
+  const row = d.repos.companies.get(address);
+  const alreadyListed = row !== undefined && row.status !== 'DELISTED';
+  const cooldownUntil = row?.cooldownUntil ?? null;
+  const firstTradeAt = first.ok ? some(first.value[0]?.at ?? null) : none(first.error);
+
+  // The universe is standard Hyperliquid perps only: a HIP-3 holder is never listed, and stops
+  // here before spending any more of the committee's Nansen credits.
+  const hip3Coin = pos.ok ? hip3CoinOf(pos.value.positions) : null;
+  if (pos.ok && hip3Coin) {
+    onProgress('uniqueness', 'running');
+    onProgress('uniqueness', 'done');
+    return {
+      ev: {
+        address,
+        now,
+        firstTradeAt,
+        pnl: toMaybe(pnl),
+        topTradePnlUsd: none(HIP3_REASON),
+        equityUsd: some(pos.value.accountValue),
+        positions: some(pos.value.positions),
+        linked: none(HIP3_REASON),
+        isVault: none(HIP3_REASON),
+        marks: { ...d.state.marks },
+        alreadyListed,
+        cooldownUntil,
+      },
+      positions: null,
+      hip3Coin,
+    };
+  }
+
   onProgress('human', 'running');
   const isVault = await d.info.isVault(address);
   onProgress('human', 'done');
@@ -109,24 +165,26 @@ export async function gatherEvidence(
   onProgress('concentration', 'done');
 
   onProgress('uniqueness', 'running');
-  const row = d.repos.companies.get(address);
   onProgress('uniqueness', 'done');
 
   return {
     ev: {
       address,
       now,
-      firstTradeAt: first.ok ? some(first.value[0]?.at ?? null) : none(first.error),
+      firstTradeAt,
       pnl: toMaybe(pnl),
-      topTradePnlUsd: top.ok ? some(top.value[0]?.closedPnl ?? null) : none(top.error),
+      // No trade at all is a known "no concentration risk" (null); a trade whose own profit
+      // Nansen did not report is unknown, never the same thing (never the invented zero either).
+      topTradePnlUsd: topTradePnlUsd(top),
       equityUsd: pos.ok ? some(pos.value.accountValue) : none(pos.error),
       positions: pos.ok ? some(pos.value.positions) : none(pos.error),
       linked,
       isVault,
       marks: { ...d.state.marks },
-      alreadyListed: row !== undefined && row.status !== 'DELISTED',
-      cooldownUntil: row?.cooldownUntil ?? null,
+      alreadyListed,
+      cooldownUntil,
     },
     positions: pos.ok ? pos.value : null,
+    hip3Coin: null,
   };
 }

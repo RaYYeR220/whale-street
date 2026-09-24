@@ -229,6 +229,41 @@ describe('NansenClient', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('perp trades: a missing closed_pnl or fee_usd stays null, never an invented zero', async () => {
+    const c = clientWith({
+      data: [
+        {
+          timestamp: '2026-01-02T03:04:05Z',
+          side: 'Long',
+          action: 'Close',
+          token_symbol: 'SOL',
+          price: '150',
+          size: '2',
+          value_usd: '300',
+          closed_pnl: null,
+          fee_usd: null,
+        },
+        {
+          timestamp: '2026-01-02T03:04:05Z',
+          side: 'Long',
+          action: 'Close',
+          token_symbol: 'SOL',
+          price: '150',
+          size: '2',
+          value_usd: '300',
+        },
+      ],
+    });
+    const r = await c.perpTrades(A, '2025-09-23', '2026-09-23');
+    expect(r).toMatchObject({
+      ok: true,
+      value: [
+        { closedPnl: null, feeUsd: null },
+        { closedPnl: null, feeUsd: null },
+      ],
+    });
+  });
+
   it('leaderboard drops invalid addresses and keeps null numeric fields', async () => {
     const c = clientWith({
       data: [

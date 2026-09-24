@@ -209,6 +209,26 @@ describe('market loop', () => {
     ).toEqual(['HALT:no mark for XYZ', 'RESUME:marks returned']);
   });
 
+  it('halts an already-listed company that opens a HIP-3 position (a dex-prefixed coin) the same honest way', () => {
+    const { w, loop } = setup();
+    const a = addCompany(w, {
+      id: A,
+      ticker: 'AAA',
+      positions: [pos('BTC', 1, 100), pos('xyz:TSLA', 10, 5)],
+      accountValue: 10_000,
+    });
+    const tickAfter = (ms: number, marks: Record<string, number> = { BTC: 100 }) => {
+      w.clock.advance(ms);
+      w.state.setMarks(marks, w.clock.now());
+      loop.tick(w.clock.now());
+    };
+    tickAfter(0);
+    tickAfter(MARKS_MISSING_HALT_MS + 1_000);
+    expect(a.status).toBe('HALTED');
+    expect(a.haltKind).toBe('data');
+    expect(a.haltReason).toBe('no mark for xyz:TSLA');
+  });
+
   it('leaves missing marks to the marks-delayed state while every mark is stale', () => {
     const { w, loop } = setup();
     const a = addCompany(w, {
