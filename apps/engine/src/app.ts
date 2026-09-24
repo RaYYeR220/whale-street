@@ -1,6 +1,7 @@
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerMcp } from './api/mcp';
 import { registerMirrorRoutes } from './api/mirror-routes';
 import { registerRest } from './api/rest';
 import { registerWs } from './api/ws';
@@ -14,5 +15,6 @@ export async function buildApp(e: Engine): Promise<FastifyInstance> {
   registerRest(app, e);
   registerWs(app, e);
   registerMirrorRoutes(app, e);
+  registerMcp(app, e);
   return app;
 }
