@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CompanyView, FilingView } from '../../lib/api-types';
 import { type DisplayCompany, toDisplay } from '../../lib/company';
 import { place, rank, SLOTS, type SortKey } from '../../lib/roster';
+import { isDown } from '../../lib/ws-client';
 import { useTrade } from '../company/useTrade';
 import { useReducedMotion } from '../ink/motion';
 import { Portrait } from '../ink/Portrait';
@@ -123,7 +124,7 @@ export function FloorView({
 
   const loading = !market && companies.length === 0;
   const empty = market !== null && companies.length === 0;
-  const offline = loading && (engineError !== null || connection === 'reconnecting');
+  const offline = loading && (engineError !== null || isDown(connection));
 
   return (
     <>

@@ -7,7 +7,6 @@ import type { MirrorOrderView, TradeRowView } from '../../lib/api-types';
 import { hypeOf } from '../../lib/company';
 import {
   agoLong,
-  agoSec,
   pct,
   price,
   shares,
@@ -17,17 +16,10 @@ import {
   usd,
 } from '../../lib/format';
 import { avgEntry, holdingPnl, holdingReturn, isShort } from '../../lib/portfolio';
+import { tradeText } from '../../lib/trades';
 import { Portrait } from '../ink/Portrait';
 import { useApi, useEngine, useEngineNow } from '../providers/engine';
 import { usePlayer } from '../providers/player';
-
-const PAST: Record<string, string> = {
-  BUY: 'Bought',
-  SELL: 'Sold',
-  SHORT: 'Shorted',
-  COVER: 'Covered',
-  SETTLE: 'Settled',
-};
 
 function MirrorSeal({ status }: { status: MirrorOrderView['status'] }) {
   if (status === 'FILLED' || status === 'RESTING' || status === 'CLOSED')
@@ -281,10 +273,8 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
           ) : (
             trades.map((t) => (
               <li key={t.id}>
-                <span>
-                  {PAST[t.side]} {shares(t.qty)} {t.ticker} at {price(t.avgPrice)}
-                </span>
-                <span>{now !== null ? `${agoSec(now - t.at)} ago` : ''}</span>
+                <span>{tradeText(t)}</span>
+                <span>{now !== null ? agoLong(now - t.at) : ''}</span>
               </li>
             ))
           )}

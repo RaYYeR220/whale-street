@@ -4,20 +4,13 @@ import { PARAMS } from '@whale-street/core';
 import Link from 'next/link';
 import type { ProfileView as Profile } from '../../lib/api';
 import { hypeOf } from '../../lib/company';
-import { agoSec, dayLabel, pct, price, shares, signedUsd, upDown, usd } from '../../lib/format';
+import { agoLong, dayLabel, pct, price, shares, signedUsd, upDown, usd } from '../../lib/format';
 import { avgEntry, holdingPnl, holdingReturn, isShort } from '../../lib/portfolio';
+import { tradeText } from '../../lib/trades';
 import { useDrawer } from '../chrome/Drawer';
 import { Portrait } from '../ink/Portrait';
 import { useChannels, useEngine, useEngineNow } from '../providers/engine';
 import { usePlayer } from '../providers/player';
-
-const PAST: Record<string, string> = {
-  BUY: 'Bought',
-  SELL: 'Sold',
-  SHORT: 'Shorted',
-  COVER: 'Covered',
-  SETTLE: 'Settled',
-};
 
 /** A player's verified record: holdings, trades and past seasons. */
 export function ProfileView({ profile }: { profile: Profile }) {
@@ -153,11 +146,8 @@ export function ProfileView({ profile }: { profile: Profile }) {
             ) : (
               profile.trades.slice(0, 20).map((t) => (
                 <li key={t.id}>
-                  <span>
-                    {PAST[t.side]} {shares(t.qty)} {t.ticker} at {price(t.avgPrice)}
-                    {t.forced ? ' (auto)' : ''}
-                  </span>
-                  <span>{now === null ? '' : `${agoSec(now - t.at)} ago`}</span>
+                  <span>{tradeText(t)}</span>
+                  <span>{now === null ? '' : agoLong(now - t.at)}</span>
                 </li>
               ))
             )}

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 import type { HolderView } from '../../lib/api-types';
-import { type DisplayCompany, portraitStatus } from '../../lib/company';
+import { type DisplayCompany, haltText, portraitStatus } from '../../lib/company';
 import { explorerAddressUrl } from '../../lib/config';
 import { compact, mmss, pct, pctAbs, price, shortAddress, upDown } from '../../lib/format';
 import { expression } from '../../lib/portrait';
@@ -38,7 +38,7 @@ export function faceReading(c: DisplayCompany): string {
   const e = expression(c.hp, portraitStatus(c.display));
   if (e === 'bankrupt') return 'X-eyes: bankrupt. Trading stopped and holders were settled at NAV.';
   if (e === 'halted')
-    return `Asleep: ${c.haltReason ?? 'no fresh Nansen data'}. Trading is paused; your shares are safe.`;
+    return `Asleep: ${haltText(c.haltReason) ?? 'no fresh Nansen data'}. Trading is paused; your shares are safe.`;
   const word = { calm: 'Calm', tense: 'Tense', panic: 'Panicking', meltdown: 'Meltdown' }[e];
   const bits = [`${word}, ${c.hp === null ? 'HP unknown' : `${Math.round(c.hp * 100)}% HP`}`];
   if ((c.navChg1h ?? 0) > 0.02) bits.push(`sparkles, NAV up ${pctAbs(c.navChg1h)} this hour`);
@@ -112,7 +112,7 @@ export function CompanyHead({
         ) : null}
         {c.display === 'halted' ? (
           <span className="co-tag co-tag--blue">
-            Halted{c.haltReason ? `: ${c.haltReason}` : ''}
+            Halted{c.haltReason ? `: ${haltText(c.haltReason)}` : ''}
           </span>
         ) : null}
         {bankrupt ? <span className="co-tag co-tag--red">Bankrupt, delisted</span> : null}

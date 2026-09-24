@@ -4,6 +4,7 @@
  */
 import type { FilingKind } from '@whale-street/core';
 import type { FilingView } from './api-types';
+import { haltText } from './company';
 import { compact, pctAbs } from './format';
 
 export type Tone = '' | 'mint' | 'red' | 'blue' | 'pink';
@@ -152,9 +153,13 @@ export function filingText(f: FilingView): string {
     case 'DELISTING':
       return f.detail ? `Delisted: ${f.detail}.` : 'Delisted.';
     case 'HALT':
-      return f.detail ? `Trading halted: ${f.detail}.` : 'Trading halted.';
+      return f.detail ? `Trading halted: ${haltText(f.detail)}.` : 'Trading halted.';
     case 'RESUME':
-      return f.detail ? `Trading resumed: ${f.detail}.` : 'Trading resumed.';
+      return f.detail === 'marks returned'
+        ? 'Trading resumed: live prices are back.'
+        : f.detail
+          ? `Trading resumed: ${f.detail}.`
+          : 'Trading resumed.';
     case 'RESTATEMENT':
       return f.detail ? `Restated: ${f.detail}.` : 'NAV restated.';
     case 'IPO':

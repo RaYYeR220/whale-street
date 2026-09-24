@@ -69,6 +69,18 @@ describe('mode badge (never hidden)', () => {
     expect(screen.getByText('REPLAY · recorded session')).toBeTruthy();
   });
 
+  it('shows credit-saver from the engine’s flag, never from the credits number', () => {
+    const rt = mount(<ModeBadge />);
+    act(() =>
+      rt.store.setStatus(status({ mode: 'live', creditSaver: true, creditsRemaining: 9_000 })),
+    );
+    expect(screen.getByText('CREDIT-SAVER: positions via Hyperliquid')).toBeTruthy();
+    act(() =>
+      rt.store.setStatus(status({ mode: 'live', creditSaver: false, creditsRemaining: 3 })),
+    );
+    expect(screen.queryByText('CREDIT-SAVER: positions via Hyperliquid')).toBeNull();
+  });
+
   it('names the synthetic demo', () => {
     const rt = mount(<ModeBadge />);
     act(() => rt.store.setStatus(status({ synthetic: true })));
@@ -102,6 +114,13 @@ describe('data-health banners', () => {
     const keys = screen.getAllByRole('status').map((el) => el.getAttribute('data-banner'));
     expect(keys).toEqual(['ws', 'marks', 'idle', 'floor']);
     expect(screen.getByText(/NAV is frozen, not guessed/)).toBeTruthy();
+  });
+
+  it('says when the engine turned this network away for too many connections or messages', () => {
+    const rt = mount(<Banners />);
+    act(() => rt.store.setConnection('limited'));
+    const banner = document.querySelector('[data-banner="limit"]');
+    expect(banner?.textContent).toMatch(/Too many connections or messages from your network/);
   });
 
   it('reports an unreachable engine after 5 seconds of connecting', () => {

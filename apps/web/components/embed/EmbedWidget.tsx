@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import type { CompanyView, HistoryPoint } from '../../lib/api-types';
 import { portraitStatus, toDisplay } from '../../lib/company';
 import { pct, price, upDown } from '../../lib/format';
+import { isDown } from '../../lib/ws-client';
 import { Portrait } from '../ink/Portrait';
 import { Price } from '../ink/Price';
 import { Spark } from '../ink/Spark';
@@ -102,7 +103,7 @@ export function EmbedWidget({
             ) : null}
           </span>
           <span className={`em__hp${hp !== null && hp < 15 && !dead ? ' is-hot' : ''}`}>
-            {connection === 'reconnecting'
+            {isDown(connection)
               ? 'reconnecting'
               : dead
                 ? 'delisted'

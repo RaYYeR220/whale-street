@@ -2,10 +2,19 @@
  * One WebSocket to the engine per tab: hello with the player token, ref-counted channel
  * subscriptions, exponential reconnect with jitter, and a watchdog that treats a silent socket
  * (no market frame for WATCHDOG_MS) as dead. Every reconnect re-sends hello and every subscription.
+ * A policy close (1008: too many connections from this network, or too many messages) is 'limited':
+ * it waits far longer before trying again, so a crowded network is never hammered.
  */
 import type { Channel, ClientMessage, ServerMessage } from './api-types';
 
-export type ConnectionState = 'idle' | 'connecting' | 'open' | 'reconnecting' | 'closed';
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'open'
+  | 'reconnecting'
+  /** The engine closed the socket for a policy limit (1008); a slow retry is scheduled. */
+  | 'limited'
+  | 'closed';
 
 export interface SocketLike {
   readonly readyState: number;
@@ -34,7 +43,15 @@ export interface EngineSocketOptions {
 export const BASE_DELAY_MS = 500;
 export const MAX_DELAY_MS = 15_000;
 export const WATCHDOG_MS = 10_000;
+/** First wait after a 1008 policy close; it doubles on each further one, up to MAX_LIMITED_DELAY_MS. */
+export const LIMITED_DELAY_MS = 30_000;
+export const MAX_LIMITED_DELAY_MS = 120_000;
+/** WebSocket close code "policy violation": the engine's connection and message caps. */
+export const POLICY_CLOSE = 1008;
 const OPEN = 1;
+
+/** True while the socket is down (retrying, or waiting out a policy limit). */
+export const isDown = (c: ConnectionState): boolean => c === 'reconnecting' || c === 'limited';
 
 export class EngineSocket {
   private readonly o: Required<Omit<EngineSocketOptions, 'token'>> & {
@@ -43,6 +60,8 @@ export class EngineSocket {
   private socket: SocketLike | null = null;
   private stateValue: ConnectionState = 'idle';
   private attempt = 0;
+  /** Policy closes (1008) since the last connection that delivered a message. */
+  private strikes = 0;
   private everOpened = false;
   private retryTimer: unknown = null;
   private watchdog: unknown = null;
@@ -186,6 +205,7 @@ export class EngineSocket {
     };
     s.onmessage = (ev) => {
       if (this.socket !== s) return;
+      this.strikes = 0;
       this.armWatchdog();
       let msg: ServerMessage;
       try {
@@ -199,10 +219,12 @@ export class EngineSocket {
     s.onerror = () => {
       /* onclose follows and schedules the retry */
     };
-    s.onclose = () => {
+    s.onclose = (ev) => {
       if (this.socket !== s) return;
       this.socket = null;
-      this.scheduleRetry();
+      const code = (ev as { code?: unknown } | null)?.code;
+      if (code === POLICY_CLOSE) this.scheduleLimitedRetry();
+      else this.scheduleRetry();
     };
   }
 
@@ -219,6 +241,21 @@ export class EngineSocket {
       }
     }
     this.scheduleRetry();
+  }
+
+  /** After a 1008 close: say so, and wait long (doubling per strike) before connecting again. */
+  private scheduleLimitedRetry(): void {
+    if (this.stateValue === 'closed') return;
+    this.setState('limited');
+    const exp = Math.min(MAX_LIMITED_DELAY_MS, LIMITED_DELAY_MS * 2 ** this.strikes);
+    const delay = Math.round(exp * (0.5 + this.o.random() * 0.5));
+    this.strikes += 1;
+    if (this.watchdog !== null) this.o.clearTimer(this.watchdog);
+    this.watchdog = null;
+    this.retryTimer = this.o.setTimer(() => {
+      this.retryTimer = null;
+      this.connect();
+    }, delay);
   }
 
   private scheduleRetry(): void {

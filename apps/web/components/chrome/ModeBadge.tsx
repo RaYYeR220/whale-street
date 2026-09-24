@@ -1,6 +1,7 @@
 'use client';
 
 import { dayLabel } from '../../lib/format';
+import { isDown } from '../../lib/ws-client';
 import { useEngine } from '../providers/engine';
 
 /**
@@ -15,9 +16,9 @@ export function ModeBadge() {
       <span
         className="ws-badge ws-badge--saver"
         title="Waiting for the engine to report its mode"
-        data-short={connection === 'reconnecting' ? 'OFF' : '…'}
+        data-short={isDown(connection) ? 'OFF' : '…'}
       >
-        {connection === 'reconnecting' ? 'OFFLINE' : 'CONNECTING'}
+        {isDown(connection) ? 'OFFLINE' : 'CONNECTING'}
       </span>
     );
   return (

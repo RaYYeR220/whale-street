@@ -20,7 +20,12 @@ export function Banners() {
   }, [connection]);
 
   const items: Array<{ key: string; text: string; dots?: boolean }> = [];
-  if (connection === 'reconnecting')
+  if (connection === 'limited')
+    items.push({
+      key: 'limit',
+      text: 'Too many connections or messages from your network: the engine turned this tab away. Live updates resume by themselves in a minute or two; closing other Whale Street tabs helps.',
+    });
+  else if (connection === 'reconnecting')
     items.push({
       key: 'ws',
       text: 'Reconnecting to the floor. Prices will catch up when we are back.',

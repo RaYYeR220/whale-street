@@ -311,6 +311,8 @@ export interface TradeRowView {
   multBefore: number;
   multAfter: number;
   forced: boolean;
+  /** A forced cover that cost more than the short's collateral: the excess, written off (else 0). */
+  writeOffUsd: number;
   at: number;
   ticker: string;
 }

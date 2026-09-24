@@ -122,6 +122,27 @@ export function hypeOf(mult: number | null | undefined): number | null {
   return m === null ? null : m - 1;
 }
 
+/**
+ * A halt reason in words. The engine halts on data it cannot trust: `no mark for <COIN>` (no live
+ * Hyperliquid price for a held coin for a minute) and `settlement pending` (a bankruptcy whose
+ * settlement failed and is retried); other reasons read as they are.
+ */
+export function haltText(reason: string | null): string | null {
+  if (reason === null) return null;
+  const coin = reason.match(/^no mark for (.+)$/)?.[1];
+  if (coin) return `no live Hyperliquid price for ${coin}`;
+  if (reason === 'settlement pending') return 'bankruptcy settlement pending';
+  return reason;
+}
+
+/** What a halted company waits for before it trades again. */
+export function haltUntil(reason: string | null): string {
+  const coin = reason?.match(/^no mark for (.+)$/)?.[1];
+  if (coin) return `until Hyperliquid prices ${coin} again`;
+  if (reason === 'settlement pending') return 'until its bankruptcy settlement goes through';
+  return 'until fresh data returns';
+}
+
 export function toDisplay(
   entry: MarketEntry | null | undefined,
   view: CompanyView | null | undefined,

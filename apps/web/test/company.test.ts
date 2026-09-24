@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { HoldingView, PositionView } from '../lib/api-types';
 import {
   displayStatus,
+  haltText,
+  haltUntil,
   headline,
   liqDistance,
   notional,
@@ -14,6 +16,7 @@ import { ipoErrorText, orderErrorText } from '../lib/errors';
 import { filingText, foldRepeats, kindOf } from '../lib/filings';
 import { avgEntry, holdingPnl, holdingReturn, invested, isShort } from '../lib/portfolio';
 import { seriesFromHistory } from '../lib/store';
+import { tradeText } from '../lib/trades';
 import { companyView, entry, filing, T0 } from './helpers';
 
 const pos = (o: Partial<PositionView> = {}): PositionView => ({
@@ -169,5 +172,53 @@ describe('open IPOs', () => {
     expect(openIpoCount(views, byTicker, T0)).toBe(1);
     expect(openIpoCount(views, {}, T0)).toBe(2);
     expect(openIpoCount(views, byTicker, null)).toBe(0);
+  });
+});
+
+describe('halt reasons', () => {
+  it('says what a data halt waits for, in words', () => {
+    expect(haltText('no mark for BTC')).toBe('no live Hyperliquid price for BTC');
+    expect(haltText('settlement pending')).toBe('bankruptcy settlement pending');
+    expect(haltText('Nansen did not answer')).toBe('Nansen did not answer');
+    expect(haltText(null)).toBeNull();
+    expect(haltUntil('no mark for BTC')).toBe('until Hyperliquid prices BTC again');
+    expect(haltUntil('settlement pending')).toBe('until its bankruptcy settlement goes through');
+    expect(haltUntil(null)).toBe('until fresh data returns');
+  });
+
+  it('reads the halt and resume filings the same way', () => {
+    expect(filingText(filing({ kind: 'HALT', detail: 'no mark for xyz:TSLA' }))).toBe(
+      'Trading halted: no live Hyperliquid price for xyz:TSLA.',
+    );
+    expect(filingText(filing({ kind: 'HALT', detail: 'settlement pending' }))).toBe(
+      'Trading halted: bankruptcy settlement pending.',
+    );
+    expect(filingText(filing({ kind: 'RESUME', detail: 'marks returned' }))).toBe(
+      'Trading resumed: live prices are back.',
+    );
+  });
+});
+
+describe('trade lines', () => {
+  const t = {
+    side: 'COVER' as const,
+    qty: 4,
+    ticker: 'GBC',
+    avgPrice: 250,
+    forced: true,
+    writeOffUsd: 12.5,
+  };
+
+  it('names what a forced cover wrote off (the loss is capped at the collateral)', () => {
+    expect(tradeText(t)).toBe(
+      'Covered 4 GBC at 250.00 (auto), $12.50 written off: the loss stops at the collateral',
+    );
+  });
+
+  it('says nothing more for an ordinary trade', () => {
+    expect(tradeText({ ...t, side: 'BUY', forced: false, writeOffUsd: 0 })).toBe(
+      'Bought 4 GBC at 250.00',
+    );
+    expect(tradeText({ ...t, writeOffUsd: 0 })).toBe('Covered 4 GBC at 250.00 (auto)');
   });
 });

@@ -4,7 +4,7 @@ import { type OrderSide, PARAMS } from '@whale-street/core';
 import Link from 'next/link';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import type { QuoteView } from '../../lib/api-types';
-import { type DisplayCompany, IPO_CAP_USD } from '../../lib/company';
+import { type DisplayCompany, haltText, haltUntil, IPO_CAP_USD } from '../../lib/company';
 import { orderErrorText } from '../../lib/errors';
 import { mmss, pct, pctAbs, price, shares, signedUsd, upDown, usd } from '../../lib/format';
 import { avgEntry, holdingPnl, holdingReturn } from '../../lib/portfolio';
@@ -17,6 +17,8 @@ const VERB: Record<Side, string> = { buy: 'Buy', sell: 'Sell', short: 'Short', c
 const WIRE: Record<Side, OrderSide> = { buy: 'BUY', sell: 'SELL', short: 'SHORT', cover: 'COVER' };
 /** Share of the IPO allowance a dollar amount may use, leaving room for the fee and price impact. */
 export const IPO_HEADROOM = 0.97;
+
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
 
 /** What a player may still spend on a company during its IPO minute (the engine enforces it). */
 export function ipoAllowance(longCost: number | undefined): number {
@@ -228,8 +230,8 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
           <div className="co-closed">
             <b>Trading paused</b>
             <span>
-              {c.haltReason ? `${c.haltReason}. ` : ''}Nobody can trade {c.ticker} at a fair price
-              until fresh data returns. Your shares are safe.
+              {c.haltReason ? `${capital(haltText(c.haltReason) ?? '')}. ` : ''}Nobody can trade{' '}
+              {c.ticker} at a fair price {haltUntil(c.haltReason)}. Your shares are safe.
             </span>
           </div>
         ) : (

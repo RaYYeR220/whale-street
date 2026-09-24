@@ -86,11 +86,30 @@ describe('player profile', () => {
             },
             portfolio: portfolio({ netWorth: null, netWorthReason: 'QLP has no live price' }),
             seasons: [],
-            trades: [],
+            trades: [
+              {
+                id: 7,
+                playerId: 'p9',
+                seasonId: 1,
+                companyId: '0xb2',
+                side: 'COVER',
+                qty: 4,
+                cash: 1_012.5,
+                avgPrice: 253.13,
+                nav: 250,
+                multBefore: 1,
+                multAfter: 1.01,
+                forced: true,
+                writeOffUsd: 12.5,
+                at: T0,
+                ticker: 'GBC',
+              },
+            ],
           }}
         />
       </Wrap>,
     );
+    expect(html).toContain('(auto), $12.50 written off');
     expect(html).toContain('Velvet Anchovy #412');
     expect(html).toContain('Net worth is hidden: QLP has no live price.');
     expect(html).toContain('No holdings this season.');

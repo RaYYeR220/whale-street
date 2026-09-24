@@ -6,6 +6,7 @@ import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { FilingView } from '../../lib/api-types';
 import {
   type DisplayCompany,
+  haltText,
   IPO_CAP_USD,
   notional,
   portraitStatus,
@@ -121,8 +122,8 @@ function PosBlock({
   if (c.display === 'halted')
     return (
       <div className="ws-co__halt-note">
-        {c.haltReason ? `Halted: ${c.haltReason}.` : 'Halted: no fresh Nansen data.'} Trading
-        paused; your shares are safe.
+        {c.haltReason ? `Halted: ${haltText(c.haltReason)}.` : 'Halted: no fresh Nansen data.'}{' '}
+        Trading paused; your shares are safe.
       </div>
     );
   if (c.display === 'bankrupt' || c.display === 'delisted')

@@ -150,6 +150,11 @@ export class FakeSocket implements SocketLike {
     this.readyState = 3;
     this.onclose?.({});
   }
+  /** The server closes the socket with a WebSocket close code (1008: policy violation). */
+  closeWith(code: number, reason = ''): void {
+    this.readyState = 3;
+    this.onclose?.({ code, reason });
+  }
 }
 
 /** Manual timers for backoff and watchdog tests. */

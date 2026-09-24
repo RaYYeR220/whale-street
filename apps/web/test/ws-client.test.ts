@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { EngineSocket } from '../lib/ws-client';
+import { EngineSocket, LIMITED_DELAY_MS } from '../lib/ws-client';
 import { FakeSocket, manualTimers } from './helpers';
 
 function setup(token: string | null = 'tok') {
@@ -102,6 +102,37 @@ describe('EngineSocket', () => {
     }
     last().drop();
     expect(timers.delays()).toEqual([15_000]);
+  });
+
+  it('backs off for long, and says so, when the engine closes for too many connections or messages', () => {
+    const { s, last, timers, states } = setup();
+    s.start();
+    last().open();
+    last().closeWith(1008, 'too many connections from this address');
+    expect(states.at(-1)).toBe('limited');
+    expect(timers.delays()).toEqual([LIMITED_DELAY_MS]);
+    timers.fire(LIMITED_DELAY_MS);
+    // Accepted, then closed at once again: a bare open does not count as healthy.
+    last().open();
+    last().closeWith(1008, 'too many connections from this address');
+    expect(timers.delays()).toEqual([2 * LIMITED_DELAY_MS]);
+    timers.fire(2 * LIMITED_DELAY_MS);
+    last().open();
+    last().receive({ t: 'status', status: {} });
+    last().drop();
+    expect(states.at(-1)).toBe('reconnecting');
+    expect(timers.delays()).toEqual([500]);
+  });
+
+  it('never waits longer than two minutes after repeated limits', () => {
+    const { s, last, timers } = setup();
+    s.start();
+    for (let i = 0; i < 6; i++) {
+      last().closeWith(1008, 'too many messages');
+      timers.fire();
+    }
+    last().closeWith(1008, 'too many messages');
+    expect(timers.delays()).toEqual([120_000]);
   });
 
   it('treats a silent socket as dead after the watchdog period', () => {
