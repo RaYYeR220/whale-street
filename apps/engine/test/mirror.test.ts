@@ -821,17 +821,18 @@ describe('mirror', () => {
       release = resolve;
     });
     const read = t.info.clearinghouse.bind(t.info);
+    let reading = false;
     t.info.clearinghouse = async (user) => {
+      reading = true;
       await gate;
       return read(user);
     };
     t.clock.advance(31_000);
-    const res = await Promise.race([
-      t.app.inject({ url: '/api/mirror/orders', headers: bearer(token) }),
-      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
-    ]);
+    // The Hyperliquid read stays blocked until release(): a route that waited for it would never
+    // answer (the test would time out), so an answer here proves it did not wait.
+    const res = await t.app.inject({ url: '/api/mirror/orders', headers: bearer(token) });
+    expect(reading).toBe(true);
     release();
-    if (res === 'blocked') throw new Error('GET /api/mirror/orders waited for Hyperliquid');
     expect(res.statusCode).toBe(200);
     expect(res.json().orders.find((o: { id: string }) => o.id === id)).toMatchObject({
       status: 'UNKNOWN',

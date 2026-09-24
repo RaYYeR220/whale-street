@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { addCompany } from './helpers/world';
-import { inbox, send } from './helpers/ws';
+import { inbox, nextDisconnect, send } from './helpers/ws';
 
 const A = '0x00000000000000000000000000000000000000a1' as const;
 let t: TestEngine;
@@ -106,9 +106,10 @@ describe('WS gateway', () => {
     const code = await new Promise<number>((resolve) => extra.on('close', (c) => resolve(c)));
     expect(code).toBe(1008);
     expect(t.engine.status().viewers).toBe(30);
+    const left = nextDisconnect(t.engine);
     sockets[0]?.terminate();
-    for (let i = 0; i < 100 && t.engine.status().viewers > 29; i++)
-      await new Promise((r) => setTimeout(r, 10));
+    await left;
+    expect(t.engine.status().viewers).toBe(29);
     const again = await connect();
     expect(t.engine.status().viewers).toBe(30);
     for (const s of [...sockets, again.ws]) s.terminate();
@@ -123,15 +124,16 @@ describe('WS gateway', () => {
     send(b.ws, { op: 'sub', channels: ['leaderboard'] });
     await a.box.waitFor((m) => m.t === 'leaderboard');
     await b.box.waitFor((m) => m.t === 'leaderboard');
+    a.box.clear();
     send(a.ws, { op: 'unsub', channels: ['leaderboard'] });
     send(a.ws, { op: 'sub', channels: ['leaderboard'] });
-    await new Promise((r) => setTimeout(r, 50));
-    expect(a.box.msgs.filter((m) => m.t === 'leaderboard')).toHaveLength(2);
+    await a.box.waitFor((m) => m.t === 'leaderboard');
     expect(spy).toHaveBeenCalledTimes(1);
     t.clock.advance(1_000);
+    b.box.clear();
     send(b.ws, { op: 'unsub', channels: ['leaderboard'] });
     send(b.ws, { op: 'sub', channels: ['leaderboard'] });
-    await new Promise((r) => setTimeout(r, 50));
+    await b.box.waitFor((m) => m.t === 'leaderboard');
     expect(spy).toHaveBeenCalledTimes(2);
     a.ws.terminate();
     b.ws.terminate();
@@ -147,9 +149,9 @@ describe('WS gateway', () => {
     await box.waitFor((m) => m.t === 'error' && String(m.message).includes('op'));
     send(ws, { op: 'sub', channels: ['leaderboard', 'status'] });
     expect(await box.waitFor((m) => m.t === 'leaderboard')).toMatchObject({ rows: [] });
+    const left = nextDisconnect(t.engine);
     ws.terminate();
-    for (let i = 0; i < 100 && t.engine.status().viewers > 0; i++)
-      await new Promise((r) => setTimeout(r, 10));
+    await left;
     expect(t.engine.status().viewers).toBe(0);
   });
 });
