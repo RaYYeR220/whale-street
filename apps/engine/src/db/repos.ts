@@ -1,5 +1,5 @@
 import type { CallRecord } from '@whale-street/nansen';
-import { and, desc, eq, gt, gte, inArray, lte } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lte, sql } from 'drizzle-orm';
 import type { MirrorStatus } from '../types';
 import type { Db } from './index';
 import {
@@ -104,6 +104,7 @@ export interface Repos {
     insert(row: IpoAppRow): void;
     get(id: string): IpoAppRow | undefined;
     update(id: string, patch: Partial<Omit<IpoAppRow, 'id'>>): void;
+    /** Newest first, in insertion order. */
     recent(limit: number): IpoAppRow[];
     /** Applications by a player whose wall-clock `appliedWallAt` is at or after `wallSince`. */
     countByPlayerAppliedSince(playerId: string, wallSince: number): number;
@@ -421,8 +422,8 @@ export function createRepos({ sqlite, db }: Db): Repos {
       update: (id, patch) => {
         db.update(ipoApps).set(patch).where(eq(ipoApps.id, id)).run();
       },
-      recent: (limit) =>
-        db.select().from(ipoApps).orderBy(desc(ipoApps.createdAt)).limit(limit).all(),
+      // Insertion order: createdAt is engine-clock time, which jumps back at every REPLAY wrap.
+      recent: (limit) => db.select().from(ipoApps).orderBy(desc(sql`rowid`)).limit(limit).all(),
       countByPlayerAppliedSince: (playerId, wallSince) =>
         db
           .select({ id: ipoApps.id })

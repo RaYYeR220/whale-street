@@ -60,7 +60,9 @@ export function registerMirrorRoutes(app: FastifyInstance, e: Engine): void {
     if (!prepares.allow(player.id))
       return sendError(reply, 429, 'RATE_LIMITED', 'at most 10 mirror prepares per minute');
     const r = await e.mirror.prepare(player.id, body.data);
-    return r.ok ? r : fail(reply, r);
+    if (!r.ok) return fail(reply, r);
+    // A policy refusal is an answer, not an error: HTTP 200, but flagged ok: false for clients.
+    return 'refusals' in r ? { ...r, ok: false } : r;
   });
 
   app.post('/api/mirror/execute', async (req, reply) => {

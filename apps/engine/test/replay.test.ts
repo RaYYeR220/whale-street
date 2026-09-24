@@ -766,6 +766,40 @@ describe('REPLAY loop wrap', () => {
     await r.close();
   }, 60_000);
 
+  it('tells clients the engine time and the loop they are watching', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    const status = async () => (await app.inject({ url: '/api/status' })).json();
+    await r.step(5_000);
+    const loop = { startT: SYNTHETIC_T0, endT: SYNTHETIC_T0 + 600_000 };
+    expect(await status()).toMatchObject({
+      now: SYNTHETIC_T0 + 5_000,
+      loop: { index: 0, ...loop },
+    });
+    await r.step(600_000);
+    expect(await status()).toMatchObject({
+      now: SYNTHETIC_T0 + 5_000,
+      loop: { index: 1, ...loop },
+    });
+    expect(engine.status().now).toBe(engine.clock.now());
+    await r.close();
+  });
+
+  it('lists IPO applications in the order they were made, even across a wrap', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    const { player } = engine.players.create('human');
+    await r.step(500_000);
+    const late = engine.ipo.apply(player.id, SYNTHETIC_A);
+    await r.step(200_000); // wrapped: the next application has an earlier engine-clock time
+    const early = engine.ipo.apply(player.id, SYNTHETIC_B);
+    if (!late.ok || !early.ok) throw new Error('apply failed');
+    expect(early.app.createdAt).toBeLessThan(late.app.createdAt);
+    const apps = (await app.inject({ url: '/api/ipo' })).json().apps as Array<{ id: string }>;
+    expect(apps.map((a) => a.id)).toEqual([early.app.id, late.app.id]);
+    await r.close();
+  });
+
   it('runs anti-abuse caps on wall time: a wrap neither resets them nor makes them lifetime', async () => {
     const r = await bootReplay(syntheticSession());
     const { engine, app } = r;

@@ -34,6 +34,8 @@ describe('REST', () => {
       idle: false,
       creditSaver: false,
       season: { id: 1 },
+      now: t.clock.now(),
+      loop: null,
     });
     const { player, token } = await signup();
     const me = await t.app.inject({ url: '/api/me', headers: bearer(token) });

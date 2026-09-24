@@ -148,6 +148,7 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
         knownAddresses: session.knownAddresses,
         startT: clock.startT,
         endT: clock.endT,
+        loopIndex: () => clock.loopIndex(),
         advance: () => {
           feed.advance();
           mood.advance();

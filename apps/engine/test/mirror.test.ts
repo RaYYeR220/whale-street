@@ -101,6 +101,7 @@ describe('mirror', () => {
     });
     expect(prep.statusCode).toBe(200);
     const body = prep.json();
+    expect(body.ok).toBe(true);
     expect(body.order).toMatchObject({ coin: 'HYPE', isBuy: true, leverage: 3, markPx: 41 });
     expect(body.steps.map((s: { kind: string }) => s.kind)).toEqual(['leverage', 'order']);
     expect(JSON.stringify(body)).not.toContain('"action"');
@@ -142,7 +143,7 @@ describe('mirror', () => {
   });
 
   it('refuses with reasons (anti-FOMO) and logs the refused attempt', async () => {
-    const { e, trading, master, agent, player } = await setup({ mark: 42.2 });
+    const { e, trading, master, agent, player, token } = await setup({ mark: 42.2 });
     e.mirror.registerAgent(player.id, master.address, agent.address);
     const r = await e.mirror.prepare(player.id, {
       ticker: 'HYP',
@@ -154,6 +155,19 @@ describe('mirror', () => {
     expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
     expect(e.mirror.orders(player.id)[0]).toMatchObject({
       status: 'REFUSED',
+      refusals: [{ code: 'ANTI_FOMO' }],
+    });
+    // Over REST a refusal is still HTTP 200 (a policy answer, not an error), flagged ok: false.
+    const res = await t.app.inject({
+      method: 'POST',
+      url: '/api/mirror/prepare',
+      headers: bearer(token),
+      payload: HYP_50,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({
+      ok: false,
+      groupId: expect.any(String),
       refusals: [{ code: 'ANTI_FOMO' }],
     });
   });

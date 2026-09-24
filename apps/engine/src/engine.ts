@@ -35,6 +35,8 @@ export interface ReplayRuntime {
   /** Engine-clock bounds of the recording; the REPLAY clock loops over [startT, endT). */
   readonly startT: number;
   readonly endT: number;
+  /** How many times the loop has wrapped since boot (0 in the first pass). */
+  loopIndex(): number;
   /** Called first in every tick: advances the replay feed and street mood, detects loop wraps. */
   advance(): void;
 }
@@ -69,6 +71,13 @@ export interface StatusView {
   season: { id: number; endsAt: number } | null;
   companies: number;
   viewers: number;
+  /**
+   * Engine clock (ms). In REPLAY every engine timestamp (filings, trades, createdAt, season end)
+   * is recording time, and repeats each loop.
+   */
+  now: number;
+  /** REPLAY: the loop being played (index counts wraps since boot); null in LIVE. */
+  loop: { index: number; startT: number; endT: number } | null;
 }
 
 export interface Engine {
@@ -313,6 +322,14 @@ export function createEngine(deps: EngineDeps): Engine {
         season: season ? { id: season.id, endsAt: season.endsAt } : null,
         companies: state.listed().length,
         viewers: idle.clients(),
+        now: clock.now(),
+        loop: deps.replay
+          ? {
+              index: deps.replay.loopIndex(),
+              startT: deps.replay.startT,
+              endT: deps.replay.endT,
+            }
+          : null,
       };
     },
   };

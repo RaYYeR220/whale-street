@@ -8,6 +8,8 @@ export const realClock: Clock = { now: () => Date.now() };
 export interface ReplayClock extends Clock {
   readonly startT: number;
   readonly endT: number;
+  /** How many times the loop has wrapped since boot (0 in the first pass). */
+  loopIndex(): number;
   /** Returns true (and notifies onWrap listeners) when the loop wrapped since the last poll. */
   poll(): boolean;
   onWrap(cb: () => void): () => void;
@@ -27,6 +29,7 @@ export function createReplayClock(
     startT,
     endT,
     now: () => startT + (elapsed() % span),
+    loopIndex: () => Math.floor(elapsed() / span),
     poll() {
       const loop = Math.floor(elapsed() / span);
       if (loop === lastLoop) return false;
