@@ -23,7 +23,24 @@ describe('loadConfig', () => {
       targetCompanies: 20,
       seasonDays: 7,
       trustProxy: 0,
+      creditSaverAt: 1_500,
+      creditFloor: 200,
     });
+  });
+
+  it('CREDIT_SAVER_AT / CREDIT_FLOOR set the credit thresholds (integers >= 0, floor <= saver)', () => {
+    const c = loadConfig({ CREDIT_SAVER_AT: '300', CREDIT_FLOOR: '100' }, noFile);
+    expect(c).toMatchObject({ creditSaverAt: 300, creditFloor: 100 });
+    expect(loadConfig({ CREDIT_SAVER_AT: '0', CREDIT_FLOOR: '0' }, noFile)).toMatchObject({
+      creditSaverAt: 0,
+      creditFloor: 0,
+    });
+    expect(() => loadConfig({ CREDIT_SAVER_AT: '-1' }, noFile)).toThrow();
+    expect(() => loadConfig({ CREDIT_FLOOR: '12.5' }, noFile)).toThrow();
+    expect(() => loadConfig({ CREDIT_SAVER_AT: 'lots' }, noFile)).toThrow();
+    expect(() => loadConfig({ CREDIT_SAVER_AT: '100', CREDIT_FLOOR: '300' }, noFile)).toThrow(
+      'CREDIT_FLOOR must not exceed CREDIT_SAVER_AT',
+    );
   });
 
   it('TRUST_PROXY is a hop count (integer >= 0)', () => {

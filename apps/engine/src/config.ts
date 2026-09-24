@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
+import { CREDIT_FLOOR, CREDIT_SAVER_AT } from './ingest/credits';
 
 const csv = (fallback: string) =>
   z
@@ -12,21 +13,27 @@ const csv = (fallback: string) =>
         .filter((x) => x.length > 0),
     );
 
-const EnvSchema = z.object({
-  PORT: z.coerce.number().int().min(0).max(65_535).default(8787),
-  HOST: z.string().min(1).default('0.0.0.0'),
-  NANSEN_API_KEY: z.string().min(1).optional(),
-  ENV_FILE: z.string().min(1).optional(),
-  DATA_DIR: z.string().min(1).default('./data'),
-  MODE: z.enum(['auto', 'live', 'replay']).default('auto'),
-  REPLAY_FILE: z.string().min(1).default('./replay/session.ndjson'),
-  RECORD: z.enum(['0', '1']).default('0'),
-  CORS_ORIGINS: csv('http://localhost:3000'),
-  PUBLIC_HOSTS: csv(''),
-  TARGET_COMPANIES: z.coerce.number().int().positive().default(20),
-  SEASON_DAYS: z.coerce.number().int().positive().default(7),
-  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
-});
+const EnvSchema = z
+  .object({
+    PORT: z.coerce.number().int().min(0).max(65_535).default(8787),
+    HOST: z.string().min(1).default('0.0.0.0'),
+    NANSEN_API_KEY: z.string().min(1).optional(),
+    ENV_FILE: z.string().min(1).optional(),
+    DATA_DIR: z.string().min(1).default('./data'),
+    MODE: z.enum(['auto', 'live', 'replay']).default('auto'),
+    REPLAY_FILE: z.string().min(1).default('./replay/session.ndjson'),
+    RECORD: z.enum(['0', '1']).default('0'),
+    CORS_ORIGINS: csv('http://localhost:3000'),
+    PUBLIC_HOSTS: csv(''),
+    TARGET_COMPANIES: z.coerce.number().int().positive().default(20),
+    SEASON_DAYS: z.coerce.number().int().positive().default(7),
+    TRUST_PROXY: z.coerce.number().int().min(0).default(0),
+    CREDIT_SAVER_AT: z.coerce.number().int().min(0).default(CREDIT_SAVER_AT),
+    CREDIT_FLOOR: z.coerce.number().int().min(0).default(CREDIT_FLOOR),
+  })
+  .refine((e) => e.CREDIT_FLOOR <= e.CREDIT_SAVER_AT, {
+    message: 'CREDIT_FLOOR must not exceed CREDIT_SAVER_AT',
+  });
 
 export interface Config {
   port: number;
@@ -47,6 +54,10 @@ export interface Config {
    * the socket address is the client). Behind exactly one proxy (e.g. Fly) set 1.
    */
   trustProxy: number;
+  /** LIVE: Nansen credit balance below which live positions come from Hyperliquid (credit-saver). */
+  creditSaverAt: number;
+  /** LIVE: Nansen credit balance below which the scout and the IPO desk pause. */
+  creditFloor: number;
 }
 
 /**
@@ -99,6 +110,8 @@ export function loadConfig(
     targetCompanies: e.TARGET_COMPANIES,
     seasonDays: e.SEASON_DAYS,
     trustProxy: e.TRUST_PROXY,
+    creditSaverAt: e.CREDIT_SAVER_AT,
+    creditFloor: e.CREDIT_FLOOR,
   };
 }
 

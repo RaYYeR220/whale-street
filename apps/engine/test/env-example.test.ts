@@ -14,6 +14,8 @@ describe('.env.example', () => {
     expect(documented.map((d) => d.key).sort()).toEqual(
       [
         'CORS_ORIGINS',
+        'CREDIT_FLOOR',
+        'CREDIT_SAVER_AT',
         'DATA_DIR',
         'ENV_FILE',
         'HOST',

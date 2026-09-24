@@ -56,6 +56,43 @@ describe('credit monitor', () => {
     expect(w.repos.kv.getJson('credits')).toMatchObject({ remaining: 150 });
   });
 
+  it('uses the configured thresholds instead of the defaults', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    const monitor = createCreditMonitor({
+      ...w,
+      nansen,
+      log: silentLogger,
+      thresholds: { saverAt: 300, floor: 100 },
+    });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 1_056 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({ creditSaver: false, creditFloor: false });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 299 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({ creditSaver: true, creditFloor: false });
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 99 };
+    await monitor.check();
+    expect(w.state.flags).toMatchObject({ creditSaver: true, creditFloor: true });
+  });
+
+  it('a LIVE engine takes CREDIT_SAVER_AT / CREDIT_FLOOR from its config', async () => {
+    const t = await testEngine({
+      mode: 'live',
+      env: { CREDIT_SAVER_AT: '300', CREDIT_FLOOR: '100' },
+    });
+    t.nansen.accountInfo = { plan: 'free', creditsRemaining: 1_056 };
+    t.engine.tick();
+    await t.engine.settle();
+    expect(t.nansen.count('account')).toBe(1);
+    expect(t.engine.status()).toMatchObject({
+      creditSaver: false,
+      creditFloor: false,
+      creditsRemaining: 1_056,
+    });
+    await t.app.close();
+  });
+
   it('recognises a refusal for credits by status 402 or by the insufficient_credits code', () => {
     const r = (status: number | null, error: string) =>
       ({ ok: false, error, status, callId: 'nc_x' }) as const;

@@ -145,7 +145,16 @@ export function createEngine(deps: EngineDeps): Engine {
   // The last street mood, so the panel is not empty until the next refresh (REPLAY replays its own).
   if (live) restoreMood(repos, state);
   const credits = live
-    ? createCreditMonitor({ nansen: deps.nansen, state, repos, bus, clock, log, track })
+    ? createCreditMonitor({
+        nansen: deps.nansen,
+        state,
+        repos,
+        bus,
+        clock,
+        log,
+        track,
+        thresholds: { saverAt: config.creditSaverAt, floor: config.creditFloor },
+      })
     : null;
   // Every data call reports a refusal for credits to the monitor, which checks the account at once.
   const nansen = credits ? withCreditAlarm(deps.nansen, () => credits.alarm()) : deps.nansen;

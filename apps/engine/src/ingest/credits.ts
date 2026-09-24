@@ -6,10 +6,21 @@ import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
 import type { NansenPort } from '../ports';
 
-/** Below this, live positions come from Hyperliquid clearinghouseState (visible "credit-saver" badge). */
+/**
+ * Default: below this, live positions come from Hyperliquid clearinghouseState (visible
+ * "credit-saver" badge). Configurable with CREDIT_SAVER_AT.
+ */
 export const CREDIT_SAVER_AT = 1_500;
-/** Below this, the scout and the IPO desk pause (applications DEFERRED with a reason). */
+/**
+ * Default: below this, the scout and the IPO desk pause (applications DEFERRED with a reason).
+ * Configurable with CREDIT_FLOOR.
+ */
 export const CREDIT_FLOOR = 200;
+
+export interface CreditThresholds {
+  saverAt: number;
+  floor: number;
+}
 /** After a data call is refused for credits, further refusals within this window share one check. */
 export const CREDIT_ALARM_DEBOUNCE_MS = 60_000;
 
@@ -59,7 +70,13 @@ export function createCreditMonitor(d: {
   log: Logger;
   /** Registers the alarm's background check (tests and shutdown await it). */
   track?: (p: Promise<unknown>) => void;
+  /** Credit-saver and floor thresholds (default CREDIT_SAVER_AT / CREDIT_FLOOR). */
+  thresholds?: CreditThresholds;
 }): CreditMonitor {
+  const { saverAt, floor: floorAt } = d.thresholds ?? {
+    saverAt: CREDIT_SAVER_AT,
+    floor: CREDIT_FLOOR,
+  };
   let alarmAt = Number.NEGATIVE_INFINITY;
   let alarmCheck: Promise<void> | null = null;
 
@@ -84,8 +101,8 @@ export function createCreditMonitor(d: {
       return;
     }
     const remaining = r.value.creditsRemaining;
-    const saver = remaining < CREDIT_SAVER_AT;
-    const floor = remaining < CREDIT_FLOOR;
+    const saver = remaining < saverAt;
+    const floor = remaining < floorAt;
     const changed =
       saver !== f.creditSaver || floor !== f.creditFloor || remaining !== f.creditsRemaining;
     f.creditSaver = saver;
