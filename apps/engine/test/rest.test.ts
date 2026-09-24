@@ -198,7 +198,7 @@ describe('REST', () => {
   it('IPO desk refusals: listed → 409, per-IP cap → 429 IPO_DESK_BUSY', async () => {
     t = await testEngine();
     seedCompany();
-    const players = [await signup(), await signup(), await signup()];
+    const players = [await signup(), await signup(), await signup(), await signup()];
     const apply = (token: string, address: string) =>
       t.app.inject({
         method: 'POST',
@@ -210,11 +210,12 @@ describe('REST', () => {
     expect(listed.statusCode).toBe(409);
     expect(listed.json()).toMatchObject({ error: 'ALREADY_LISTED' });
     const addr = (i: number) => `0x${(0xd00 + i).toString(16).padStart(40, '0')}`;
-    for (let i = 0; i < 6; i++) {
+    // 10 per IP per hour (3 per player): the 11th from the same IP is refused.
+    for (let i = 0; i < 10; i++) {
       const r = await apply(players[Math.floor(i / 3)]?.token ?? '', addr(i));
       expect(r.statusCode).toBe(202);
     }
-    const busy = await apply(players[2]?.token ?? '', addr(6));
+    const busy = await apply(players[3]?.token ?? '', addr(10));
     expect(busy.statusCode).toBe(429);
     expect(busy.json()).toMatchObject({ error: 'IPO_DESK_BUSY' });
     await t.engine.settle();

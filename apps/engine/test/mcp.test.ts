@@ -223,7 +223,7 @@ describe('MCP /mcp', () => {
     t = await testEngine();
     addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
     const agents: Array<{ token: string }> = [];
-    for (let i = 0; i < 3; i++)
+    for (let i = 0; i < 4; i++)
       agents.push(
         (
           await t.app.inject({ method: 'POST', url: '/api/agents', payload: { name: `Desk ${i}` } })
@@ -238,8 +238,10 @@ describe('MCP /mcp', () => {
     const addr = (n: number) => `0x${(0xe00 + n).toString(16).padStart(40, '0')}`;
     const first = JSON.parse((await apply(0, addr(0))).text);
     expect(JSON.parse((await apply(1, addr(0))).text)).toMatchObject({ id: first.id });
-    for (let n = 1; n < 6; n++) expect((await apply(n < 3 ? 0 : 1, addr(n))).isError).toBe(false);
-    expect(await apply(2, addr(6))).toMatchObject({
+    // 10 per IP per hour (3 per agent): the 11th from the same IP is refused.
+    for (let n = 1; n < 10; n++)
+      expect((await apply(Math.floor(n / 3), addr(n))).isError).toBe(false);
+    expect(await apply(3, addr(10))).toMatchObject({
       isError: true,
       text: expect.stringContaining('IPO_DESK_BUSY'),
     });

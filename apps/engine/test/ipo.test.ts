@@ -195,9 +195,9 @@ describe('ipo service', () => {
     await ipo.drained();
   });
 
-  it('caps one client IP at 6 applications per hour, across players (IPO_DESK_BUSY)', async () => {
+  it('caps one client IP at 10 applications per hour, across players (IPO_DESK_BUSY)', async () => {
     const { nansen, ipo } = setup();
-    for (let i = 0; i < 6; i++)
+    for (let i = 0; i < 10; i++)
       expect(ipo.apply(`p${i}`, addr(0x300 + i), '198.51.100.7').ok).toBe(true);
     const calls = nansen.calls.length;
     expect(ipo.apply('p9', addr(0x310), '198.51.100.7')).toMatchObject({

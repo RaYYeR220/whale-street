@@ -26,7 +26,10 @@ export const IPO_PER_PLAYER_PER_HOUR = 3;
 export interface IpoLimits {
   /** New applications per wall-clock hour, all players together. */
   readonly globalPerHour: number;
-  /** New applications per wall-clock hour from one client IP (across players). */
+  /**
+   * New applications per wall-clock hour from one client IP, across players (a room on one
+   * shared network counts as one IP).
+   */
   readonly perIpPerHour: number;
   /** Applications queued or under evaluation; beyond it a new one is DEFERRED "desk busy". */
   readonly maxPending: number;
@@ -36,7 +39,7 @@ export interface IpoLimits {
 
 export const IPO_LIMITS: IpoLimits = Object.freeze({
   globalPerHour: 30,
-  perIpPerHour: 6,
+  perIpPerHour: 10,
   maxPending: 10,
   dedupMs: DAY_MS,
 });

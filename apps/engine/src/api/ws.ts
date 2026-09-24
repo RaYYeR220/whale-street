@@ -9,8 +9,11 @@ export const PING_EVERY_MS = 25_000;
 export const MAX_BUFFERED_BYTES = 1_000_000;
 /** Client messages per connection per second; one more closes the socket (1008). */
 export const MAX_MESSAGES_PER_SECOND = 20;
-/** Open connections per client IP; a further one is closed at once (1008). */
-export const MAX_CONNECTIONS_PER_IP = 10;
+/**
+ * Open connections per client IP, sized for a room sharing one address (venue Wi-Fi, office NAT);
+ * a further one is closed at once (1008).
+ */
+export const MAX_CONNECTIONS_PER_IP = 30;
 /** The leaderboard frame is computed at most this often and shared by every subscriber. */
 export const LEADERBOARD_CACHE_MS = 1_000;
 /** WebSocket close code 'policy violation'. */

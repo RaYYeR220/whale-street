@@ -97,20 +97,20 @@ describe('WS gateway', () => {
     expect(await closed).toBe(1008);
   });
 
-  it('accepts at most 10 connections per IP; the 11th is closed with 1008', async () => {
+  it('accepts 30 connections per IP (a room on one Wi-Fi); the 31st is closed with 1008', async () => {
     t = await testEngine();
     const sockets = [];
-    for (let i = 0; i < 10; i++) sockets.push((await connect()).ws);
-    expect(t.engine.status().viewers).toBe(10);
+    for (let i = 0; i < 30; i++) sockets.push((await connect()).ws);
+    expect(t.engine.status().viewers).toBe(30);
     const extra = await t.app.injectWS('/ws');
     const code = await new Promise<number>((resolve) => extra.on('close', (c) => resolve(c)));
     expect(code).toBe(1008);
-    expect(t.engine.status().viewers).toBe(10);
+    expect(t.engine.status().viewers).toBe(30);
     sockets[0]?.terminate();
-    for (let i = 0; i < 100 && t.engine.status().viewers > 9; i++)
+    for (let i = 0; i < 100 && t.engine.status().viewers > 29; i++)
       await new Promise((r) => setTimeout(r, 10));
     const again = await connect();
-    expect(t.engine.status().viewers).toBe(10);
+    expect(t.engine.status().viewers).toBe(30);
     for (const s of [...sockets, again.ws]) s.terminate();
   });
 
