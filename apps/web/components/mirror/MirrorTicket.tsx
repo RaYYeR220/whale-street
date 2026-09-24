@@ -127,6 +127,19 @@ function savePutAside(ids: ReadonlySet<string>): void {
     /* kept for this page only */
   }
 }
+/** Delays between automatic re-reads of an order log that could not be loaded. */
+const LOG_RETRY_MS = [2_000, 5_000, 10_000, 20_000, 30_000];
+const NO_ORDERS: MirrorOrderView[] = [];
+
+/**
+ * The player's Mirror order log. Sending waits until it has been read: without it the page can
+ * neither count usage nor find an order still being checked, and would offer to send it again.
+ */
+type OrderLog =
+  | { state: 'loading' }
+  | { state: 'ok'; orders: MirrorOrderView[] }
+  | { state: 'error'; message: string; tries: number };
+
 const pctText = (f: number) => `${Number((f * 100).toFixed(2))}%`;
 
 /**
@@ -210,7 +223,7 @@ export function MirrorTicket({
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [askAgain, setAskAgain] = useState(0);
   const [agentReady, setAgentReady] = useState<boolean | null>(null);
-  const [orders, setOrders] = useState<MirrorOrderView[]>([]);
+  const [log, setLog] = useState<OrderLog>({ state: 'loading' });
   /** The position the radio buttons point at (before a pick). */
   const [coin, setCoin] = useState<string | null>(null);
   const [pick, setPick] = useState<PickedPosition | null>(null);
@@ -254,8 +267,12 @@ export function MirrorTicket({
   const loadOrders = useCallback(async () => {
     if (!token) return;
     const r = await api.mirrorOrders(token);
-    if (!r.ok) return;
-    setOrders(r.data.orders);
+    if (!r.ok) {
+      const message = r.message;
+      setLog((l) => ({ state: 'error', message, tries: l.state === 'error' ? l.tries + 1 : 1 }));
+      return;
+    }
+    setLog({ state: 'ok', orders: r.data.orders });
     // An order of this company still unknown on the engine (sent before a reload): show it as
     // being checked, so the page never offers to send it again.
     if (outcomeRef.current || locked()) return;
@@ -270,6 +287,17 @@ export function MirrorTicket({
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
+  // A log that could not be read is read again by itself, backing off.
+  useEffect(() => {
+    if (log.state !== 'error') return;
+    const t = setTimeout(
+      () => void loadOrders(),
+      LOG_RETRY_MS[Math.min(log.tries, LOG_RETRY_MS.length) - 1],
+    );
+    return () => clearTimeout(t);
+  }, [log, loadOrders]);
+  const orders = log.state === 'ok' ? log.orders : NO_ORDERS;
+  const logOk = log.state === 'ok';
 
   useEffect(() => {
     if (!address || !store) {
@@ -315,7 +343,7 @@ export function MirrorTicket({
   const ctx = previewContext(view, pickCoin ?? '', now ?? Date.now(), usage);
   // Advisory: only the player's own inputs block a send; the engine decides the rest on a fresh snapshot.
   const preview = previewMirror(req, ctx);
-  const rows = checkRows(req, ctx, preview, view.ticker);
+  const rows = checkRows(req, ctx, preview, view.ticker, logOk);
 
   const current: Step = !conn.address
     ? 'connect'
@@ -440,7 +468,8 @@ export function MirrorTicket({
 
   const doSend = () =>
     guarded('send', async () => {
-      if (!token || !address || !store || !pick || pickChanged || !preview.canSend) return;
+      if (!token || !address || !store || !pick || pickChanged || !logOk || !preview.canSend)
+        return;
       const rec = await store.load(address);
       if (!isUsable(rec, Date.now())) {
         setAgentReady(false);
@@ -481,7 +510,7 @@ export function MirrorTicket({
         setChecked(`Checked at ${at}: cannot reach the engine (${r.message}). Trying again.`);
         return;
       }
-      setOrders(r.data.orders);
+      setLog({ state: 'ok', orders: r.data.orders });
       const res = resolveUnknown(
         r.data.orders.find((o) => o.id === out.stepId),
         out.since,
@@ -806,9 +835,9 @@ export function MirrorTicket({
                 onChange={(e) => setUsdAmt(Number(e.target.value))}
               />
               <span className="co-mctl__note" id="m-usd-note">
-                Used today <b>{usd(usage.dailyUsd)}</b> of {usd(MIRROR.dailyCapUsd)}. Open mirrors{' '}
-                <b>{usage.open}</b> of {MIRROR.maxOpen}. That is this player's log; the engine
-                counts every order from this wallet and has the final say.
+                Used today <b>{logOk ? usd(usage.dailyUsd) : '—'}</b> of {usd(MIRROR.dailyCapUsd)}.
+                Open mirrors <b>{logOk ? usage.open : '—'}</b> of {MIRROR.maxOpen}. That is this
+                player's log; the engine counts every order from this wallet and has the final say.
               </span>
             </div>
             <div className="co-mctl">
@@ -987,7 +1016,7 @@ export function MirrorTicket({
             <button
               className="ws-btn"
               type="button"
-              disabled={busy !== null || !preview.canSend || pickChanged}
+              disabled={busy !== null || !preview.canSend || pickChanged || !logOk}
               onClick={() => void doSend()}
             >
               {preview.canSend
@@ -995,9 +1024,13 @@ export function MirrorTicket({
                 : 'Refused by the committee'}
             </button>
             <p>
-              {preview.canSend
-                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${pick.coin} leverage to ${lev}x (cross), then a market ${pick.side === 'LONG' ? 'buy' : 'sell'} with your stop attached. Slippage limit ${pctText(MARKET_SLIPPAGE)}.`
-                : 'Nothing was signed or sent. Fix what the committee refused and the stamps re-check instantly.'}
+              {log.state === 'loading'
+                ? 'Reading your Mirror orders first, so an order already sent is never sent twice.'
+                : log.state === 'error'
+                  ? 'Sending is paused until your Mirror orders load.'
+                  : preview.canSend
+                    ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${pick.coin} leverage to ${lev}x (cross), then a market ${pick.side === 'LONG' ? 'buy' : 'sell'} with your stop attached. Slippage limit ${pctText(MARKET_SLIPPAGE)}.`
+                    : 'Nothing was signed or sent. Fix what the committee refused and the stamps re-check instantly.'}
             </p>
           </div>
         );
@@ -1048,6 +1081,17 @@ export function MirrorTicket({
           {elsewhere.length === 1 ? 'is' : 'are'} still being checked with Hyperliquid. Do not send{' '}
           {elsewhere.length === 1 ? 'it' : 'them'} again; the company page shows the result.
         </p>
+      ) : null}
+      {log.state === 'error' ? (
+        <div className="co-closed co-closed--red" role="alert" style={{ margin: '12px 16px 0' }}>
+          <b>Couldn't load your Mirror orders — sending is paused until they load</b>
+          <span>
+            The engine did not return your order log ({log.message}). Trying again by itself.
+          </span>
+          <button className="ws-link" type="button" onClick={() => void loadOrders()}>
+            Try again now
+          </button>
+        </div>
       ) : null}
       {outcome?.kind === 'unknown' && current !== 'size' ? (
         <div style={{ padding: '12px 16px 0' }}>{outcomeCard}</div>

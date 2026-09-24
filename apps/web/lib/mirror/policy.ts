@@ -113,12 +113,20 @@ export function ageText(ms: number): string {
 /** pass; fail blocks the send; warn: the engine will likely refuse; wait: the engine checks it at send. */
 export type CheckState = 'pass' | 'fail' | 'warn' | 'wait';
 
-/** The twelve checks as committee stamps: label, current value and state. */
+/** Shown for the usage checks while the player's order log has not been read. */
+export const USAGE_UNKNOWN = 'unknown until your Mirror orders load';
+const USAGE_CHECKS: ReadonlySet<string> = new Set(['TOO_MANY_OPEN', 'DAILY_CAP']);
+
+/**
+ * The twelve checks as committee stamps: label, current value and state. `usageKnown` is false
+ * while the order log is unread: the open and daily checks then claim no count.
+ */
 export function checkRows(
   req: MirrorRequest,
   ctx: MirrorContext,
   preview: MirrorPreview,
   ticker: string,
+  usageKnown = true,
 ): Array<{ code: string; label: string; value: string; state: CheckState }> {
   const failed = new Set<string>(preview.blocking.map((r) => r.code));
   const warned = new Set<string>(preview.advisory.map((r) => r.code));
@@ -180,9 +188,15 @@ export function checkRows(
     ],
   ];
   const stateOf = (code: string): CheckState => {
+    if (!usageKnown && USAGE_CHECKS.has(code)) return 'wait';
     if (failed.has(code)) return 'fail';
     if (warned.has(code)) return 'warn';
     return code === 'STALE_DATA' && stale ? 'wait' : 'pass';
   };
-  return rows.map(([code, label, value]) => ({ code, label, value, state: stateOf(code) }));
+  return rows.map(([code, label, value]) => ({
+    code,
+    label,
+    value: !usageKnown && USAGE_CHECKS.has(code) ? USAGE_UNKNOWN : value,
+    state: stateOf(code),
+  }));
 }

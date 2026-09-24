@@ -130,6 +130,8 @@ function fakeEngine(o: {
   prepare?: () => Reply;
   execute?: (stepId: string) => Reply;
   orders?: () => MirrorOrderView[];
+  /** The order log is unreachable while this returns true (the engine answers 503). */
+  ordersDown?: () => boolean;
   status?: () => Reply;
   /** The player's linked wallet as /api/me reports it (default: the connected master). */
   linked?: () => string | null;
@@ -177,6 +179,7 @@ function fakeEngine(o: {
     'GET /api/mirror/status': o.status ?? (() => json({ available: true, mode: 'live' })),
     'GET /api/mirror/orders': () => {
       seen.orders += 1;
+      if (o.ordersDown?.()) return json({ error: 'INTERNAL', message: 'engine restarting' }, 503);
       return json({ orders: o.orders?.() ?? [] });
     },
     'POST /api/mirror/prepare': () => {
@@ -718,6 +721,81 @@ describe('Mirror ticket: linking a wallet', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(
       /does not accept wallet links from this web address/,
     );
+  });
+});
+
+describe('Mirror ticket: when the order log cannot be read', () => {
+  const paused = /Couldn't load your Mirror orders — sending is paused until they load/;
+
+  it('pauses sending, claims no usage and retries by itself until the log loads', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let down = true;
+    const engine = fakeEngine({ ordersDown: () => down });
+    mount(engine, await approvedStore());
+    const send = await toSend();
+    expect(send.disabled).toBe(true);
+    expect((await screen.findByRole('alert')).textContent).toMatch(paused);
+    const note = document.getElementById('m-usd-note')?.textContent ?? '';
+    expect(note).not.toMatch(/\$0\.00/);
+    expect(note).toMatch(/Used today — of \$300\.00\. Open mirrors — of 3/);
+    expect(screen.getAllByText('unknown until your Mirror orders load')).toHaveLength(2);
+    expect(screen.queryByText('0 of 3')).toBeNull();
+    fireEvent.click(send);
+    expect(engine.seen.prepare).toBe(0);
+    const tries = engine.seen.orders;
+    down = false;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(engine.seen.orders).toBeGreaterThan(tries);
+    await screen.findByText(/Used today/);
+    expect(screen.queryByText(paused)).toBeNull();
+    const ready = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
+    expect((ready as HTMLButtonElement).disabled).toBe(false);
+    expect(document.getElementById('m-usd-note')?.textContent).toMatch(
+      /Used today \$0\.00 of \$300\.00\. Open mirrors 0 of 3/,
+    );
+  });
+
+  it('keeps Send off while the log is still loading', async () => {
+    let answer: () => void = () => undefined;
+    const engine = fakeEngine({});
+    const load = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const impl = engine.runtime.api;
+    engine.runtime.api = {
+      ...impl,
+      mirrorOrders: async (t) => {
+        await load;
+        return impl.mirrorOrders(t);
+      },
+    };
+    mount(engine, await approvedStore());
+    const send = await toSend();
+    expect(send.disabled).toBe(true);
+    expect(screen.getByText(/Reading your Mirror orders/)).toBeTruthy();
+    answer();
+    await vi.waitFor(() => expect(send.disabled).toBe(false));
+  });
+
+  it('shows the checking state only once a load has read the unknown order', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    let down = true;
+    const engine = fakeEngine({
+      ordersDown: () => down,
+      orders: () => [orderRow({ status: 'UNKNOWN' })],
+    });
+    mount(engine, await approvedStore());
+    expect((await screen.findByRole('alert')).textContent).toMatch(paused);
+    expect(screen.queryByText('Outcome unknown — checking with Hyperliquid')).toBeNull();
+    const send = screen.queryByRole('button', {
+      name: /Sign and send/,
+    }) as HTMLButtonElement | null;
+    if (send) expect(send.disabled).toBe(true);
+    down = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Try again now' }));
+    await screen.findByText('Outcome unknown — checking with Hyperliquid');
+    expect(screen.queryByRole('button', { name: /Sign and send/ })).toBeNull();
+    expect(engine.seen.prepare).toBe(0);
   });
 });
 

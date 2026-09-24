@@ -21,6 +21,9 @@ import { Portrait } from '../ink/Portrait';
 import { useApi, useEngine, useEngineNow } from '../providers/engine';
 import { usePlayer } from '../providers/player';
 
+/** A read that answered, or why it did not (never shown as an empty list). */
+type Loaded<T> = { ok: true; data: T } | { ok: false; message: string };
+
 function MirrorSeal({ status }: { status: MirrorOrderView['status'] }) {
   if (status === 'FILLED' || status === 'RESTING' || status === 'CLOSED')
     return (
@@ -46,30 +49,40 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
   const { status, player, portfolio, rank, token, error, retry } = usePlayer();
   const market = useEngine((s) => s.market);
   const now = useEngineNow();
-  const [trades, setTrades] = useState<TradeRowView[] | null>(null);
-  const [mirror, setMirror] = useState<{ available: boolean; orders: MirrorOrderView[] } | null>(
-    null,
-  );
+  const [trades, setTrades] = useState<Loaded<TradeRowView[]> | null>(null);
+  const [mirror, setMirror] = useState<{
+    /** Null when the status call failed: nothing is claimed about whether Mirror is on. */
+    status: { available: boolean; mode: 'live' | 'replay' } | null;
+    orders: Loaded<MirrorOrderView[]>;
+  } | null>(null);
+  const [again, setAgain] = useState(0);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `again` re-reads after a failure
   useEffect(() => {
     if (!player || !token) return;
     let cancelled = false;
+    setTrades(null);
+    setMirror(null);
     void Promise.all([
       api.profile(player.handle),
       api.mirrorStatus(),
       api.mirrorOrders(token),
     ]).then(([p, ms, mo]) => {
       if (cancelled) return;
-      setTrades(p.ok ? p.data.trades.slice(0, 6) : []);
+      setTrades(
+        p.ok ? { ok: true, data: p.data.trades.slice(0, 6) } : { ok: false, message: p.message },
+      );
       setMirror({
-        available: ms.ok && ms.data.available,
-        orders: mo.ok ? mo.data.orders.filter((o) => o.kind === 'order') : [],
+        status: ms.ok ? ms.data : null,
+        orders: mo.ok
+          ? { ok: true, data: mo.data.orders.filter((o) => o.kind === 'order') }
+          : { ok: false, message: mo.message },
       });
     });
     return () => {
       cancelled = true;
     };
-  }, [api, player, token]);
+  }, [api, player, token, again]);
 
   if (status === 'loading') return <p role="status">Opening your desk…</p>;
   if (status === 'offline' || !player)
@@ -190,15 +203,27 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
         </h3>
         {mirror === null ? (
           <p role="status">Loading…</p>
-        ) : mirror.orders.length === 0 ? (
+        ) : !mirror.orders.ok ? (
+          <div className="ws-v-red" role="alert">
+            <p style={{ margin: 0 }}>
+              Couldn't load your Mirror orders ({mirror.orders.message}). Check them on Hyperliquid
+              before sending anything again.
+            </p>
+            <button className="ws-link" type="button" onClick={() => setAgain((n) => n + 1)}>
+              Try again
+            </button>
+          </div>
+        ) : mirror.orders.data.length === 0 ? (
           <p style={{ margin: 0 }}>
-            {mirror.available
+            {mirror.status === null || mirror.status.available
               ? 'No mirror orders yet. Mirror starts from any company page.'
-              : 'Mirror is off on this engine (REPLAY runs without real orders).'}
+              : mirror.status.mode === 'replay'
+                ? 'Mirror is off on this engine (REPLAY runs without real orders).'
+                : 'Mirror is off on this engine (it runs without access to the Nansen Trading API).'}
           </p>
         ) : (
           <ul className="me-mir">
-            {mirror.orders.map((m) => (
+            {mirror.orders.data.map((m) => (
               <li
                 key={m.id}
                 className={
@@ -266,12 +291,16 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
             <li>
               <span>Loading…</span>
             </li>
-          ) : trades.length === 0 ? (
+          ) : !trades.ok ? (
+            <li className="ws-v-red">
+              <span>Couldn't load your trades ({trades.message}).</span>
+            </li>
+          ) : trades.data.length === 0 ? (
             <li>
               <span>No trades yet. Buy a trader from the floor.</span>
             </li>
           ) : (
-            trades.map((t) => (
+            trades.data.map((t) => (
               <li key={t.id}>
                 <span>{tradeText(t)}</span>
                 <span>{now !== null ? agoLong(now - t.at) : ''}</span>

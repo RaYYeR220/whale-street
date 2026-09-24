@@ -26,13 +26,19 @@ const row = (o: Partial<MirrorOrderView>): MirrorOrderView => ({
   ...o,
 });
 
-function desk(orders: MirrorOrderView[]) {
+type Route = () => Response;
+
+function desk(
+  orders: MirrorOrderView[],
+  o: { status?: Route; orders?: Route; profile?: Route } = {},
+) {
   const runtime = testRuntime({
     'GET /api/me': () => json({ player: PLAYER, portfolio: portfolio(), seasons: [] }),
-    'GET /api/players/Tester': () =>
-      json({ player: PLAYER, portfolio: portfolio(), seasons: [], trades: [] }),
-    'GET /api/mirror/status': () => json({ available: true, mode: 'live' }),
-    'GET /api/mirror/orders': () => json({ orders }),
+    'GET /api/players/Tester':
+      o.profile ??
+      (() => json({ player: PLAYER, portfolio: portfolio(), seasons: [], trades: [] })),
+    'GET /api/mirror/status': o.status ?? (() => json({ available: true, mode: 'live' })),
+    'GET /api/mirror/orders': o.orders ?? (() => json({ orders })),
   });
   render(
     <Wrap runtime={runtime}>
@@ -58,5 +64,40 @@ describe('desk mirror receipts', () => {
     desk([row({ id: 'b', status: 'UNKNOWN', hlOid: null, avgPx: null })]);
     expect(await screen.findByText(/No definitive answer from Hyperliquid/)).toBeTruthy();
     expect(screen.getByText(/OOH: BTC, \$49\.80/)).toBeTruthy();
+  });
+});
+
+describe('desk when the engine does not answer', () => {
+  const down = () => json({ error: 'INTERNAL', message: 'engine restarting' }, 503);
+
+  it('says the Mirror orders could not be loaded instead of showing none', async () => {
+    desk([], { orders: down });
+    expect((await screen.findByText(/Couldn't load your Mirror orders/)).textContent).toMatch(
+      /engine restarting/,
+    );
+    expect(screen.queryByText(/No mirror orders/)).toBeNull();
+    expect(screen.queryByText(/Mirror is off/)).toBeNull();
+  });
+
+  it('never says Mirror is off when it could not ask', async () => {
+    desk([], { status: down });
+    expect(await screen.findByText(/No mirror orders yet/)).toBeTruthy();
+    expect(screen.queryByText(/Mirror is off/)).toBeNull();
+  });
+
+  it('names the real reason Mirror is off: REPLAY only when the engine replays', async () => {
+    desk([], { status: () => json({ available: false, mode: 'live' }) });
+    expect((await screen.findByText(/Mirror is off on this engine/)).textContent).not.toMatch(
+      /REPLAY/,
+    );
+    cleanup();
+    desk([], { status: () => json({ available: false, mode: 'replay' }) });
+    expect((await screen.findByText(/Mirror is off on this engine/)).textContent).toMatch(/REPLAY/);
+  });
+
+  it('says the trades could not be loaded instead of showing none', async () => {
+    desk([], { profile: down });
+    expect(await screen.findByText(/Couldn't load your trades/)).toBeTruthy();
+    expect(screen.queryByText(/No trades yet/)).toBeNull();
   });
 });
