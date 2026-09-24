@@ -6,6 +6,7 @@
     "apps/engine/src",
     "apps/engine/scripts",
     "apps/engine/test",
-    "vitest.config.ts"
+    "vitest.config.ts",
+    "apps/web/contract"
   ]
 }
