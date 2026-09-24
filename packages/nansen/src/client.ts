@@ -42,6 +42,8 @@ export interface LeaderboardRow {
   roi: number | null;
   accountValue: number | null;
   totalTrades: number | null;
+  /** The row's top positions include a HIP-3 market ("dex:COIN"): the trader is never listable. */
+  hip3: boolean;
 }
 export interface SmPerpTrade {
   address: Address;
@@ -204,6 +206,7 @@ export class NansenClient {
                 roi: r.roi,
                 accountValue: r.account_value,
                 totalTrades: r.total_trades,
+                hip3: (r.top_positions ?? []).some((p) => p.coin.includes(':')),
               },
             ]
           : [];

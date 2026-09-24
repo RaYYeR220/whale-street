@@ -380,9 +380,16 @@ describe('scout', () => {
     programHedgedTrader(nansen, info, addr(2), addr(99), now);
     programCleanTrader(nansen, info, addr(3), now);
     nansen.leaderboard = [
-      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
-      { address: addr(4), totalPnl: 1, roi: 1, accountValue: 1_000, totalTrades: 10 },
-      { address: addr(2), totalPnl: 1, roi: 1, accountValue: null, totalTrades: 10 },
+      {
+        address: addr(1),
+        totalPnl: 1,
+        roi: 1,
+        accountValue: 600_000,
+        totalTrades: 10,
+        hip3: false,
+      },
+      { address: addr(4), totalPnl: 1, roi: 1, accountValue: 1_000, totalTrades: 10, hip3: false },
+      { address: addr(2), totalPnl: 1, roi: 1, accountValue: null, totalTrades: 10, hip3: false },
     ];
     nansen.smTrades = [
       { address: addr(3), coin: 'BTC', side: 'Long', action: 'Open', valueUsd: 1, at: now },
@@ -406,7 +413,14 @@ describe('scout', () => {
       time: null,
     });
     nansen.leaderboard = [
-      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
+      {
+        address: addr(1),
+        totalPnl: 1,
+        roi: 1,
+        accountValue: 600_000,
+        totalTrades: 10,
+        hip3: false,
+      },
     ];
     expect((await run()).listed).toHaveLength(1);
     expect(w.state.get(addr(1))?.nav.snapshot.positions.map((p) => p.coin)).toEqual(['BTC']);
@@ -422,7 +436,14 @@ describe('scout', () => {
       time: null,
     });
     nansen.leaderboard = [
-      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
+      {
+        address: addr(1),
+        totalPnl: 1,
+        roi: 1,
+        accountValue: 600_000,
+        totalTrades: 10,
+        hip3: false,
+      },
     ];
     const r = await run();
     expect(r.listed).toEqual([]);
@@ -434,10 +455,48 @@ describe('scout', () => {
     expect(info.calls).not.toContain(`isVault:${addr(1)}`);
   });
 
+  it('skips a leaderboard row whose top positions already show a HIP-3 market, before spending on it', async () => {
+    const { w, nansen, info, run } = setup(2);
+    const now = w.clock.now();
+    programCleanTrader(nansen, info, addr(1), now);
+    programCleanTrader(nansen, info, addr(2), now);
+    nansen.leaderboard = [
+      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10, hip3: true },
+      {
+        address: addr(2),
+        totalPnl: 1,
+        roi: 1,
+        accountValue: 600_000,
+        totalTrades: 10,
+        hip3: false,
+      },
+    ];
+    // Also named by a smart-money trade: still skipped.
+    nansen.smTrades = [
+      { address: addr(1), coin: 'BTC', side: 'Long', action: 'Add', valueUsd: 1, at: now },
+    ];
+    const r = await run();
+    expect(r.evaluated).toBe(1);
+    expect(r.listed).toHaveLength(1);
+    expect(w.state.get(addr(2))?.source).toBe('SCOUT');
+    const touched = nansen.calls
+      .filter((c) => c.method !== 'perpLeaderboard' && c.method !== 'smartMoneyPerpTrades')
+      .map((c) => c.args[0]);
+    expect(touched).not.toContain(addr(1));
+    expect(w.repos.kv.get(deniedKey(addr(1)))).toBeUndefined();
+  });
+
   it('never stores raw leaderboard data', async () => {
     const { w, nansen, run } = setup(1);
     nansen.leaderboard = [
-      { address: addr(7), totalPnl: 123_456_789, roi: 42, accountValue: 999_999, totalTrades: 77 },
+      {
+        address: addr(7),
+        totalPnl: 123_456_789,
+        roi: 42,
+        accountValue: 999_999,
+        totalTrades: 77,
+        hip3: false,
+      },
     ];
     await run();
     const dump = JSON.stringify([
@@ -460,6 +519,7 @@ describe('scout', () => {
       roi: 1,
       accountValue: null,
       totalTrades: 1,
+      hip3: false,
     }));
     const r = await run();
     expect(r.evaluated).toBe(SCOUT_MAX_EVALUATIONS);

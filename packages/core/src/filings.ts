@@ -35,6 +35,11 @@ export interface DiffResult {
   bankrupt: boolean;
 }
 
+/** An OPEN or CLOSE worth less than this (USD notional) is dust: no filing. */
+export const DUST_NOTIONAL_USD = 1;
+const isDust = (a: Pick<Filing, 'notionalUsd'>): boolean =>
+  a.notionalUsd !== undefined && a.notionalUsd < DUST_NOTIONAL_USD;
+
 function crossedLiq(p: Position, mark: number): boolean {
   if (p.liqPx === null) return false;
   return p.size > 0 ? mark <= p.liqPx : mark >= p.liqPx;
@@ -85,7 +90,8 @@ export function diffSnapshots(
     };
 
     if (a === 0) {
-      filings.push({ ...base, kind: 'OPEN', ...amounts(b, mark) });
+      const opened = amounts(b, mark);
+      if (!isDust(opened)) filings.push({ ...base, kind: 'OPEN', ...opened });
       continue;
     }
     const prevPos = p as Position;
@@ -111,11 +117,9 @@ export function diffSnapshots(
         ...amounts(closed, mark, { size: closed, entryPx: prevPos.entryPx }),
       });
     } else {
-      filings.push({
-        ...base,
-        kind: b === 0 ? 'CLOSE' : 'REDUCE',
-        ...amounts(closed, mark, { size: closed, entryPx: prevPos.entryPx }),
-      });
+      const reduced = amounts(closed, mark, { size: closed, entryPx: prevPos.entryPx });
+      if (!(b === 0 && isDust(reduced)))
+        filings.push({ ...base, kind: b === 0 ? 'CLOSE' : 'REDUCE', ...reduced });
     }
   }
 

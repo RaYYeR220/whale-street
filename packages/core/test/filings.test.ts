@@ -72,6 +72,28 @@ describe('diffSnapshots', () => {
     expect(r.filings.map((f) => f.coin)).toEqual(['ARB', 'SOL']);
   });
 
+  it('ignores dust: an OPEN or CLOSE under $1 notional files nothing', () => {
+    // Live: FARTCOIN -0.1 (a few cents) sat among a whale's positions.
+    const dust = P('FARTCOIN', -0.1, 0.8);
+    expect(diffSnapshots(S([]), S([dust]), { FARTCOIN: 0.8 }).filings).toEqual([]);
+    expect(diffSnapshots(S([dust]), S([]), { FARTCOIN: 0.8 }).filings).toEqual([]);
+    // $1 and up files as before; so does a change whose notional is unknown (no valid price).
+    expect(
+      diffSnapshots(S([]), S([P('DOGE', 10, 0.1)]), { DOGE: 0.1 }).filings.map((f) => f.kind),
+    ).toEqual(['OPEN']);
+    expect(
+      diffSnapshots(S([P('DOGE', 10, Number.NaN)]), S([]), { DOGE: Number.NaN }).filings.map(
+        (f) => f.kind,
+      ),
+    ).toEqual(['CLOSE']);
+    // Other kinds are unaffected: a dust-sized REDUCE of a real position still files.
+    expect(
+      diffSnapshots(S([P('BTC', 1, 100)]), S([P('BTC', 0.999, 100)]), { BTC: 100 }).filings.map(
+        (f) => f.kind,
+      ),
+    ).toEqual(['REDUCE']);
+  });
+
   it('falls back to next.entryPx when the live mark is a NaN', () => {
     const r = diffSnapshots(S([P('BTC', 1, 100)]), S([P('BTC', 3, 150)]), { BTC: Number.NaN });
     expect(r.filings[0]).toMatchObject({ kind: 'ADD', notionalUsd: 2 * 150 });

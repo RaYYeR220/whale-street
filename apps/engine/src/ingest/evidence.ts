@@ -41,6 +41,11 @@ export interface Evidence {
 }
 
 export const MAX_LINKED = 10;
+/**
+ * Counterparties (5 credits a call, and empty for the traders read live) are asked only while
+ * related wallets + first funder link fewer wallets than this.
+ */
+export const COUNTERPARTIES_BELOW = 2;
 /** Visible reason an address holding a HIP-3 market is never evaluated further. */
 export const HIP3_REASON = 'holds HIP-3 markets (not supported yet)';
 /**
@@ -102,14 +107,12 @@ async function gatherLinked(
   d: EvidenceDeps,
   now: number,
 ): Promise<Maybe<readonly LinkedWallet[]>> {
-  const [related, funder, counterparties] = await Promise.all([
+  const [related, funder] = await Promise.all([
     d.nansen.relatedWallets(address, 'arbitrum'),
     d.nansen.firstFunder(address),
-    d.nansen.counterparties(address, 'arbitrum', daysBefore(now, 90), utcDate(now), 5),
   ]);
   if (!related.ok) return none(`related wallets: ${related.error}`);
   if (!funder.ok) return none(`first funder: ${funder.error}`);
-  if (!counterparties.ok) return none(`counterparties: ${counterparties.error}`);
 
   const picked = new Map<Address, LinkedWallet['relation']>();
   const add = (a: string, relation: LinkedWallet['relation']) => {
@@ -118,7 +121,19 @@ async function gatherLinked(
   };
   for (const r of related.value) add(r.address, 'related');
   if (funder.value.funder) add(funder.value.funder, 'first_funder');
-  for (const c of counterparties.value) add(c.address, 'counterparty');
+  // Skipping counterparties once enough wallets are linked is not missing evidence; a failed
+  // counterparties read when it IS needed still is (fail closed).
+  if (picked.size < COUNTERPARTIES_BELOW) {
+    const counterparties = await d.nansen.counterparties(
+      address,
+      'arbitrum',
+      daysBefore(now, 90),
+      utcDate(now),
+      5,
+    );
+    if (!counterparties.ok) return none(`counterparties: ${counterparties.error}`);
+    for (const c of counterparties.value) add(c.address, 'counterparty');
+  }
 
   const wallets = await Promise.all(
     [...picked].map(async ([a, relation]): Promise<LinkedWallet> => {

@@ -54,14 +54,20 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
     d.nansen.smartMoneyPerpTrades(24, true, 50),
   ]);
   const candidates = new Set<Address>();
+  // A leaderboard row whose top positions already show a HIP-3 market is never listable: skipped
+  // before any evidence call (3 credits each), whichever list names it.
+  const hip3 = new Set<Address>();
   if (board.ok) {
     for (const row of board.value) {
-      if (row.accountValue === null || row.accountValue >= params.committee.minEquityUsd)
+      if (row.hip3) hip3.add(row.address);
+      else if (row.accountValue === null || row.accountValue >= params.committee.minEquityUsd)
         candidates.add(row.address);
     }
   } else d.log.warn('scout: leaderboard unavailable', { error: board.error });
   if (smart.ok) for (const t of smart.value) candidates.add(t.address);
   else d.log.warn('scout: smart-money perp trades unavailable', { error: smart.error });
+  for (const a of hip3) candidates.delete(a);
+  if (hip3.size > 0) d.log.info('scout: skipped HIP-3 holders', { count: hip3.size });
 
   for (const address of candidates) {
     if (result.evaluated >= SCOUT_MAX_EVALUATIONS || result.listed.length >= need) break;

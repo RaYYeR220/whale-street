@@ -67,6 +67,55 @@ describe('gatherEvidence', () => {
     ]);
   });
 
+  it('skips counterparties (5 credits) once related wallets + first funder already link 2 wallets', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    nansen.related.set(APP, [{ address: LINK, relation: 'First Funder', chain: 'arbitrum' }]);
+    nansen.funders.set(APP, { funder: CP, funderName: null });
+    info.states.set(CP, {
+      positions: [pos('BTC', -1.5, 60_000, 80_000)],
+      accountValue: 1,
+      time: null,
+    });
+    const { ev } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(nansen.count('counterparties')).toBe(0);
+    if (!ev.linked.ok) throw new Error(ev.linked.error);
+    expect(ev.linked.value.map((l) => [l.address, l.relation])).toEqual([
+      [LINK, 'related'],
+      [CP, 'first_funder'],
+    ]);
+    // Skipping it is not missing evidence: the hedge check still decides (here: a hedge, denied).
+    const v = evaluateListing(ev);
+    expect(v.checks.find((c) => c.id === 'HIDDEN_HEDGE')?.status).toBe('FAIL');
+    expect(v.decision).toBe('DENIED');
+  });
+
+  it('asks counterparties when fewer than 2 wallets are linked; its failure is missing evidence', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    // The funder is the same wallet as the related one: 1 linked wallet.
+    nansen.related.set(APP, [{ address: LINK, relation: 'First Funder', chain: 'arbitrum' }]);
+    nansen.funders.set(APP, { funder: LINK, funderName: null });
+    nansen.counterpartyLists.set(APP, fail('HTTP 500: upstream error'));
+    const { ev } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(nansen.count('counterparties')).toBe(1);
+    expect(ev.linked).toEqual({ ok: false, error: 'counterparties: HTTP 500: upstream error' });
+    const v = evaluateListing(ev);
+    expect(v.checks.find((c) => c.id === 'HIDDEN_HEDGE')?.status).toBe('UNKNOWN');
+    expect(v.decision).toBe('DEFERRED');
+    // A failed related-wallets or first-funder read spends nothing more on counterparties.
+    const again = setup();
+    programCleanTrader(again.nansen, again.info, APP, again.w.clock.now());
+    again.nansen.funders.set(APP, fail('timeout'));
+    const { ev: ev2 } = await gatherEvidence(APP, {
+      ...again.w,
+      nansen: again.nansen,
+      info: again.info,
+    });
+    expect(ev2.linked).toEqual({ ok: false, error: 'first funder: timeout' });
+    expect(again.nansen.count('counterparties')).toBe(0);
+  });
+
   it('keeps Nansen as the size source in credit-saver mode (no silent switch to Hyperliquid)', async () => {
     const { w, nansen, info } = setup();
     programCleanTrader(nansen, info, APP, w.clock.now());

@@ -325,6 +325,33 @@ describe('NansenClient', () => {
     });
   });
 
+  it('leaderboard: a row whose top positions include a HIP-3 market ("dex:COIN") is marked hip3', async () => {
+    const row = (n: number, top_positions: unknown) => ({
+      trader_address: `0x${n.toString(16).padStart(40, '0')}`,
+      total_pnl: 1,
+      roi: 0.1,
+      account_value: 600_000,
+      total_trades: 10,
+      top_positions,
+    });
+    const r = await clientWith({
+      data: [
+        row(1, [
+          { coin: 'ETH', side: 'long', size_base: 9003.8263, position_value_usd: 24_206_336 },
+          { coin: 'xyz:BRENTOIL', side: 'short', size_base: 55_000, position_value_usd: 5_517_600 },
+        ]),
+        row(2, [{ coin: 'SOL', side: 'long', size_base: 10 }]),
+        row(3, []),
+        row(4, null),
+        row(5, undefined),
+        // A malformed list is only a hint gone missing: the row stays, not marked.
+        row(6, [{ coin: 5 }]),
+      ],
+    }).perpLeaderboard('2026-08-25', '2026-09-24');
+    if (!r.ok) throw new Error(r.error);
+    expect(r.value.map((x) => x.hip3)).toEqual([true, false, false, false, false, false]);
+  });
+
   it('smart money perp trades, cohort positioning, wallet graph, account', async () => {
     const sm = await clientWith({
       data: [

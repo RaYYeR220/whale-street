@@ -128,6 +128,12 @@ export const LeaderboardResponse = z.looseObject({
       roi: numOrNull,
       account_value: numOrNull,
       total_trades: numOrNull,
+      /** The trader's largest open positions; only their coins are read (HIP-3 detection). A
+       * malformed list reads as absent: it is a credit-saving hint, never evidence. */
+      top_positions: z
+        .array(z.looseObject({ coin: z.string() }))
+        .nullish()
+        .catch(null),
     }),
   ),
 });
