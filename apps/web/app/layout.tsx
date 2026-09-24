@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
+import { SvgDefs } from '../components/ink/SvgDefs';
+import { Providers } from '../components/providers/Providers';
 import './styles/ws.css';
 import './styles/chrome.css';
 import './styles/floor.css';
@@ -36,7 +38,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/* The ported stylesheets and the portrait SVG text use these exact family names. */}
         <link rel="stylesheet" href={FONTS} />
       </head>
-      <body className="ws">{children}</body>
+      <body className="ws">
+        <SvgDefs />
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }
