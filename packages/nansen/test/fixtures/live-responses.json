@@ -1,0 +1,358 @@
+{
+  "source": "Nansen API responses recorded 2026-09-24 21:18-21:23 UTC; any *_label / *_name value is replaced by \"scrubbed\" (these bodies carry none)",
+  "perpPositions": {
+    "status": 200,
+    "headers": {
+      "x-nansen-credits-used": "1",
+      "x-nansen-credits-remaining": "1094"
+    },
+    "body": {
+      "data": {
+        "asset_positions": [
+          {
+            "position": {
+              "token_symbol": "ETH",
+              "size": "9003.8263",
+              "position_value_usd": "24206787.0075500011",
+              "entry_price_usd": "2003.01",
+              "liquidation_price_usd": "771.556240106",
+              "leverage_value": 5,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "4841357.4015100002",
+              "max_leverage_value": 25,
+              "return_on_equity": "1.7111405103",
+              "unrealized_pnl_usd": "6172008.142244",
+              "cumulative_funding_all_time_usd": "428089.157294",
+              "cumulative_funding_since_change_usd": "28765.575802",
+              "cumulative_funding_since_open_usd": "430431.140289"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "HYPE",
+              "size": "100000.0",
+              "position_value_usd": "9322300.0",
+              "entry_price_usd": "67.7326",
+              "liquidation_price_usd": null,
+              "leverage_value": 10,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "932230.0",
+              "max_leverage_value": 10,
+              "return_on_equity": "3.763387159",
+              "unrealized_pnl_usd": "2549039.9788190001",
+              "cumulative_funding_all_time_usd": "208453.793999",
+              "cumulative_funding_since_change_usd": "37038.810873",
+              "cumulative_funding_since_open_usd": "229745.371439"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "xyz:BRENTOIL",
+              "size": "-55000.0",
+              "position_value_usd": "5522000.0",
+              "entry_price_usd": "94.2002",
+              "liquidation_price_usd": "400.4484941493",
+              "leverage_value": 20,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "276100.0",
+              "max_leverage_value": 20,
+              "return_on_equity": "-1.3162807874",
+              "unrealized_pnl_usd": "-340983.61625",
+              "cumulative_funding_all_time_usd": "237528.124041",
+              "cumulative_funding_since_change_usd": "172797.172648",
+              "cumulative_funding_since_open_usd": "237528.124041"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "ZEC",
+              "size": "3500.0",
+              "position_value_usd": "5430600.0",
+              "entry_price_usd": "340.9101",
+              "liquidation_price_usd": null,
+              "leverage_value": 5,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "1086120.0",
+              "max_leverage_value": 10,
+              "return_on_equity": "17.7567294825",
+              "unrealized_pnl_usd": "4237414.484441",
+              "cumulative_funding_all_time_usd": "183296.491018",
+              "cumulative_funding_since_change_usd": "3046.293093",
+              "cumulative_funding_since_open_usd": "183013.752742"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "xyz:CL",
+              "size": "-55151.285",
+              "position_value_usd": "5227073.3384450004",
+              "entry_price_usd": "89.222",
+              "liquidation_price_usd": "394.0024337902",
+              "leverage_value": 20,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "261353.666922",
+              "max_leverage_value": 20,
+              "return_on_equity": "-1.2451371538",
+              "unrealized_pnl_usd": "-306348.844558",
+              "cumulative_funding_all_time_usd": "216894.374149",
+              "cumulative_funding_since_change_usd": "204858.397029",
+              "cumulative_funding_since_open_usd": "216894.374149"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "io:NBIS",
+              "size": "17890.25",
+              "position_value_usd": "4344826.1150000002",
+              "entry_price_usd": "207.8987",
+              "liquidation_price_usd": "147.0855476384",
+              "leverage_value": 10,
+              "leverage_type": "isolated",
+              "leverage_raw_usd": "-2543683.9780159998",
+              "margin_used_usd": "1801142.136984",
+              "max_leverage_value": 15,
+              "return_on_equity": "1.6816489942",
+              "unrealized_pnl_usd": "625465.845603",
+              "cumulative_funding_all_time_usd": "90922.211252",
+              "cumulative_funding_since_change_usd": "5495.424168",
+              "cumulative_funding_since_open_usd": "90922.211252"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "xyz:SNDK",
+              "size": "1750.0",
+              "position_value_usd": "3071775.0",
+              "entry_price_usd": "1464.345",
+              "liquidation_price_usd": null,
+              "leverage_value": 10,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "307177.5",
+              "max_leverage_value": 10,
+              "return_on_equity": "1.9869211707",
+              "unrealized_pnl_usd": "509169.510016",
+              "cumulative_funding_all_time_usd": "35085.961821",
+              "cumulative_funding_since_change_usd": "648.3729",
+              "cumulative_funding_since_open_usd": "35085.961821"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "LIT",
+              "size": "550000.0",
+              "position_value_usd": "2899325.0",
+              "entry_price_usd": "2.743079",
+              "liquidation_price_usd": null,
+              "leverage_value": 5,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "579865.0",
+              "max_leverage_value": 5,
+              "return_on_equity": "4.6087278906",
+              "unrealized_pnl_usd": "1390631.5324570001",
+              "cumulative_funding_all_time_usd": "43292.084033",
+              "cumulative_funding_since_change_usd": "16824.53872",
+              "cumulative_funding_since_open_usd": "43292.084033"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "VVV",
+              "size": "80371.1",
+              "position_value_usd": "2530058.1166699999",
+              "entry_price_usd": "16.0025",
+              "liquidation_price_usd": null,
+              "leverage_value": 3,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "843352.705556",
+              "max_leverage_value": 3,
+              "return_on_equity": "2.901494963",
+              "unrealized_pnl_usd": "1243913.775684",
+              "cumulative_funding_all_time_usd": "102327.060979",
+              "cumulative_funding_since_change_usd": "4803.96977",
+              "cumulative_funding_since_open_usd": "104983.085086"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "SOL",
+              "size": "20022.69",
+              "position_value_usd": "2339050.6458000001",
+              "entry_price_usd": "66.0904",
+              "liquidation_price_usd": null,
+              "leverage_value": 20,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "116952.53229",
+              "max_leverage_value": 20,
+              "return_on_equity": "15.3515521249",
+              "unrealized_pnl_usd": "1015742.04677",
+              "cumulative_funding_all_time_usd": "28978.375734",
+              "cumulative_funding_since_change_usd": "30283.882909",
+              "cumulative_funding_since_open_usd": "28978.375734"
+            },
+            "position_type": "oneWay"
+          },
+          {
+            "position": {
+              "token_symbol": "PURR",
+              "size": "9000000.0",
+              "position_value_usd": "1213785.0",
+              "entry_price_usd": "0.123644",
+              "liquidation_price_usd": null,
+              "leverage_value": 3,
+              "leverage_type": "cross",
+              "leverage_raw_usd": null,
+              "margin_used_usd": "404595.0",
+              "max_leverage_value": 3,
+              "return_on_equity": "0.2722352672",
+              "unrealized_pnl_usd": "100981.456644",
+              "cumulative_funding_all_time_usd": "121408.598778",
+              "cumulative_funding_since_change_usd": "2205.911001",
+              "cumulative_funding_since_open_usd": "121408.598778"
+            },
+            "position_type": "oneWay"
+          }
+        ],
+        "cross_maintenance_margin_used_usd": "2194163.3590739998",
+        "cross_margin_summary_account_value_usd": "8367801.7888190001",
+        "cross_margin_summary_total_margin_used_usd": "8804472.6393560003",
+        "cross_margin_summary_total_net_liquidation_position_on_usd": "47941905.7700200006",
+        "cross_margin_summary_total_raw_usd": "-39574103.9812010005",
+        "margin_summary_account_value_usd": "8367801.7888190001",
+        "margin_summary_total_margin_used_usd": "8804472.6393560003",
+        "margin_summary_total_net_liquidation_position_usd": "47941905.7700200006",
+        "margin_summary_total_raw_usd": "-39574103.9812010005",
+        "timestamp": 1790284682672,
+        "withdrawable_usd": "0.0"
+      }
+    }
+  },
+  "perpTradesFirstFill": {
+    "status": 200,
+    "body": {
+      "pagination": {
+        "page": 1,
+        "per_page": 1,
+        "is_last_page": false
+      },
+      "data": [
+        {
+          "timestamp": "2026-01-23T16:09:04.842000Z",
+          "side": "Short",
+          "action": "Sell",
+          "block_number": 870807267,
+          "token_symbol": "@142",
+          "price": 89725,
+          "size": 0.00027,
+          "value_usd": 24.22575,
+          "start_position": 19.9999776039,
+          "closed_pnl": 0.00891001,
+          "crossed": false,
+          "fee_usd": 0.0096903,
+          "fee_token_symbol": "USDC",
+          "transaction_hash": "0x50cbca88d9f32ac152450433e776e3020620006e74f64993f49475db98f704ab",
+          "user": "0xea0027b6ea9b6d7d401b5266979cc3b3ca87a918",
+          "oid": 301140763705
+        }
+      ]
+    }
+  },
+  "perpTradesTopByPnl": {
+    "status": 200,
+    "body": {
+      "pagination": {
+        "page": 1,
+        "per_page": 1,
+        "is_last_page": false
+      },
+      "data": [
+        {
+          "timestamp": "2026-09-23T09:29:46.009000Z",
+          "side": "Long",
+          "action": "Reduce",
+          "block_number": 1158019739,
+          "token_symbol": "ZEC",
+          "price": 569.8490089670225,
+          "size": 21414.02,
+          "value_usd": 12202758.075,
+          "start_position": -2992.59,
+          "closed_pnl": 3957898.553276,
+          "crossed": true,
+          "fee_usd": 4719.461607,
+          "fee_token_symbol": "USDC",
+          "transaction_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "user": "0xea0027b6ea9b6d7d401b5266979cc3b3ca87a918",
+          "oid": 553952106100
+        }
+      ]
+    }
+  },
+  "positionIntelligenceBtc": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "smart_trader_longs_usd": 99356615.65089002,
+          "smart_trader_shorts_usd": 29404176.990659997,
+          "smart_trader_total_usd": 128760792.64155,
+          "whale_longs_usd": 1372580877.64329,
+          "whale_shorts_usd": 1207088074.7921698,
+          "whale_total_usd": 2579668952.4354596,
+          "public_figure_longs_usd": 68809739.71769999,
+          "public_figure_shorts_usd": 75458359.50614999,
+          "public_figure_total_usd": 144268099.22384998
+        }
+      ]
+    }
+  },
+  "perpPnlSummaryUnused": {
+    "status": 200,
+    "body": {
+      "data": {
+        "top5_coins": [],
+        "traded_coin_count": 0,
+        "traded_times": 0,
+        "closed_trade_count": 0,
+        "winning_trade_count": 0,
+        "realized_pnl_usd": 0,
+        "realized_pnl_percent": 0,
+        "win_rate": 0,
+        "fees_usd": 0
+      }
+    }
+  },
+  "rateLimited": {
+    "status": 429,
+    "headers": {
+      "retry-after": "60",
+      "x-nansen-ratelimit-scope": "endpoint"
+    },
+    "body": {
+      "error": "Too Many Requests",
+      "message": "Rate limit exceeded. Please try again later.",
+      "code": "rate_limit_exceeded",
+      "status": 429,
+      "request_id": "f546af6d0106f83c83314f3d8c0eb67e",
+      "doc_url": "https://docs.nansen.ai/getting-started/error-handling#rate_limit_exceeded",
+      "retry_after": 60,
+      "detail": "Rate limit exceeded. Please try again later."
+    }
+  }
+}
