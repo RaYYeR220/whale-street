@@ -2,11 +2,21 @@ import { boot } from './boot';
 import { describeConfig, loadConfig } from './config';
 import { buildRuntime } from './deps';
 import { consoleLogger } from './log';
+import { assertLoopbackFree } from './port-guard';
 
 const log = consoleLogger();
 const config = loadConfig(process.env);
 // describeConfig reduces the API key to "set"/"unset"; it is never logged.
 log.info('starting whale-street engine', { config: JSON.parse(describeConfig(config)) as unknown });
+
+// Before opening the database: fail fast instead of silently sharing the port with another
+// process on loopback (Windows allows a wildcard and a loopback listener side by side).
+try {
+  await assertLoopbackFree(config.host, config.port);
+} catch (err) {
+  log.error('refusing to start', { error: err instanceof Error ? err.message : String(err) });
+  process.exit(1);
+}
 
 const runtime = buildRuntime(config, { log });
 const { engine, app } = await boot(runtime);
