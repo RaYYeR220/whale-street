@@ -1,4 +1,4 @@
-import type { ApiResult } from '@whale-street/nansen';
+import type { ApiResult, CallRecord } from '@whale-street/nansen';
 import type { Clock } from '../clock';
 import type { Repos } from '../db/repos';
 import type { EventBus } from '../events';
@@ -16,13 +16,13 @@ export const CREDIT_SAVER_AT = 1_500;
  * Configurable with CREDIT_FLOOR.
  */
 export const CREDIT_FLOOR = 200;
+/** After a data call is refused for credits, further refusals within this window share one check. */
+export const CREDIT_ALARM_DEBOUNCE_MS = 60_000;
 
 export interface CreditThresholds {
   saverAt: number;
   floor: number;
 }
-/** After a data call is refused for credits, further refusals within this window share one check. */
-export const CREDIT_ALARM_DEBOUNCE_MS = 60_000;
 
 export interface CreditMonitor {
   check(): Promise<void>;
@@ -31,11 +31,44 @@ export interface CreditMonitor {
    * burst). If that check fails too, credit-saver goes on rather than keeping the current mode.
    */
   alarm(): void;
+  /**
+   * The balance a Nansen response just reported (`x-nansen-credits-remaining`). It is applied at
+   * once; an `/account` read that was asked before it (`/account` lags) does not overwrite it.
+   */
+  observe(remaining: number): void;
 }
 
-/** A Nansen refusal for lack of credits: HTTP 402, or the `insufficient_credits` error code. */
+/**
+ * A Nansen refusal for lack of credits: the `insufficient_credits` error code (HTTP 403 live) or
+ * HTTP 402; the message wording is only a fallback.
+ */
 export function isCreditError(r: ApiResult<unknown>): boolean {
-  return !r.ok && (r.status === 402 || /insufficient[_\s-]?credits/i.test(r.error));
+  if (r.ok) return false;
+  return (
+    /\binsufficient_credits\b/.test(r.error) ||
+    r.status === 402 ||
+    /insufficient[_\s-]?credits/i.test(r.error)
+  );
+}
+
+/** Relays the balance every Nansen response reports (`x-nansen-credits-remaining`). */
+export interface CreditHeaderFeed {
+  /** One finished call (from `NansenHttp`'s `onCall`); a call without the header is ignored. */
+  push(r: Pick<CallRecord, 'creditsRemaining'>): void;
+  subscribe(fn: (remaining: number) => void): void;
+}
+
+export function createCreditHeaderFeed(): CreditHeaderFeed {
+  const subscribers: Array<(remaining: number) => void> = [];
+  return {
+    push(r) {
+      const n = r.creditsRemaining;
+      if (n !== null) for (const fn of subscribers) fn(n);
+    },
+    subscribe(fn) {
+      subscribers.push(fn);
+    },
+  };
 }
 
 /** The same port, raising `alarm` whenever a call comes back refused for credits. */
@@ -79,8 +112,25 @@ export function createCreditMonitor(d: {
   };
   let alarmAt = Number.NEGATIVE_INFINITY;
   let alarmCheck: Promise<void> | null = null;
+  /** When the newest balance header was seen (engine clock). */
+  let headerAt = Number.NEGATIVE_INFINITY;
+
+  /** Sets the balance and the modes it implies (a status event when anything changed). */
+  const apply = (remaining: number): void => {
+    const f = d.state.flags;
+    const saver = remaining < saverAt;
+    const floor = remaining < floorAt;
+    const changed =
+      saver !== f.creditSaver || floor !== f.creditFloor || remaining !== f.creditsRemaining;
+    f.creditSaver = saver;
+    f.creditFloor = floor;
+    f.creditsRemaining = remaining;
+    d.repos.kv.setJson('credits', { remaining, at: d.clock.now() });
+    if (changed) d.bus.emit({ t: 'status' });
+  };
 
   const check = async (failClosed: boolean): Promise<void> => {
+    const askedAt = d.clock.now();
     const r = await d.nansen
       .account()
       .catch((err: unknown) => ({ ok: false as const, error: String(err) }));
@@ -101,20 +151,24 @@ export function createCreditMonitor(d: {
       return;
     }
     const remaining = r.value.creditsRemaining;
-    const saver = remaining < saverAt;
-    const floor = remaining < floorAt;
-    const changed =
-      saver !== f.creditSaver || floor !== f.creditFloor || remaining !== f.creditsRemaining;
-    f.creditSaver = saver;
-    f.creditFloor = floor;
-    f.creditsRemaining = remaining;
-    d.repos.kv.setJson('credits', { remaining, at: d.clock.now() });
-    if (changed) d.bus.emit({ t: 'status' });
-    if (saver) d.log.warn('credit-saver mode on', { remaining, floor });
+    if (headerAt >= askedAt) {
+      // A response reported the balance after this read was asked: that figure is fresher.
+      d.log.info('account balance is older than the latest credits header; keeping the header', {
+        account: remaining,
+        header: f.creditsRemaining,
+      });
+      return;
+    }
+    apply(remaining);
+    if (f.creditSaver) d.log.warn('credit-saver mode on', { remaining, floor: f.creditFloor });
   };
 
   return {
     check: () => check(false),
+    observe(remaining) {
+      headerAt = d.clock.now();
+      apply(remaining);
+    },
     alarm() {
       const now = d.clock.now();
       if (alarmCheck || now - alarmAt < CREDIT_ALARM_DEBOUNCE_MS) return;

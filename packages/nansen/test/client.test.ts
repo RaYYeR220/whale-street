@@ -384,12 +384,19 @@ describe('NansenClient', () => {
       },
     });
 
-    const rw = await clientWith({
-      data: [{ address: A, relation: 'First Funder', chain: 'arbitrum' }],
-    }).relatedWallets(A, 'arbitrum');
+    const rwSeen: { path?: string; body?: unknown } = {};
+    const rw = await clientWith(
+      { data: [{ address: A, relation: 'First Funder', chain: 'arbitrum' }] },
+      rwSeen,
+    ).relatedWallets(A, 'arbitrum');
     expect(rw).toMatchObject({
       ok: true,
       value: [{ address: A, relation: 'First Funder', chain: 'arbitrum' }],
+    });
+    // `address` is deprecated on this endpoint (Warning: 299); `wallet_address` is the parameter.
+    expect(rwSeen).toEqual({
+      path: '/api/v1/profiler/address/related-wallets',
+      body: { wallet_address: A, chain: 'arbitrum', pagination: { page: 1, per_page: 50 } },
     });
 
     const ff = await clientWith({

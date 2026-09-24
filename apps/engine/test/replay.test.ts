@@ -326,6 +326,29 @@ describe('session loading and filtering', () => {
     expect(trimmed.map((r) => `${r.k}@${r.t}`)).toEqual(['nansen@6', 'hl@7', 'seed@7']);
   });
 
+  it('drops Nansen records that were rate-limited or failed upstream (429 / 5xx): REPLAY serves the retry', () => {
+    const path = '/api/v1/profiler/perp-trades';
+    const rec = (t: number, status: number): SessionLine => ({
+      t,
+      k: 'nansen',
+      key: `POST ${path} {}`,
+      path,
+      status,
+      body: status === 200 ? { data: [] } : { code: 'rate_limit_exceeded' },
+    });
+    expect(redistributable(rec(1, 429))).toBeNull();
+    expect(redistributable(rec(1, 500))).toBeNull();
+    expect(redistributable(rec(1, 503))).toBeNull();
+    expect(redistributable(rec(1, 200))).toEqual(rec(1, 200));
+    expect(redistributable(rec(1, 404))).toEqual(rec(1, 404));
+    // A 429 answered at t=2 and its successful retry at t=3: only the retry is bundled/served.
+    const lines = [rec(2, 429), rec(3, 200)].map((r) => JSON.stringify(r));
+    expect(filterSessionLines(lines).map((l) => (JSON.parse(l) as { t: number }).t)).toEqual([3]);
+    const loaded = loadReplaySession(lines.join('\n'));
+    expect(loaded.nansen.map((r) => r.status)).toEqual([200]);
+    expect(loaded.dropped).toBe(1);
+  });
+
   it('keeps seed lines regardless of the window, clamped to its bounds', () => {
     const seed = (t: number, address: string) =>
       JSON.stringify({
@@ -569,7 +592,14 @@ describe('LIVE recording privacy', () => {
     expect(s.nansen.filter((r) => !REPLAY_ALLOWED_PATHS.has(r.path))).toEqual([]);
     expect(text).not.toContain('/api/v1/perp/');
     expect(text.toLowerCase()).not.toContain(MASTER);
-    expect(text).not.toContain('wallet_address');
+    // The builder-fee lookup's `?wallet_address=` never lands; the only `wallet_address` recorded
+    // is the related-wallets parameter of a company read (here the applicant's).
+    expect(text).not.toContain('wallet_address=');
+    expect(
+      s.nansen
+        .filter((r) => r.key.includes('wallet_address'))
+        .map((r) => [r.path, r.key.includes(APPLICANT)]),
+    ).toEqual([['/api/v1/profiler/address/related-wallets', true]]);
     expect(text).not.toContain('secret-key-xyz');
     // Trading still reports into the shared provenance log.
     expect(engine.repos.nansenCalls.recent(50).map((c) => c.path)).toContain('/api/v1/perp/meta');
@@ -791,6 +821,55 @@ describe('LIVE Nansen budget', () => {
     // Lower bounds only: the 14th data call (13/s) and the 3rd trading call (2/s) had to wait.
     expect(Math.max(...data)).toBeGreaterThanOrEqual(900);
     expect(Math.max(...trades)).toBeGreaterThanOrEqual(900);
+    runtime.deps.db.close();
+  });
+});
+
+describe('LIVE credit balance', () => {
+  it('takes the balance every Nansen response reports (x-nansen-credits-remaining) at once', async () => {
+    const dir = join(tmpdir(), `ws-credits-${randomUUID()}`);
+    dirs.push(dir);
+    const fakeFetch = (async () =>
+      new Response(
+        JSON.stringify({
+          data: { asset_positions: [], margin_summary_account_value_usd: '0.0', timestamp: 1 },
+        }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            'x-nansen-credits-used': '1',
+            'x-nansen-credits-remaining': '299',
+          },
+        },
+      )) as unknown as typeof fetch;
+    const config = loadConfig(
+      {
+        MODE: 'live',
+        NANSEN_API_KEY: 'k',
+        DATA_DIR: dir,
+        CREDIT_SAVER_AT: '300',
+        CREDIT_FLOOR: '100',
+      },
+      () => {
+        throw new Error('unused');
+      },
+    );
+    const runtime = buildRuntime(config, {
+      log: silentLogger,
+      dbPath: ':memory:',
+      fetch: fakeFetch,
+    });
+    const { engine, app } = await boot(runtime);
+    expect(engine.status()).toMatchObject({ creditsRemaining: null, creditSaver: false });
+    expect((await engine.nansen.perpPositions(SYNTHETIC_A)).ok).toBe(true);
+    expect(engine.status()).toMatchObject({
+      creditsRemaining: 299,
+      creditSaver: true,
+      creditFloor: false,
+    });
+    await app.close();
+    await engine.stop();
     runtime.deps.db.close();
   });
 });

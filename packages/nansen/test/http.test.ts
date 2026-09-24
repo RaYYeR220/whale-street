@@ -1,6 +1,6 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { type CallRecord, type Clock, NansenHttp } from '../src/index';
+import { type CallRecord, type Clock, DEFAULT_ENDPOINT_LIMITS, NansenHttp } from '../src/index';
 
 class FakeClock implements Clock {
   t = 0;
@@ -172,12 +172,118 @@ describe('NansenHttp', () => {
     expect(clock.sleeps).not.toContain(3_600_000);
   });
 
-  it('applies the per-endpoint limit for profiler/perp-trades', async () => {
+  it('applies the per-endpoint limit for profiler/perp-trades (5 per 62 s: the server window starts on receipt)', async () => {
+    expect(DEFAULT_ENDPOINT_LIMITS['/api/v1/profiler/perp-trades']).toEqual([
+      { limit: 5, windowMs: 62_000 },
+    ]);
     const clock = new FakeClock();
     const replies = Array.from({ length: 6 }, () => ({ status: 200, body: '{}' }));
     const http = new NansenHttp({ apiKey: 'k', fetch: fakeFetch(replies), clock });
     for (let i = 0; i < 6; i++)
       await http.request('POST', '/api/v1/profiler/perp-trades', {}, parseAny);
-    expect(clock.t).toBeGreaterThanOrEqual(60_000);
+    expect(clock.t).toBeGreaterThanOrEqual(62_000);
+  });
+
+  /** A fetch that notes the fake-clock time of every request it receives. */
+  function timedFetch(clock: FakeClock, replies: Reply[], sentAt: number[]): typeof fetch {
+    const inner = fakeFetch(replies);
+    return (async (input: string | URL | Request, init?: RequestInit) => {
+      sentAt.push(clock.now());
+      return inner(input, init);
+    }) as typeof fetch;
+  }
+  const endpoint429 = (retryAfter: string): Reply => ({
+    status: 429,
+    body: '{"code":"rate_limit_exceeded","message":"Rate limit exceeded.","retry_after":60}',
+    headers: { 'retry-after': retryAfter, 'x-nansen-ratelimit-scope': 'endpoint' },
+  });
+
+  it('an endpoint-scoped 429 blocks that endpoint for Retry-After; other endpoints go on', async () => {
+    const clock = new FakeClock();
+    const sentAt: number[] = [];
+    const ok = { status: 200, body: '{}' };
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: timedFetch(clock, [endpoint429('60'), ok, ok, endpoint429('30'), ok], sentAt),
+      clock,
+    });
+    const trades = '/api/v1/profiler/perp-trades';
+    const r = await http.request('POST', trades, {}, parseAny, { retries: 0 });
+    expect(r).toMatchObject({ ok: false, status: 429 });
+    await http.request('POST', '/api/v1/profiler/perp-positions', {}, parseAny);
+    await http.request('POST', trades, {}, parseAny);
+    expect(sentAt).toEqual([0, 0, 60_000]);
+    // Also an endpoint with no configured window of its own.
+    const summary = '/api/v1/profiler/perp-pnl-summary';
+    await http.request('POST', summary, {}, parseAny, { retries: 0 });
+    await http.request('POST', summary, {}, parseAny);
+    expect(sentAt.slice(3)).toEqual([60_000, 90_000]);
+  });
+
+  it('caps the endpoint block at 60,000 ms; a 429 of another scope blocks nothing', async () => {
+    const clock = new FakeClock();
+    const sentAt: number[] = [];
+    const ok = { status: 200, body: '{}' };
+    const keyScoped: Reply = { status: 429, body: '{}', headers: { 'retry-after': '30' } };
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: timedFetch(clock, [endpoint429('3600'), ok, keyScoped, ok], sentAt),
+      clock,
+    });
+    const path = '/api/v1/profiler/perp-positions';
+    await http.request('POST', path, {}, parseAny, { retries: 0 });
+    await http.request('POST', path, {}, parseAny);
+    expect(sentAt).toEqual([0, 60_000]);
+    await http.request('POST', path, {}, parseAny, { retries: 0 });
+    await http.request('POST', path, {}, parseAny);
+    expect(sentAt.slice(2)).toEqual([60_000, 60_000]);
+  });
+
+  it('keeps the error code and reads `detail`: credit exhaustion is a 403 with code insufficient_credits', async () => {
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: fakeFetch([
+        {
+          status: 403,
+          body: '{"code":"insufficient_credits","message":"You have run out of credits.","detail":"Top up at app.nansen.ai"}',
+        },
+        { status: 403, body: '{"code":"insufficient_credits","detail":"Not enough credits"}' },
+        { status: 422, body: '{"detail":"Order rejected: wrong side"}' },
+        { status: 403, body: '{"code":"forbidden"}' },
+        { status: 422, body: '{"detail":[{"loc":["body"],"msg":"bad"}]}' },
+      ]),
+      clock: new FakeClock(),
+    });
+    const errorOf = async () => {
+      const r = await http.request('POST', '/api/v1/x', {}, parseAny);
+      return r.ok ? null : r.error;
+    };
+    expect(await errorOf()).toBe('HTTP 403: insufficient_credits: You have run out of credits.');
+    expect(await errorOf()).toBe('HTTP 403: insufficient_credits: Not enough credits');
+    expect(await errorOf()).toBe('HTTP 422: Order rejected: wrong side');
+    expect(await errorOf()).toBe('HTTP 403: forbidden');
+    expect(await errorOf()).toBe('HTTP 422: {"detail":[{"loc":["body"],"msg":"bad"}]}');
+  });
+
+  it('records the balance a response reports in x-nansen-credits-remaining', async () => {
+    const calls: CallRecord[] = [];
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: fakeFetch([
+        {
+          status: 200,
+          body: '{}',
+          headers: { 'x-nansen-credits-used': '5', 'x-nansen-credits-remaining': '1095' },
+        },
+        { status: 200, body: '{}', headers: { 'x-nansen-credits-cost': '0' } },
+        { status: 403, body: '{}', headers: { 'x-nansen-credits-remaining': '0' } },
+        { status: 200, body: '{}', headers: { 'x-nansen-credits-remaining': 'lots' } },
+      ]),
+      clock: new FakeClock(),
+      onCall: (c) => calls.push(c),
+    });
+    for (let i = 0; i < 4; i++) await http.request('POST', '/api/v1/x', {}, parseAny);
+    expect(calls.map((c) => c.creditsRemaining)).toEqual([1_095, null, 0, null]);
+    expect(calls[0]?.creditsUsed).toBe(5);
   });
 });

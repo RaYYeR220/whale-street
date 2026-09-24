@@ -1,3 +1,4 @@
+import { NansenClient, NansenHttp } from '@whale-street/nansen';
 import { describe, expect, it, vi } from 'vitest';
 import { HOUR_MS, MINUTE_MS } from '../src/dates';
 import { openDb } from '../src/db/index';
@@ -91,6 +92,63 @@ describe('credit monitor', () => {
       creditsRemaining: 1_056,
     });
     await t.app.close();
+  });
+
+  it('a balance header newer than the /account read wins; an older one loses', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    const monitor = createCreditMonitor({
+      ...w,
+      nansen,
+      log: silentLogger,
+      thresholds: { saverAt: 300, floor: 100 },
+    });
+    // `/account` lags: it still says 1,000 while the responses already report 1,095.
+    nansen.accountInfo = { plan: 'free', creditsRemaining: 1_000 };
+    const read = nansen.account.bind(nansen);
+    nansen.account = () => {
+      monitor.observe(1_095); // a data call answered while the account read was in flight
+      return read();
+    };
+    await monitor.check();
+    expect(w.state.flags.creditsRemaining).toBe(1_095);
+    nansen.account = read;
+    // A header seen before the account was asked is older: the account read wins.
+    w.clock.advance(1_000);
+    await monitor.check();
+    expect(w.state.flags.creditsRemaining).toBe(1_000);
+    // Every later header updates the balance at once, flags included (visible status).
+    const statusEvents = w.events.filter((e) => e.t === 'status').length;
+    w.clock.advance(1_000);
+    monitor.observe(299);
+    expect(w.state.flags).toMatchObject({
+      creditSaver: true,
+      creditFloor: false,
+      creditsRemaining: 299,
+    });
+    expect(w.events.filter((e) => e.t === 'status').length).toBe(statusEvents + 1);
+    w.clock.advance(1_000);
+    monitor.observe(99);
+    expect(w.state.flags).toMatchObject({ creditSaver: true, creditFloor: true });
+  });
+
+  it('a refusal for credits is recognised from the real 403 insufficient_credits response', async () => {
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            code: 'insufficient_credits',
+            message: 'You have run out of credits.',
+            detail: 'Top up your credits to continue.',
+          }),
+          { status: 403 },
+        )) as unknown as typeof fetch,
+      clock: { now: () => 0, sleep: async () => {} },
+    });
+    const r = await new NansenClient(http).perpPositions(addr(1));
+    expect(r).toMatchObject({ ok: false, status: 403 });
+    expect(isCreditError(r)).toBe(true);
   });
 
   it('recognises a refusal for credits by status 402 or by the insufficient_credits code', () => {

@@ -13,9 +13,13 @@ export interface WindowLimit {
   windowMs: number;
 }
 
-/** Sliding-window limiter over several windows; acquire() resolves once every window has room. */
+/**
+ * Sliding-window limiter over several windows; acquire() resolves once every window has room and
+ * any block set by blockFor() has ended.
+ */
 export class RateLimiter {
   private readonly stamps: number[][];
+  private blockedUntil = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly windows: WindowLimit[],
@@ -24,9 +28,14 @@ export class RateLimiter {
     this.stamps = windows.map(() => []);
   }
 
+  /** Holds every acquire for `ms` from now (the server said Retry-After); never shortens a block. */
+  blockFor(ms: number): void {
+    this.blockedUntil = Math.max(this.blockedUntil, this.clock.now() + ms);
+  }
+
   waitTime(): number {
     const now = this.clock.now();
-    let wait = 0;
+    let wait = Math.max(0, this.blockedUntil - now);
     this.windows.forEach((w, i) => {
       const s = this.stamps[i] as number[];
       while (s.length > 0 && (s[0] as number) <= now - w.windowMs) s.shift();

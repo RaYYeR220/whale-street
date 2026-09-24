@@ -258,7 +258,8 @@ export class NansenClient {
   }
 
   relatedWallets(address: Address, chain: string): Promise<ApiResult<RelatedWallet[]>> {
-    const body = { address, chain, pagination: { page: 1, per_page: 50 } };
+    // `address` is deprecated on this endpoint (the server answers with a Warning: 299 header).
+    const body = { wallet_address: address, chain, pagination: { page: 1, per_page: 50 } };
     return this.http.request('POST', '/api/v1/profiler/address/related-wallets', body, (j) =>
       RelatedWalletsResponse.parse(j).data.flatMap((r) => {
         const a = addr(r.address);

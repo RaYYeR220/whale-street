@@ -45,4 +45,20 @@ describe('RateLimiter', () => {
     await lim.acquire();
     expect(clock.t).toBe(60_000);
   });
+
+  it('blockFor holds every acquire until the block ends (a shorter block never shortens it)', async () => {
+    const clock = new FakeClock();
+    const lim = new RateLimiter([{ limit: 10, windowMs: 1_000 }], clock);
+    lim.blockFor(60_000);
+    lim.blockFor(5_000);
+    expect(lim.waitTime()).toBe(60_000);
+    await lim.acquire();
+    expect(clock.t).toBe(60_000);
+    await lim.acquire();
+    expect(clock.t).toBe(60_000);
+    const bare = new RateLimiter([], clock);
+    bare.blockFor(1_000);
+    await bare.acquire();
+    expect(clock.t).toBe(61_000);
+  });
 });

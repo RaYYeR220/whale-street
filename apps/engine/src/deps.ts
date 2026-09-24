@@ -8,6 +8,7 @@ import type { Config } from './config';
 import { openDb } from './db/index';
 import { createRepos } from './db/repos';
 import type { EngineDeps } from './engine';
+import { createCreditHeaderFeed } from './ingest/credits';
 import type { Logger } from './log';
 import { loadReplaySession } from './replay/load';
 import { createReplayMood, type ReplayMood } from './replay/mood';
@@ -73,8 +74,12 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
     const rawFetch = o.fetch ?? fetch;
     // Market-data reads (Nansen profiler/leaderboard/… and HL info for companies) are recorded.
     const readFetch = recorder ? recorder.wrapFetch(rawFetch) : rawFetch;
-    const onCall = (c: Parameters<typeof repos.nansenCalls.insert>[0]) =>
+    // Every response's balance header reaches the engine's credit monitor.
+    const creditHeaders = createCreditHeaderFeed();
+    const onCall = (c: Parameters<typeof repos.nansenCalls.insert>[0]) => {
       repos.nansenCalls.insert(c);
+      creditHeaders.push(c);
+    };
     const http = new NansenHttp({ apiKey: key, fetch: readFetch, onCall, ...NANSEN_DATA_BUDGET });
     // Trading (wallets, EIP-712 payloads, signatures, builder fee) has its own client over the
     // raw fetch: it never lands in a session recording. Same key and provenance log; the key's
@@ -99,6 +104,7 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
         wallNow,
         log: o.log,
         replay: null,
+        creditHeaders,
       },
       seeds: [],
       replay: null,

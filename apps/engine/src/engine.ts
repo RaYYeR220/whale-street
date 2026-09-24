@@ -6,7 +6,7 @@ import { DAY_MS } from './dates';
 import type { Db } from './db/index';
 import { createRepos, type Repos } from './db/repos';
 import { EventBus } from './events';
-import { createCreditMonitor, withCreditAlarm } from './ingest/credits';
+import { type CreditHeaderFeed, createCreditMonitor, withCreditAlarm } from './ingest/credits';
 import { createIdleGate, type IdleGate } from './ingest/idle';
 import { MOOD_LAST_KEY, refreshMood, restoreMood, saveMood } from './ingest/mood';
 import { createRefresher, type Refresher } from './ingest/refresh';
@@ -57,6 +57,8 @@ export interface EngineDeps {
    * (identical in LIVE); REPLAY passes the real wall clock.
    */
   wallNow?: () => number;
+  /** LIVE: the balance each Nansen response reports, for the credit monitor (freshest wins). */
+  creditHeaders?: CreditHeaderFeed;
 }
 
 export interface StatusView {
@@ -156,6 +158,7 @@ export function createEngine(deps: EngineDeps): Engine {
         thresholds: { saverAt: config.creditSaverAt, floor: config.creditFloor },
       })
     : null;
+  if (credits) deps.creditHeaders?.subscribe((remaining) => credits.observe(remaining));
   // Every data call reports a refusal for credits to the monitor, which checks the account at once.
   const nansen = credits ? withCreditAlarm(deps.nansen, () => credits.alarm()) : deps.nansen;
 

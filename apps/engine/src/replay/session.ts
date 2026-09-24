@@ -80,11 +80,14 @@ function moodLine(r: MoodRecord): MoodRecord {
  * The redistribution policy for one record, shared by the session recorder, the bundler and the
  * REPLAY loader: seed lines and HL feed records pass; street-mood lines pass rebuilt to their
  * derived keys; Nansen / HL-info records only on an allowlisted path, with label/name fields
- * scrubbed from the body. `null` = must never be recorded, bundled or served.
+ * scrubbed from the body, and never a rate-limited (429) or upstream-failed (5xx) answer: REPLAY
+ * would serve it in place of the successful retry recorded next to it. `null` = must never be
+ * recorded, bundled or served.
  */
 export function redistributable(r: SessionLine): SessionLine | null {
   if (r.k === 'mood') return moodLine(r);
   if (r.k !== 'nansen') return r;
   if (!REPLAY_ALLOWED_PATHS.has(r.path)) return null;
+  if (r.status === 429 || r.status >= 500) return null;
   return { ...r, body: scrubLabels(r.body) };
 }

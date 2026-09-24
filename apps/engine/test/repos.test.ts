@@ -174,6 +174,7 @@ describe('repos', () => {
       requestHash: 'rh',
       status: 200,
       creditsUsed: 1,
+      creditsRemaining: null,
       latencyMs: 12,
       at: T0,
       responseHash: 'sh',
