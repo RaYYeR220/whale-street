@@ -9,6 +9,7 @@ import { engineUrl, mcpUrlFor, repoUrl } from '../../lib/config';
 import { coinPx, compact, pct, price, shortAddress, upDown } from '../../lib/format';
 import { describe, expression } from '../../lib/portrait';
 import { allowSfx, inViewport } from '../../lib/sfx';
+import { Banners } from '../chrome/Banners';
 import { ModeBadge } from '../chrome/ModeBadge';
 import { Crack } from '../floor/CompanyPanel';
 import { Hanko } from '../ink/Hanko';
@@ -409,6 +410,8 @@ export function LandingView({
           </span>
         </div>
       </header>
+      {/* The same data-health banners as every app page: this page shows live numbers too. */}
+      <Banners />
       <main id="main">
         <section className="lp-hero" aria-labelledby="claim">
           <article

@@ -4,7 +4,17 @@
  * that fails the card still renders with the default font rather than failing the share.
  */
 import type { ReactNode } from 'react';
+import type { ApiResult } from '../api';
+import type { StatusView } from '../api-types';
 import { type PortraitOptions, renderPortrait } from '../portrait';
+
+/**
+ * Footer of a card that shows moving numbers (prices, NAV, net worth): a card shared from a
+ * replaying engine must not pass for live figures.
+ */
+export function movingFooter(st: ApiResult<StatusView>, rest: string): string {
+  return `${st.ok && st.data.mode === 'replay' ? 'REPLAY of a recorded session · ' : ''}${rest}`;
+}
 
 export const OG_SIZE = { width: 1200, height: 630 };
 export const INK = '#1a1714';

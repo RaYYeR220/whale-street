@@ -6,6 +6,7 @@ import {
   BLUE_TEXT,
   INK,
   MINT_TEXT,
+  movingFooter,
   OG_SIZE,
   OgFrame,
   OgHanko,
@@ -24,8 +25,6 @@ export default async function Image({ params }: { params: Promise<{ ticker: stri
   const { ticker } = await params;
   const api = serverApi();
   const [r, st] = await Promise.all([api.company(ticker), api.status()]);
-  // A card shared from a replaying engine must not pass for live prices.
-  const replay = st.ok && st.data.mode === 'replay';
   if (!r.ok) {
     const text =
       r.status === 404 ? `${ticker.toUpperCase()} is not listed` : 'Whale Street is unreachable';
@@ -46,9 +45,7 @@ export default async function Image({ params }: { params: Promise<{ ticker: stri
   const dead = c.status === 'BANKRUPT' || c.status === 'DELISTED';
   const text = `${c.ticker}${c.name}NAV Hype HP 倒産BANKRUPT HALTED ${price(c.price)}${price(c.nav)}${pct(hype)}`;
   return new ImageResponse(
-    <OgFrame
-      footer={`${replay ? 'REPLAY of a recorded session · ' : ''}NAV from Nansen · Powered by Nansen API`}
-    >
+    <OgFrame footer={movingFooter(st, 'NAV from Nansen · Powered by Nansen API')}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 36, flex: 1 }}>
         {/* biome-ignore lint/performance/noImgElement: next/og renders plain <img> */}
         <img

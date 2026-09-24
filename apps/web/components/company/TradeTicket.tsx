@@ -4,7 +4,7 @@ import { type OrderSide, PARAMS } from '@whale-street/core';
 import Link from 'next/link';
 import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import type { QuoteView } from '../../lib/api-types';
-import type { DisplayCompany } from '../../lib/company';
+import { type DisplayCompany, IPO_CAP_USD } from '../../lib/company';
 import { orderErrorText } from '../../lib/errors';
 import { mmss, pct, pctAbs, price, shares, signedUsd, upDown, usd } from '../../lib/format';
 import { avgEntry, holdingPnl, holdingReturn } from '../../lib/portfolio';
@@ -20,7 +20,7 @@ export const IPO_HEADROOM = 0.97;
 
 /** What a player may still spend on a company during its IPO minute (the engine enforces it). */
 export function ipoAllowance(longCost: number | undefined): number {
-  return Math.max(0, PARAMS.ipoCapFrac * PARAMS.seasonStartCash - (longCost ?? 0));
+  return Math.max(0, IPO_CAP_USD - (longCost ?? 0));
 }
 
 /** Share quantity for an amount (2 decimals, never more than `cap`). */
@@ -91,7 +91,6 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
 
   const q = quote?.qty === qty ? quote.q : null;
   const collateral = side === 'short' && q ? q.cash * PARAMS.shortCollateralMultiple : null;
-  const ipoCap = PARAMS.ipoCapFrac * PARAMS.seasonStartCash;
   const clientError = useMemo(() => {
     if (!(amt > 0)) return 'Enter an amount.';
     if (side === 'sell' && longQty <= 0) return `You don't hold ${c.ticker} yet.`;
@@ -99,11 +98,11 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
     if (!(qty > 0)) return 'Too small for a hundredth of a share.';
     if (q && side === 'buy' && q.cash > cash + 1e-6) return 'Not enough cash.';
     if (q && side === 'buy' && ipo && q.cash > ipoLeft + 1e-6)
-      return `IPO buys are capped at ${usd(ipoCap)} per player in the first minute; ${usd(ipoLeft)} left.`;
+      return `IPO buys are capped at ${usd(IPO_CAP_USD)} per player in the first minute; ${usd(ipoLeft)} left.`;
     if (collateral !== null && collateral - (q?.cash ?? 0) > cash + 1e-6)
       return 'Not enough cash for the collateral.';
     return null;
-  }, [amt, side, longQty, shortQty, qty, q, cash, ipo, ipoCap, ipoLeft, collateral, c.ticker]);
+  }, [amt, side, longQty, shortQty, qty, q, cash, ipo, ipoLeft, collateral, c.ticker]);
   const error = clientError ?? quote?.error ?? null;
   const ok = !error && q !== null && status === 'ready' && !busy;
 
@@ -370,7 +369,7 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
         <div className="co-ipo">
           <div className="co-ipo__row">
             <span>
-              IPO window: buy up to <b>{usd(ipoCap)}</b> per player
+              IPO window: buy up to <b>{usd(IPO_CAP_USD)}</b> per player
             </span>
             <span className="ws-num">{mmss(c.ipoUntil - now)}</span>
           </div>

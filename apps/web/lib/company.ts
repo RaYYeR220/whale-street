@@ -2,12 +2,15 @@
  * Display model of a listed company: the live 1 Hz entry (price, NAV, HP, status) merged with the
  * slower REST view (name, rating, positions, prospectus) and the minute series.
  */
-import type { CompanyStatus, Rating } from '@whale-street/core';
+import { type CompanyStatus, PARAMS, type Rating } from '@whale-street/core';
 import type { CompanyView, MarketEntry, PositionView } from './api-types';
 import type { PortraitStatus } from './portrait';
 import { change, lastMinutes, type Series } from './store';
 
 export type DisplayStatus = 'active' | 'ipo' | 'halted' | 'bankrupt' | 'delisted';
+
+/** What one player may buy of a company during its IPO window (the engine enforces it). */
+export const IPO_CAP_USD = PARAMS.ipoCapFrac * PARAMS.seasonStartCash;
 
 export interface HeadlinePosition {
   text: string;

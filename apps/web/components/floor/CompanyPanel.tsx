@@ -4,7 +4,14 @@ import { PARAMS } from '@whale-street/core';
 import Link from 'next/link';
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import type { FilingView } from '../../lib/api-types';
-import { type DisplayCompany, notional, portraitStatus, side, unrealized } from '../../lib/company';
+import {
+  type DisplayCompany,
+  IPO_CAP_USD,
+  notional,
+  portraitStatus,
+  side,
+  unrealized,
+} from '../../lib/company';
 import { filingText, KIND } from '../../lib/filings';
 import { ago, coinPx, compact, mmss, pct, price, upDown } from '../../lib/format';
 import { expression, hash } from '../../lib/portrait';
@@ -93,8 +100,7 @@ function PosBlock({
       <div className="ws-co__alloc">
         <div className="ws-co__alloc-row">
           <span>
-            IPO window: buy up to <b>{compact(PARAMS.ipoCapFrac * PARAMS.seasonStartCash)}</b> per
-            player
+            IPO window: buy up to <b>{compact(IPO_CAP_USD)}</b> per player
           </span>
           <span className="ws-num">closes in {mmss(left)}</span>
         </div>

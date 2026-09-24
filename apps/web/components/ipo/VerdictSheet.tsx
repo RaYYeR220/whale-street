@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import type { CompanyView, IpoView } from '../../lib/api-types';
 import { headline, hedgeOffset, MEMBERS } from '../../lib/committee';
+import { IPO_CAP_USD } from '../../lib/company';
 import { agoLong, compact, mmss, shortAddress } from '../../lib/format';
 import { Portrait } from '../ink/Portrait';
 import { Stamp } from '../ink/Stamp';
@@ -256,7 +257,7 @@ export function VerdictSheet({
               {checks.some((c) => c.status === 'FLAG') ? ' (a flag costs two rating notches)' : ''}.{' '}
               {app.ticker} is listed on the floor
               {ipoLeft !== null && ipoLeft > 0
-                ? ` and its IPO window is open for ${mmss(ipoLeft)}`
+                ? ` and its IPO window is open for ${mmss(ipoLeft)}: buy up to $${IPO_CAP_USD.toLocaleString('en-US')} per player`
                 : ''}
               .
             </p>

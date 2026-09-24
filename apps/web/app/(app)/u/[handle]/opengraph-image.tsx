@@ -3,6 +3,7 @@ import { ImageResponse } from 'next/og';
 import { pct, usd } from '../../../../lib/format';
 import {
   BLUE_TEXT,
+  movingFooter,
   OG_SIZE,
   OgFrame,
   ogFonts,
@@ -18,7 +19,8 @@ export const contentType = 'image/png';
 export default async function Image({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = await params;
   const name = decodeURIComponent(handle);
-  const r = await serverApi().profile(name);
+  const api = serverApi();
+  const [r, st] = await Promise.all([api.profile(name), api.status()]);
   if (!r.ok) {
     const text = 'Player not found';
     return new ImageResponse(
@@ -37,7 +39,7 @@ export default async function Image({ params }: { params: Promise<{ handle: stri
   const ret = nw === null ? null : nw / PARAMS.seasonStartCash - 1;
   const text = `${p.handle}Net worth Season return AGENT BOT ${usd(nw)}${pct(ret)}`;
   return new ImageResponse(
-    <OgFrame footer="Play money · Powered by Nansen API">
+    <OgFrame footer={movingFooter(st, 'Play money · Powered by Nansen API')}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 40, flex: 1 }}>
         {/* biome-ignore lint/performance/noImgElement: next/og renders plain <img> */}
         <img
