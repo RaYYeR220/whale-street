@@ -13,6 +13,7 @@ import { z } from 'zod';
 import type { Engine } from '../engine';
 import type { PlayerView } from '../services/players';
 import { bearerToken, sendError } from './auth';
+import type { Gates } from './rate';
 
 const SIDE = z.enum(['BUY', 'SELL', 'SHORT', 'COVER']);
 const TICKER = z.string().min(1).max(8).describe('Company ticker, e.g. "OOH"');
@@ -38,7 +39,7 @@ const hostsOf = (origins: readonly string[]): string[] =>
   });
 
 /** One MCP server per request (stateless); tools act for the bearer-token player, if any. */
-export function buildMcpServer(e: Engine, player: PlayerView | null): McpServer {
+export function buildMcpServer(e: Engine, player: PlayerView | null, gates: Gates): McpServer {
   const s = new McpServer({ name: 'whale-street', version: '0.1.0' });
 
   s.registerTool(
@@ -117,6 +118,7 @@ export function buildMcpServer(e: Engine, player: PlayerView | null): McpServer 
     },
     async ({ ticker, side, qty }) => {
       if (!player) return fail(NEEDS_TOKEN);
+      if (!gates.orders.allow(player.id)) return fail('RATE_LIMITED: at most 10 orders per second');
       const r = e.exchange.placeOrder(player.id, { ticker, side, qty });
       return r.ok ? json(r) : fail(`${r.code}: ${r.message}`);
     },
@@ -158,10 +160,14 @@ export function buildMcpServer(e: Engine, player: PlayerView | null): McpServer 
 }
 
 /** Stateless MCP (Streamable HTTP) at /mcp with Host/Origin validation (the SDK handler validates nothing). */
-export function registerMcp(app: FastifyInstance, e: Engine): void {
+export function registerMcp(app: FastifyInstance, e: Engine, gates: Gates): void {
   const handler = createMcpHandler(
     (ctx) =>
-      buildMcpServer(e, e.players.auth(bearerToken(ctx.requestInfo?.headers.get('authorization')))),
+      buildMcpServer(
+        e,
+        e.players.auth(bearerToken(ctx.requestInfo?.headers.get('authorization'))),
+        gates,
+      ),
     { onerror: (err) => e.log.warn('mcp request failed', { error: err.message }) },
   );
   const node = toNodeHandler(handler, {

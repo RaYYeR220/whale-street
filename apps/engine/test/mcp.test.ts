@@ -120,6 +120,72 @@ describe('MCP /mcp', () => {
     await t.engine.settle();
   });
 
+  it('rate-limits MCP trades per player (10/second)', async () => {
+    t = await testEngine();
+    addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    t.clock.advance(61_000);
+    const agent = (
+      await t.app.inject({ method: 'POST', url: '/api/agents', payload: { name: 'Quant Desk' } })
+    ).json();
+    const results: Array<{ isError: boolean; text: string }> = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(
+        toolText(
+          (await call('trade', { ticker: 'AAA', side: 'BUY', qty: 0.1 }, bearer(agent.token)))
+            .first,
+        ),
+      );
+    }
+    expect(results.filter((r) => !r.isError)).toHaveLength(10);
+    expect(results.at(-1)).toMatchObject({
+      isError: true,
+      text: 'RATE_LIMITED: at most 10 orders per second',
+    });
+  });
+
+  it('shares the order rate limit between REST and MCP', async () => {
+    t = await testEngine();
+    addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    t.clock.advance(61_000);
+    const agent = (
+      await t.app.inject({ method: 'POST', url: '/api/agents', payload: { name: 'Quant Desk' } })
+    ).json();
+    for (let i = 0; i < 10; i++) {
+      const r = await t.app.inject({
+        method: 'POST',
+        url: '/api/orders',
+        headers: bearer(agent.token),
+        payload: { ticker: 'AAA', side: 'BUY', qty: 0.1 },
+      });
+      expect(r.statusCode).toBe(200);
+    }
+    const mcpTrade = toolText(
+      (await call('trade', { ticker: 'AAA', side: 'BUY', qty: 0.1 }, bearer(agent.token))).first,
+    );
+    expect(mcpTrade).toMatchObject({
+      isError: true,
+      text: 'RATE_LIMITED: at most 10 orders per second',
+    });
+  });
+
+  it('refuses a garbage bearer token on trade without placing an order', async () => {
+    t = await testEngine();
+    addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    t.clock.advance(61_000);
+    const denied = toolText(
+      (
+        await call(
+          'trade',
+          { ticker: 'AAA', side: 'BUY', qty: 5 },
+          bearer('garbage-token-that-is-definitely-not-real'),
+        )
+      ).first,
+    );
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain('Bearer');
+    expect(t.engine.repos.trades.recent(10)).toEqual([]);
+  });
+
   it('rejects foreign Host and Origin headers (DNS-rebinding guard)', async () => {
     t = await testEngine();
     expect((await rpc({ id: 2, method: 'tools/list' }, { host: 'evil.example' })).status).toBe(403);

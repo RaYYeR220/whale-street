@@ -1,3 +1,8 @@
+/** Shared rate gates passed to both REST and MCP so limits apply across surfaces. */
+export interface Gates {
+  readonly orders: RateGate;
+}
+
 /** Sliding-window rate gate keyed by caller (player id or IP). */
 export class RateGate {
   private readonly hits = new Map<string, number[]>();

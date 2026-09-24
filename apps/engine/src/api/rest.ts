@@ -5,7 +5,7 @@ import type { Engine } from '../engine';
 import type { ExchangeErrorCode } from '../services/exchange';
 import { playerView } from '../services/players';
 import { requirePlayer, sendError } from './auth';
-import { RateGate } from './rate';
+import { type Gates, RateGate } from './rate';
 
 const SIDES = ['BUY', 'SELL', 'SHORT', 'COVER'] as const;
 
@@ -57,10 +57,9 @@ const statusFor = (code: ExchangeErrorCode): number =>
       ? 400
       : 422;
 
-export function registerRest(app: FastifyInstance, e: Engine): void {
+export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): void {
   const now = () => e.clock.now();
   const signups = new RateGate(20, HOUR_MS, now);
-  const orders = new RateGate(10, 1_000, now);
 
   app.get('/healthz', async () => ({ ok: true }));
 
@@ -159,7 +158,7 @@ export function registerRest(app: FastifyInstance, e: Engine): void {
     if (!player) return reply;
     const body = parse(OrderBody, req.body, reply);
     if (!body) return reply;
-    if (!orders.allow(player.id))
+    if (!gates.orders.allow(player.id))
       return sendError(reply, 429, 'RATE_LIMITED', 'at most 10 orders per second');
     const r = e.exchange.placeOrder(player.id, body);
     return r.ok ? r : sendError(reply, statusFor(r.code), r.code, r.message);
