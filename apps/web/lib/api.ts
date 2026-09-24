@@ -80,7 +80,13 @@ export const DEFAULT_TIMEOUT_MS = 10_000;
 /** Mirror execute waits on Nansen and Hyperliquid; a timeout there means "result unknown", never "failed". */
 export const EXECUTE_TIMEOUT_MS = 30_000;
 
-export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetch(...a)) {
+export function createApi(
+  base: string,
+  fetchImpl: typeof fetch = (...a) => fetch(...a),
+  /** `timeoutMs`: the budget of a request that does not set its own. */
+  defaults: { timeoutMs?: number } = {},
+) {
+  const defaultTimeout = defaults.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const root = base.replace(/\/+$/, '');
 
   /** One request; a success also says its HTTP status (some routes answer 200 or 202). */
@@ -95,7 +101,7 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
     const headers: Record<string, string> = { accept: 'application/json' };
     if (o.token) headers.authorization = `Bearer ${o.token}`;
     if (o.body !== undefined) headers['content-type'] = 'application/json';
-    const timeout = AbortSignal.timeout(o.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const timeout = AbortSignal.timeout(o.timeoutMs ?? defaultTimeout);
     const signal = o.signal ? AbortSignal.any([o.signal, timeout]) : timeout;
     let res: Response;
     try {

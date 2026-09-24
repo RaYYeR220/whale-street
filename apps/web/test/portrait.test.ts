@@ -9,7 +9,7 @@ import {
   renderPortrait,
   traits,
 } from '../lib/portrait';
-import fixture from './fixtures/prototype-ink.json';
+import fixture from './fixtures/reference-ink.json';
 
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
 

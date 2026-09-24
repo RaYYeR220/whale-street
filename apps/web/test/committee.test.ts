@@ -93,8 +93,11 @@ describe('listing committee', () => {
     ).toBe('Deferred: Nansen credit floor');
     expect(ipoHeadline(deferred('engine restarted'), null)).toBe('Deferred: the engine restarted');
     const odd = deferred('listing failed: disk full');
-    expect(ipoHeadline(odd, null)).toBe('Deferred: evidence unavailable');
-    expect(deferral(odd).detail).toMatch(/listing failed: disk full/);
+    expect(ipoHeadline(odd, null)).toBe('Deferred: the engine hit an error');
+    expect(deferral(odd).detail).toMatch(/disk full/);
+    expect(ipoHeadline(deferred('internal error'), null)).toBe('Deferred: the engine hit an error');
+    const missing = deferred('TRACK_RECORD: evidence unavailable: timeout');
+    expect(ipoHeadline(missing, null)).toBe('Deferred: evidence unavailable');
   });
 
   it('lands the stamp over two passing neighbours', () => {

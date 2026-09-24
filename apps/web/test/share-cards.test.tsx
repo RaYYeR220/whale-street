@@ -10,6 +10,7 @@ const engine = vi.hoisted(() => ({
   status: null as unknown,
   company: null as unknown,
   profile: null as unknown,
+  ipo: null as unknown,
 }));
 vi.mock('next/og', () => ({
   ImageResponse: class {
@@ -21,6 +22,7 @@ vi.mock('../lib/server', () => ({
     status: async () => engine.status,
     company: async () => engine.company,
     profile: async () => engine.profile,
+    ipo: async () => engine.ipo,
   }),
 }));
 vi.mock('../lib/og/og', async (load) => ({
@@ -31,6 +33,7 @@ vi.mock('../lib/og/og', async (load) => ({
 const { movingFooter } = await import('../lib/og/og');
 const { default: companyCard } = await import('../app/(app)/c/[ticker]/opengraph-image');
 const { default: profileCard } = await import('../app/(app)/u/[handle]/opengraph-image');
+const { default: verdictCard } = await import('../app/(app)/ipo/[id]/opengraph-image');
 
 const ok = <T,>(data: T): ApiResult<T> => ({ ok: true, data });
 const markup = (r: unknown) => renderToStaticMarkup((r as { element: ReactElement }).element);
@@ -91,5 +94,52 @@ describe('share cards when the status call fails', () => {
     expect(movingFooter(down, 'Play money', memory)).toBe('Live status unknown · Play money');
     expect(movingFooter(ok(status({ mode: 'live' })), 'Play money', memory)).toBe('Play money');
     expect(movingFooter(down, 'Play money', memory)).toBe('Play money');
+  });
+});
+
+describe('share cards when there is nothing to show', () => {
+  const down = { ok: false, status: 0, error: 'NETWORK', message: 'cannot reach the engine' };
+  const missing = { ok: false, status: 404, error: 'NOT_FOUND', message: 'no such thing' };
+
+  it('say the engine is unreachable instead of "not found" when it is down', async () => {
+    engine.status = down;
+    engine.profile = down;
+    engine.ipo = down;
+    const profile = markup(await profileCard({ params: Promise.resolve({ handle: 'Nobody' }) }));
+    expect(profile).toContain('Whale Street is unreachable');
+    expect(profile).not.toContain('not found');
+    const verdict = markup(await verdictCard({ params: Promise.resolve({ id: 'app1' }) }));
+    expect(verdict).toContain('Whale Street is unreachable');
+    expect(verdict).not.toContain('not found');
+  });
+
+  it('say not found only when the engine answered 404', async () => {
+    engine.status = ok<StatusView>(status({ mode: 'live' }));
+    engine.profile = missing;
+    engine.ipo = missing;
+    expect(markup(await profileCard({ params: Promise.resolve({ handle: 'Nobody' }) }))).toContain(
+      'Player not found',
+    );
+    expect(markup(await verdictCard({ params: Promise.resolve({ id: 'app1' }) }))).toContain(
+      'Verdict not found',
+    );
+  });
+
+  it('stamp a pending application as under review, never as deferred', async () => {
+    engine.ipo = ok({
+      app: {
+        id: 'app1',
+        address: '0x1111111111111111111111111111111111111111',
+        status: 'PENDING',
+        reason: null,
+        ticker: null,
+        verdict: null,
+        createdAt: 0,
+        decidedAt: null,
+      },
+    });
+    const card = markup(await verdictCard({ params: Promise.resolve({ id: 'app1' }) }));
+    expect(card).not.toContain('DEFERRED');
+    expect(card).toContain('REVIEWING');
   });
 });

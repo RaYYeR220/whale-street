@@ -104,8 +104,9 @@ const browserStore = typeof window === 'undefined' ? null : createIdbKeyStore();
 /** Delays between automatic checks of an unknown outcome (the engine reconciles with Hyperliquid). */
 const RECHECK_MS = [3_000, 5_000, 10_000, 15_000, 30_000];
 /**
- * An unknown outcome may be put aside (after the player checked Hyperliquid) only this long after
- * the order was sent: the engine never downgrades UNKNOWN, so without it the card would stay forever.
+ * An unknown outcome may be put aside (after the player checked Hyperliquid and confirmed it) only
+ * this long after the order was sent, and only once this page has completed an engine check of it:
+ * the engine never downgrades UNKNOWN, so without it the card would stay forever.
  */
 export const PUT_ASIDE_AFTER_MS = 2 * 60_000;
 const PUT_ASIDE_KEY = 'ws.mirror.putAside';
@@ -235,6 +236,8 @@ export function MirrorTicket({
   const [progress, setProgress] = useState<MirrorProgress | null>(null);
   /** Result of the last check of an unknown outcome. */
   const [checked, setChecked] = useState<string | null>(null);
+  /** The unknown order (step id) an engine check has answered for on this page. */
+  const [checkedOk, setCheckedOk] = useState<string | null>(null);
   const [putAside, setPutAside] = useState<ReadonlySet<string>>(readPutAside);
   const putAsideRef = useRef(putAside);
   putAsideRef.current = putAside;
@@ -510,6 +513,7 @@ export function MirrorTicket({
         setChecked(`Checked at ${at}: cannot reach the engine (${r.message}). Trying again.`);
         return;
       }
+      setCheckedOk(out.stepId);
       setLog({ state: 'ok', orders: r.data.orders });
       const res = resolveUnknown(
         r.data.orders.find((o) => o.id === out.stepId),
@@ -701,6 +705,9 @@ export function MirrorTicket({
         );
       case 'approve':
         if (current !== 'approve') return null;
+        // Still reading the key store: approving now would mint a new key over a usable one.
+        if (agentReady === null && store)
+          return <p role="status">Looking for this wallet’s agent key in this browser…</p>;
         return (
           <>
             <p>One time only. Approve a Whale Street agent key on Hyperliquid:</p>
@@ -1043,6 +1050,11 @@ export function MirrorTicket({
       view={view}
       coin={pickCoin ?? ''}
       checked={checked}
+      canPutAside={
+        outcome.kind === 'unknown' &&
+        checkedOk === outcome.stepId &&
+        Date.now() - outcome.since >= PUT_ASIDE_AFTER_MS
+      }
       busy={busy !== null}
       onRecheck={() => void checkOutcome()}
       onReapprove={() => void doReapprove()}
@@ -1150,6 +1162,7 @@ function Outcome({
   view,
   coin,
   checked,
+  canPutAside,
   busy,
   onRecheck,
   onReapprove,
@@ -1163,6 +1176,8 @@ function Outcome({
   coin: string;
   /** Result of the last check of an unknown outcome. */
   checked: string | null;
+  /** Unknown outcome only: old enough, and an engine check of it has completed on this page. */
+  canPutAside: boolean;
   busy: boolean;
   onRecheck(): void;
   onReapprove(): void;
@@ -1171,6 +1186,7 @@ function Outcome({
   onAgain(): void;
   onDesk(): void;
 }) {
+  const [confirming, setConfirming] = useState(false);
   if (outcome.kind === 'refused')
     return (
       <div className="co-receipt co-unknown" role="status">
@@ -1282,8 +1298,8 @@ function Outcome({
             {QMARK}
             <span>
               <b>
-                {order ? `Market ${order.isBuy ? 'buy' : 'sell'}, ` : 'Market order, '}$
-                {notional ?? '?'} of {coinOf}
+                {order ? `Market ${order.isBuy ? 'buy' : 'sell'}, ` : 'Market order, '}
+                {usd(notional)} of {coinOf}
               </b>
               sent, no definitive answer
             </span>
@@ -1305,12 +1321,33 @@ function Outcome({
           <button className="ws-link" type="button" onClick={onRecheck}>
             Check again
           </button>
-          {Date.now() - outcome.since >= PUT_ASIDE_AFTER_MS ? (
-            <button className="ws-link" type="button" onClick={onPutAside}>
-              I checked on Hyperliquid, put this aside
+          {canPutAside && !confirming ? (
+            <button className="ws-link" type="button" onClick={() => setConfirming(true)}>
+              Put this aside…
             </button>
           ) : null}
         </div>
+        {canPutAside && confirming ? (
+          <fieldset className="co-aside" style={{ border: 0, margin: 0, padding: 0 }}>
+            <legend>
+              <b>Put this order aside</b>
+            </legend>
+            <p style={{ margin: '4px 0 8px' }}>
+              Only after you checked your positions on Hyperliquid. This hides the card in this
+              browser only: the engine still counts it toward your caps (open mirrors and the daily
+              limit) until Hyperliquid shows what happened. If it did fill, sending again opens a
+              second position.
+            </p>
+            <div className="co-receipt__links">
+              <button className="ws-btn" type="button" onClick={onPutAside}>
+                I checked on Hyperliquid, put it aside
+              </button>
+              <button className="ws-link" type="button" onClick={() => setConfirming(false)}>
+                Keep checking
+              </button>
+            </div>
+          </fieldset>
+        ) : null}
       </div>
     );
   return (
@@ -1320,8 +1357,8 @@ function Outcome({
         <div>
           <b>
             {order
-              ? `Mirrored ${order.isBuy ? 'LONG' : 'SHORT'} ${order.coin} ${order.leverage}x, $${order.notionalUsd}`
-              : `Mirrored ${coinOf}, $${notional ?? '?'}`}
+              ? `Mirrored ${order.isBuy ? 'LONG' : 'SHORT'} ${order.coin} ${order.leverage}x, ${usd(order.notionalUsd)}`
+              : `Mirrored ${coinOf}, ${usd(notional)}`}
           </b>
           <span>
             {outcome.closed

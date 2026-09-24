@@ -47,10 +47,12 @@ describe('no secrets in the browser', () => {
     ).toEqual(['NEXT_PUBLIC_A', 'SECRET_B', 'C', 'D', '<dynamic>', '<dynamic>', '<dynamic>']);
   });
 
-  it('reads only NEXT_PUBLIC_* environment variables', () => {
+  it('reads only NEXT_PUBLIC_* environment variables (and NODE_ENV, which Next inlines)', () => {
     const reads = app.flatMap((f) => envReads(read(f)).map((name) => `${f}: ${name}`));
     expect(reads.length).toBeGreaterThan(0);
-    expect(reads.filter((r) => !/: NEXT_PUBLIC_[A-Z0-9_]+$/.test(r))).toEqual([]);
+    expect(reads.filter((r) => !/: (NEXT_PUBLIC_[A-Z0-9_]+|NODE_ENV)$/.test(r))).toEqual([]);
+    // NODE_ENV only drives the production build guard of the engine address.
+    expect(reads.filter((r) => r.endsWith(': NODE_ENV'))).toEqual(['lib/config.ts: NODE_ENV']);
   });
 
   it('never mentions the Nansen API key', () => {

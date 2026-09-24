@@ -228,7 +228,9 @@ export async function runMirror(o: {
     });
     if (!r.ok) {
       // Only a definitive rejection means the order is not on Hyperliquid; the rest may be.
-      if (step.kind === 'order' && !isDefinitiveRejection(r.status)) return unknown(r.message);
+      // BAD_STATE says the step is no longer PREPARED: it may already be SUBMITTED or UNKNOWN.
+      if (step.kind === 'order' && (!isDefinitiveRejection(r.status) || r.error === 'BAD_STATE'))
+        return unknown(r.message);
       if (r.refusals && r.refusals.length > 0)
         return { kind: 'refused', refusals: r.refusals, groupId };
       return { kind: 'error', code: r.error, message: r.message, receipts };

@@ -23,7 +23,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
   const { id } = await params;
   const r = await serverApi().ipo(id);
   if (!r.ok) {
-    const text = 'Verdict not found';
+    const text = r.status === 404 ? 'Verdict not found' : 'Whale Street is unreachable';
     return new ImageResponse(
       <OgFrame footer="Powered by Nansen API">
         <div
@@ -43,7 +43,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
       ? { kanji: '否決', word: 'DENIED', color: RED }
       : app.status === 'APPROVED'
         ? { kanji: '承認', word: 'LISTED', color: BLUE }
-        : { kanji: '保留', word: 'DEFERRED', color: INK };
+        : app.status === 'PENDING'
+          ? { kanji: '審査', word: 'REVIEWING', color: INK }
+          : { kanji: '保留', word: 'DEFERRED', color: INK };
   const text = `${title}${shortAddress(app.address)}${MEMBERS.map((m) => m.name).join('')}${H.kanji}${H.word}可否注?Listing committee`;
   return new ImageResponse(
     <OgFrame footer="Six checks on Nansen data · Powered by Nansen API">

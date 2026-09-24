@@ -14,7 +14,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function EmbedPage({ params }: Props) {
   const { ticker } = await params;
   const api = serverApi();
-  const [detail, history] = await Promise.all([api.company(ticker), api.history(ticker, 60)]);
+  const [detail, history, status] = await Promise.all([
+    api.company(ticker),
+    api.history(ticker, 60),
+    api.status(),
+  ]);
   const site = process.env.NEXT_PUBLIC_SITE_URL ?? '';
   if (!detail.ok)
     return (
@@ -33,6 +37,7 @@ export default async function EmbedPage({ params }: Props) {
       view={detail.data.company}
       history={history.ok ? history.data.points : []}
       siteUrl={site}
+      initialMode={status.ok ? status.data.mode : null}
     />
   );
 }

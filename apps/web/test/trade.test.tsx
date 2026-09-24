@@ -45,7 +45,13 @@ const paused = () =>
     503,
   );
 
-function ticket(o: { orders: Array<() => Response>; quotePaused?: boolean; idle?: boolean }) {
+function ticket(o: {
+  orders: Array<() => Response>;
+  quotePaused?: boolean;
+  idle?: boolean;
+  /** The engine never answers the order (the client gives up: TIMEOUT). */
+  timeout?: boolean;
+}) {
   const calls: string[] = [];
   const replies = [...o.orders];
   const routes = {
@@ -62,6 +68,16 @@ function ticket(o: { orders: Array<() => Response>; quotePaused?: boolean; idle?
     },
   };
   const runtime = testRuntime(routes);
+  if (o.timeout)
+    runtime.api = {
+      ...runtime.api,
+      placeOrder: async () => ({
+        ok: false,
+        status: 0,
+        error: 'TIMEOUT',
+        message: 'the engine did not answer in time',
+      }),
+    };
   runtime.store.setStatus(status({ idle: o.idle ?? false }), T0);
   const c = toDisplay(entry(), companyView({ ipoUntil: T0 - 1 }), undefined, T0);
   if (!c) throw new Error('no company');
@@ -106,5 +122,15 @@ describe('trading while the market is paused', () => {
   it('marks a quote taken while the market is paused', async () => {
     ticket({ orders: [() => filled], quotePaused: true });
     expect(await screen.findByText(/Market paused while prices catch up/)).toBeTruthy();
+  });
+});
+
+describe('an order the engine did not answer', () => {
+  it('never says Not traded when the order may have traded', async () => {
+    ticket({ orders: [], timeout: true });
+    await buy();
+    expect(await screen.findByText(/No answer yet: OOH/)).toBeTruthy();
+    expect(screen.queryByText(/Not traded/)).toBeNull();
+    expect(screen.getByText(/Check your desk before trying again/)).toBeTruthy();
   });
 });

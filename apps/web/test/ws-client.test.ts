@@ -93,6 +93,23 @@ describe('EngineSocket', () => {
     expect(FakeSocket.all).toHaveLength(3);
   });
 
+  it('keeps backing off when a server accepts the socket and closes it before any message', () => {
+    const { s, last, timers } = setup();
+    s.start();
+    last().open();
+    last().drop();
+    expect(timers.delays()).toEqual([500]);
+    timers.fire(500);
+    last().open();
+    last().drop();
+    expect(timers.delays()).toEqual([1_000]);
+    timers.fire(1_000);
+    last().open();
+    last().receive({ t: 'status', status: { mode: 'live' } });
+    last().drop();
+    expect(timers.delays()).toEqual([500]);
+  });
+
   it('caps the backoff at 15 seconds', () => {
     const { s, last, timers } = setup();
     s.start();

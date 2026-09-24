@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, cleanup, render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EmbedWidget } from '../components/embed/EmbedWidget';
-import { EngineProvider } from '../components/providers/engine';
+import { EngineProvider, useEngineRuntime } from '../components/providers/engine';
+import { PlayerProviders, Providers } from '../components/providers/Providers';
+import { usePlayer } from '../components/providers/player';
 import { portraitSrc } from '../lib/og/og';
 import { companyView, entry, market, T0 } from './helpers';
 import { testRuntime } from './render';
@@ -26,6 +31,29 @@ describe('embed widget', () => {
     );
   });
 
+  it('says REPLAY from the server-rendered status before the socket has said anything', () => {
+    const rt = testRuntime();
+    render(
+      <EngineProvider runtime={rt}>
+        <EmbedWidget view={companyView()} history={[]} siteUrl="" initialMode="replay" />
+      </EngineProvider>,
+    );
+    expect(screen.getByText('REPLAY')).toBeTruthy();
+    expect(screen.getByRole('link').getAttribute('aria-label')).toMatch(
+      /A recorded session, not live prices/,
+    );
+  });
+
+  it('credits Nansen on the widget itself', () => {
+    render(
+      <EngineProvider runtime={testRuntime()}>
+        <EmbedWidget view={companyView()} history={[]} siteUrl="" initialMode="live" />
+      </EngineProvider>,
+    );
+    expect(screen.getByText('Powered by Nansen API')).toBeTruthy();
+    expect(screen.queryByText('REPLAY')).toBeNull();
+  });
+
   it('says it is reconnecting instead of showing a stale HP', () => {
     const rt = testRuntime();
     render(
@@ -45,5 +73,40 @@ describe('open graph portraits', () => {
     const svg = Buffer.from(src.split(',')[1] ?? '', 'base64').toString('utf8');
     expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
     expect(svg).not.toContain('var(');
+  });
+});
+
+describe('the embed widget stays anonymous', () => {
+  /** Needs the engine and a player; throws when the tree around it has no player. */
+  function Probe() {
+    useEngineRuntime();
+    usePlayer();
+    return null;
+  }
+  const read = (p: string) => readFileSync(join(import.meta.dirname, '..', p), 'utf8');
+
+  it('gets the engine from the root providers but no player, so a view signs nobody up', () => {
+    expect(() =>
+      renderToStaticMarkup(
+        <Providers>
+          <Probe />
+        </Providers>,
+      ),
+    ).toThrow(/inside <PlayerProvider>/);
+  });
+
+  it('gives the app and the landing page their player', () => {
+    expect(() =>
+      renderToStaticMarkup(
+        <Providers>
+          <PlayerProviders>
+            <Probe />
+          </PlayerProviders>
+        </Providers>,
+      ),
+    ).not.toThrow();
+    expect(read('app/(app)/layout.tsx')).toContain('<PlayerProviders>');
+    expect(read('app/(site)/layout.tsx')).toContain('<PlayerProviders>');
+    expect(read('app/(bare)/embed/[ticker]/page.tsx')).not.toContain('Player');
   });
 });

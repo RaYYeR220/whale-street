@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createApi, EXECUTE_TIMEOUT_MS } from '../lib/api';
+import { SERVER_TIMEOUT_MS } from '../lib/server';
 import { fakeFetch, json, status } from './helpers';
 
 const BASE = 'http://engine.test/';
@@ -76,6 +77,19 @@ describe('engine API client', () => {
       })) as typeof fetch;
     const r = await createApi(BASE, hanging).request('GET', '/api/status', { timeoutMs: 20 });
     expect(r).toMatchObject({ ok: false, status: 0, error: 'TIMEOUT' });
+  });
+
+  it('gives up on a hanging engine sooner on the server, and a request can still ask for longer', async () => {
+    expect(SERVER_TIMEOUT_MS).toBeLessThanOrEqual(4_000);
+    const hanging = ((_: unknown, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      })) as typeof fetch;
+    const api = createApi(BASE, hanging, { timeoutMs: 20 });
+    expect(await api.companies()).toMatchObject({ ok: false, status: 0, error: 'TIMEOUT' });
+    const started = Date.now();
+    await api.request('GET', '/api/status', { timeoutMs: 120 });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
   });
 
   it('reports a request its caller cancelled as CANCELLED, not as a network failure', async () => {

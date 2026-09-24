@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Hp } from '../components/ink/Hp';
 import { compact, pct, price, usd } from '../lib/format';
 import { band, DROPS, dropsSvg, sparkGeometry, stampTone } from '../lib/ink';
-import fixture from './fixtures/prototype-ink.json';
+import fixture from './fixtures/reference-ink.json';
 
 const attr = (html: string, cls: string) =>
   html.match(new RegExp(`class="${cls}" d="([^"]*)"`))?.[1] ?? null;

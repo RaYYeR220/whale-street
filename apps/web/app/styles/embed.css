@@ -14,8 +14,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  grid-template-areas: "art head" "art kv" "art spark" "art foot";
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas: "art head" "art kv" "art spark" "art foot" "art src";
   column-gap: 10px;
   row-gap: 2px;
   width: 320px;
@@ -148,6 +148,13 @@
 .em__hp {
   color: var(--ws-text-2);
   font-variant-numeric: tabular-nums;
+}
+.em__src {
+  grid-area: src;
+  font-size: var(--ws-fs-12);
+  line-height: 1.1;
+  color: var(--ws-text-2);
+  white-space: nowrap;
 }
 .em__hp.is-hot {
   color: var(--ws-red-text);

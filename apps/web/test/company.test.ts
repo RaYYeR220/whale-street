@@ -12,7 +12,7 @@ import {
   toDisplay,
   unrealized,
 } from '../lib/company';
-import { ipoErrorText, orderErrorText } from '../lib/errors';
+import { ipoErrorText, mirrorErrorText, orderErrorText } from '../lib/errors';
 import { filingText, foldRepeats, kindOf } from '../lib/filings';
 import { avgEntry, holdingPnl, holdingReturn, invested, isShort } from '../lib/portfolio';
 import { seriesFromHistory } from '../lib/store';
@@ -156,6 +156,24 @@ describe('error wording', () => {
     expect(orderErrorText('INSUFFICIENT_CASH', 'x')).toBe('Not enough cash.');
     expect(orderErrorText('SOMETHING_NEW', 'engine says so')).toBe('engine says so');
     expect(ipoErrorText('RATE_LIMITED', 'x')).toMatch(/3 applications an hour/);
+  });
+
+  it('words every order refusal the engine sends, not only the market ones', () => {
+    expect(orderErrorText('UNKNOWN_PLAYER', 'no such player')).toMatch(/Reload the page/);
+    expect(orderErrorText('BAD_REQUEST', 'give qty, or cash for a BUY')).toMatch(/amount/);
+  });
+
+  it('words the transport failures of a Mirror request instead of showing raw text', () => {
+    for (const code of [
+      'RATE_LIMITED',
+      'BAD_REQUEST',
+      'UNAUTHORIZED',
+      'NETWORK',
+      'TIMEOUT',
+      'BAD_RESPONSE',
+    ])
+      expect(mirrorErrorText(code, 'raw engine text')).not.toBe('raw engine text');
+    expect(mirrorErrorText('TIMEOUT', 'x')).toMatch(/desk/);
   });
 });
 

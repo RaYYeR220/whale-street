@@ -195,7 +195,6 @@ export class EngineSocket {
     this.socket = s;
     s.onopen = () => {
       if (this.socket !== s) return;
-      this.attempt = 0;
       this.everOpened = true;
       this.setState('open');
       s.send(JSON.stringify(this.hello()));
@@ -205,6 +204,9 @@ export class EngineSocket {
     };
     s.onmessage = (ev) => {
       if (this.socket !== s) return;
+      // Only a delivered message proves the connection works: a server that accepts the upgrade
+      // and closes at once keeps backing off.
+      this.attempt = 0;
       this.strikes = 0;
       this.armWatchdog();
       let msg: ServerMessage;

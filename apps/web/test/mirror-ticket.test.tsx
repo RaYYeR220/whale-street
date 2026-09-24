@@ -533,6 +533,28 @@ describe('Mirror ticket: agent key recovery', () => {
   });
 });
 
+describe('Mirror ticket: while this browser looks for the agent key', () => {
+  it('offers no approval until the key store has answered', async () => {
+    let answer: () => void = () => undefined;
+    const approved = await approvedStore();
+    const slow: KeyStore = {
+      ...approved,
+      load: async (m) => {
+        await new Promise<void>((resolve) => {
+          answer = resolve;
+        });
+        return approved.load(m);
+      },
+    };
+    mount(fakeEngine({}), slow);
+    expect(await screen.findByText(/Looking for this wallet’s agent key/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Approve agent key' })).toBeNull();
+    answer();
+    expect(await screen.findByRole('button', { name: 'Use this position' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Approve agent key' })).toBeNull();
+  });
+});
+
 describe('Mirror ticket: a browser that cannot keep the key', () => {
   it('says so instead of failing silently', async () => {
     const blocked: KeyStore = {
@@ -620,16 +642,19 @@ describe('Mirror ticket: the engine’s answers', () => {
 
 describe('Mirror ticket: an order still unknown after a reload', () => {
   it('opens on the checking state from the engine’s order log and never offers a resend', async () => {
-    let row = orderRow({ status: 'SUBMITTED' });
+    // The engine stores size × mark, so the notional arrives as a raw float.
+    const notionalUsd = 49.8671999;
+    let row = orderRow({ status: 'SUBMITTED', notionalUsd });
     const engine = fakeEngine({ orders: () => [row] });
     mount(engine, await approvedStore());
     await screen.findByText('Outcome unknown — checking with Hyperliquid');
-    expect(screen.getByText(/\$50 of BTC/)).toBeTruthy();
+    expect(screen.getByText(/\$49\.87 of BTC/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/49\.867/);
     for (const name of [/Sign and send/, /Use this position/, /Start again/])
       expect(screen.queryByRole('button', { name })).toBeNull();
-    row = orderRow({ status: 'FILLED', avgPx: 113_990, hlOid: 42 });
+    row = orderRow({ status: 'FILLED', avgPx: 113_990, hlOid: 42, notionalUsd });
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
-    await screen.findByText(/Mirrored BTC, \$50/);
+    await screen.findByText(/Mirrored BTC, \$49\.87$/);
     expect(engine.seen.prepare).toBe(0);
     expect(engine.seen.execute).toEqual([]);
   });
@@ -643,20 +668,52 @@ describe('Mirror ticket: an order still unknown after a reload', () => {
     expect(await toSend()).toBeTruthy();
   });
 
-  it('can be put aside once the player checked Hyperliquid, and stays put aside', async () => {
+  it('can be put aside after an engine check and a confirmation, and stays put aside', async () => {
     const engine = fakeEngine({
       orders: () => [orderRow({ status: 'UNKNOWN', createdAt: Date.now() - 10 * 60_000 })],
     });
     const store = await approvedStore();
     mount(engine, store);
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'I checked on Hyperliquid, put this aside' }),
-    );
+    await screen.findByText('Outcome unknown — checking with Hyperliquid');
+    // Old enough, but this page has not heard back from a single engine check yet.
+    expect(screen.queryByRole('button', { name: /put this aside/i })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await screen.findByText(/Still no definitive answer/);
+    fireEvent.click(screen.getByRole('button', { name: 'Put this aside…' }));
+    const confirm = screen.getByRole('group', { name: 'Put this order aside' });
+    expect(confirm.textContent).toMatch(/still counts it toward your caps/);
+    expect(confirm.textContent).toMatch(/opens a second position/);
+    fireEvent.click(screen.getByRole('button', { name: 'I checked on Hyperliquid, put it aside' }));
     expect(await toSend()).toBeTruthy();
     cleanup();
     mount(engine, store);
     expect(await toSend()).toBeTruthy();
     expect(screen.queryByText('Outcome unknown — checking with Hyperliquid')).toBeNull();
+  });
+
+  it('offers no way to put aside an order sent under two minutes ago, even after checks', async () => {
+    const engine = fakeEngine({
+      orders: () => [orderRow({ status: 'UNKNOWN', createdAt: Date.now() - 60_000 })],
+    });
+    mount(engine, await approvedStore());
+    await screen.findByText('Outcome unknown — checking with Hyperliquid');
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await screen.findByText(/Still no definitive answer/);
+    expect(screen.queryByRole('button', { name: /put this aside/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /put it aside/i })).toBeNull();
+  });
+
+  it('can step back from putting an order aside', async () => {
+    const engine = fakeEngine({
+      orders: () => [orderRow({ status: 'UNKNOWN', createdAt: Date.now() - 10 * 60_000 })],
+    });
+    mount(engine, await approvedStore());
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+    await screen.findByText(/Still no definitive answer/);
+    fireEvent.click(screen.getByRole('button', { name: 'Put this aside…' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Keep checking' }));
+    expect(screen.queryByRole('group', { name: 'Put this order aside' })).toBeNull();
+    expect(screen.getByText('Outcome unknown — checking with Hyperliquid')).toBeTruthy();
   });
 });
 

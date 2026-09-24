@@ -22,7 +22,7 @@ export default async function Image({ params }: { params: Promise<{ handle: stri
   const api = serverApi();
   const [r, st] = await Promise.all([api.profile(name), api.status()]);
   if (!r.ok) {
-    const text = 'Player not found';
+    const text = r.status === 404 ? 'Player not found' : 'Whale Street is unreachable';
     return new ImageResponse(
       <OgFrame footer="Powered by Nansen API">
         <div

@@ -145,6 +145,11 @@ export function deferral(app: IpoView): { headline: string; detail: string } {
       headline: 'Deferred: the engine restarted',
       detail: 'The engine restarted before the committee finished. Send the address again.',
     };
+  if (/^listing failed|^internal error/.test(reason))
+    return {
+      headline: 'Deferred: the engine hit an error',
+      detail: `The engine failed while handling this application${reason.startsWith('listing failed') ? ` (${reason.replace(/^listing failed:\s*/, '')})` : ''}. Nothing was decided; send the address again later.`,
+    };
   if (/^not in recording/.test(reason))
     return {
       headline: 'Deferred: not in this recording',

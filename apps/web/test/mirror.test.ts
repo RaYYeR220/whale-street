@@ -671,6 +671,16 @@ describe('runMirror', () => {
     expect(executed).toEqual(['s1', 's2']);
   });
 
+  it('treats BAD_STATE on the order step as unknown: the step may already be sent', async () => {
+    const { api, executed } = fake([
+      { ok: true, data: receipt('s1', 'FILLED') },
+      { ok: false, status: 409, error: 'BAD_STATE', message: 'step is not PREPARED' },
+    ]);
+    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY });
+    expect(r).toMatchObject({ kind: 'unknown', stepId: 's2' });
+    expect(executed).toEqual(['s1', 's2']);
+  });
+
   it('reports a definitive rejection of the order as not placed', async () => {
     const { api } = fake([
       { ok: true, data: receipt('s1', 'FILLED') },

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import type { CompanyView, HistoryPoint } from '../../lib/api-types';
+import type { CompanyView, HistoryPoint, Mode } from '../../lib/api-types';
 import { portraitStatus, toDisplay } from '../../lib/company';
 import { pct, price, upDown } from '../../lib/format';
 import { isDown } from '../../lib/ws-client';
@@ -15,16 +15,20 @@ export function EmbedWidget({
   view,
   history,
   siteUrl,
+  initialMode = null,
 }: {
   view: CompanyView;
   history: HistoryPoint[];
   siteUrl: string;
+  /** The engine mode from the server-rendered status call, until the socket says otherwise. */
+  initialMode?: Mode | null;
 }) {
   useChannels(['market']);
   const { store } = useEngineRuntime();
   const entry = useEngine((s) => s.market?.byTicker[view.ticker]);
   const series = useEngine((s) => s.series[view.ticker]);
-  const mode = useEngine((s) => s.market?.mode ?? null);
+  const live = useEngine((s) => s.market?.mode ?? s.status?.mode ?? null);
+  const mode = live ?? initialMode;
   const connection = useEngine((s) => s.connection);
   const now = useEngineNow();
   useEffect(() => {
@@ -112,6 +116,7 @@ export function EmbedWidget({
                   : `HP ${hp === null ? '—' : `${hp}%`}`}
           </span>
         </span>
+        <span className="em__src">Powered by Nansen API</span>
       </a>
     </div>
   );

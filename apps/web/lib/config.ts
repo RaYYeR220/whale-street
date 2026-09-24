@@ -4,10 +4,30 @@
  */
 export const DEFAULT_ENGINE_URL = 'http://localhost:8787';
 
-export function engineUrl(): string {
-  const raw = process.env.NEXT_PUBLIC_ENGINE_URL ?? DEFAULT_ENGINE_URL;
+export const MISSING_ENGINE_URL =
+  'NEXT_PUBLIC_ENGINE_URL is not set. A production build compiles the engine address into the site, so set it in the build environment (on Vercel: Project Settings, Environment Variables), for example NEXT_PUBLIC_ENGINE_URL=https://engine.example.com';
+
+/**
+ * The engine address for one environment. A production build must name its engine: without it
+ * the site would ship talking to localhost and show "Cannot reach the engine" everywhere. Dev and
+ * tests fall back to the local engine.
+ */
+export function resolveEngineUrl(nodeEnv: string | undefined, configured: string | undefined) {
+  const raw = configured?.trim();
+  if (!raw) {
+    if (nodeEnv === 'production') throw new Error(MISSING_ENGINE_URL);
+    return DEFAULT_ENGINE_URL;
+  }
   return raw.replace(/\/+$/, '');
 }
+
+export function engineUrl(): string {
+  return resolveEngineUrl(process.env.NODE_ENV, process.env.NEXT_PUBLIC_ENGINE_URL);
+}
+
+// Runs when this module loads, which every page does while `next build` collects them: a
+// production build without the engine address fails here with the message above.
+engineUrl();
 
 /** http(s)://host → ws(s)://host/ws */
 export function wsUrlFor(base: string): string {

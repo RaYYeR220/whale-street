@@ -60,10 +60,12 @@ export function useTrade(): (body: OrderBody, o?: TradeOptions) => Promise<ApiRe
         r = await api.placeOrder(token, body);
       }
       if (!r.ok) {
+        // A timeout may have traded: the engine got the order and did not answer in time.
         toast({
           sfx: '✕',
           kana: 'ダメ',
-          title: `Not traded: ${body.ticker}`,
+          title:
+            r.error === 'TIMEOUT' ? `No answer yet: ${body.ticker}` : `Not traded: ${body.ticker}`,
           sub: orderErrorText(r.error, r.message),
         });
         return r;

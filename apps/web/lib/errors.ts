@@ -13,6 +13,8 @@ const ORDER: Record<string, string> = {
   IPO_ALLOCATION_EXCEEDED:
     'IPO allocation used up: at most 10% of season cash in the first minute.',
   UNKNOWN_TICKER: 'That company is not listed.',
+  UNKNOWN_PLAYER: 'The engine does not know this player any more. Reload the page.',
+  BAD_REQUEST: 'The order is missing an amount. Enter one and try again.',
   RATE_LIMITED: 'Too many orders at once. Wait a second.',
   MARKET_PAUSED:
     'The market is still paused while prices catch up. Nothing was traded; try again in a moment.',
@@ -99,6 +101,17 @@ const MIRROR: Record<Exclude<MirrorErrorCode, 'REJECTED'>, string> = {
   UPSTREAM_FAILED: 'Hyperliquid or Nansen did not answer. Try again in a minute.',
 };
 
+/** Transport failures of a Mirror request (the API client's codes, not the engine's). */
+const MIRROR_TRANSPORT: Record<string, string> = {
+  RATE_LIMITED: 'Too many Mirror requests from your network. Wait a minute and try again.',
+  BAD_REQUEST: 'The engine could not read this request. Reload the page and try again.',
+  UNAUTHORIZED: 'Your player session expired. Reload the page.',
+  NETWORK: 'Cannot reach the engine. Try again in a moment.',
+  TIMEOUT: 'The engine did not answer in time. Check your desk before trying again.',
+  BAD_RESPONSE:
+    'The engine sent a reply this page could not read. Check your desk before trying again.',
+};
+
 export function mirrorErrorText(code: string, message: string): string {
-  return (MIRROR as Record<string, string>)[code] ?? message;
+  return (MIRROR as Record<string, string>)[code] ?? MIRROR_TRANSPORT[code] ?? message;
 }
