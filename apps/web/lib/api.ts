@@ -173,8 +173,9 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
     provenanceCall: (id: string) => get<{ call: NansenCallView }>(`/api/provenance/${seg(id)}`),
     authNonce: (token: string) =>
       get<{ nonce: string; message: string }>('/api/auth/nonce', { token }),
-    authLink: (token: string, address: string, signature: string) =>
-      post<{ player: PlayerView }>('/api/auth/link', { token, body: { address, signature } }),
+    /** `message`: the EIP-4361 text the wallet signed (see lib/mirror/link.ts). */
+    authLink: (token: string, message: string, signature: string) =>
+      post<{ player: PlayerView }>('/api/auth/link', { token, body: { message, signature } }),
     mirrorStatus: () => get<{ available: boolean; mode: 'live' | 'replay' }>('/api/mirror/status'),
     builderFee: (token: string) => get<BuilderFeeStatus>('/api/mirror/builder-fee', { token }),
     registerAgent: (token: string, masterAddress: string, agentAddress: string) =>

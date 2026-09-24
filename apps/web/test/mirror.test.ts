@@ -8,15 +8,19 @@ import {
   UserRejectedRequestError,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { parseSiweMessage } from 'viem/siwe';
 import { describe, expect, it, vi } from 'vitest';
+import { openDb } from '../../engine/src/db/index';
+import { createRepos } from '../../engine/src/db/repos';
 import {
   MARKET_SLIPPAGE as ENGINE_SLIPPAGE,
   STEP_TTL_MS as ENGINE_STEP_TTL_MS,
   MAX_BUILDER_FEE,
 } from '../../engine/src/services/mirror';
-import { linkMessage as engineLinkMessage } from '../../engine/src/services/players';
+import { createPlayersService, LINK_STATEMENT } from '../../engine/src/services/players';
 import { type Api, createApi } from '../lib/api';
-import type { MirrorOrderView, MirrorReceipt, PrepareView } from '../lib/api-types';
+import type { LinkErrorCode, MirrorOrderView, MirrorReceipt, PrepareView } from '../lib/api-types';
+import { linkErrorText } from '../lib/errors';
 import {
   AGENT_BASE_NAME,
   agentName,
@@ -39,7 +43,7 @@ import {
   hlErrorText,
 } from '../lib/mirror/hl';
 import { createIdbKeyStore, createMemoryKeyStore } from '../lib/mirror/keystore';
-import { linkMessage, linkWallet } from '../lib/mirror/link';
+import { linkWallet } from '../lib/mirror/link';
 import {
   BUILDER_FEE_CEILING,
   checkRows,
@@ -57,6 +61,7 @@ const MASTER_KEY: Hex = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f46
 const AGENT_KEY: Hex = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
 const master = privateKeyToAccount(MASTER_KEY);
 const agent = privateKeyToAccount(AGENT_KEY);
+const MASTER_LOWER = master.address.toLowerCase();
 const ARBITRUM = '0xa4b1';
 
 function capture() {
@@ -254,41 +259,110 @@ describe('agent signatures for Nansen steps', () => {
   });
 });
 
-describe('wallet link', () => {
-  it('signs the same message the engine verifies', () => {
-    expect(linkMessage(master.address, 'n1')).toBe(engineLinkMessage(master.address, 'n1'));
+describe('wallet link (Sign-In with Ethereum)', () => {
+  const ORIGIN = 'http://localhost:3000';
+  const target = {
+    address: master.address,
+    chainId: 42_161,
+    host: 'localhost:3000',
+    origin: ORIGIN,
+  };
+
+  /** The engine's real wallet-link service behind the web client's two calls. */
+  function engineLinks(origins: string[] = [ORIGIN]) {
+    const repos = createRepos(openDb(':memory:'));
+    const players = createPlayersService({ repos, clock: { now: () => Date.now() }, origins });
+    const { player } = players.create('human');
+    const nonces: string[] = [];
+    const api: Pick<Api, 'authNonce' | 'authLink'> = {
+      authNonce: async () => {
+        const nonce = players.nonce(player.id);
+        nonces.push(nonce);
+        return { ok: true, data: { nonce, message: LINK_STATEMENT } };
+      },
+      authLink: async (_t, message, signature) => {
+        const r = await players.link(player.id, message, signature);
+        return r.ok
+          ? { ok: true, data: { player: r.player } }
+          : { ok: false, status: 401, error: r.code, message: r.message };
+      },
+    };
+    return { api, nonces, player: () => players.get(player.id) };
+  }
+
+  it('signs the canonical EIP-4361 message the engine verifies, and links the wallet', async () => {
+    const e = engineLinks();
+    const signed: string[] = [];
+    const r = await linkWallet(e.api, 'tok', target, async (message) => {
+      signed.push(message);
+      return master.signMessage({ message });
+    });
+    expect(r).toMatchObject({ ok: true, player: { walletAddress: MASTER_LOWER } });
+    expect(e.player()?.walletAddress).toBe(MASTER_LOWER);
+    const m = parseSiweMessage(signed[0] ?? '');
+    expect(m).toMatchObject({
+      domain: 'localhost:3000',
+      address: master.address,
+      statement: LINK_STATEMENT,
+      uri: ORIGIN,
+      version: '1',
+      chainId: 42_161,
+      nonce: e.nonces[0],
+    });
   });
 
-  it('links with a personal_sign of the nonce message', async () => {
-    const signed: string[] = [];
-    const api: Pick<Api, 'authNonce' | 'authLink'> = {
-      authNonce: async () => ({ ok: true, data: { nonce: 'abc', message: '' } }),
-      authLink: async (_t, address, signature) =>
-        signature === 'sig'
-          ? {
-              ok: true,
-              data: {
-                player: {
-                  id: 'p1',
-                  handle: 'h',
-                  kind: 'human',
-                  walletAddress: address,
-                  createdAt: 0,
-                },
-              },
-            }
-          : { ok: false, status: 401, error: 'BAD_SIGNATURE', message: 'bad signature' },
-    };
-    const r = await linkWallet(api, 'tok', master.address, async (m) => {
-      signed.push(m);
-      return 'sig';
+  it('asks for a fresh nonce on every attempt', async () => {
+    const e = engineLinks();
+    const sign = async (message: string) => master.signMessage({ message });
+    await linkWallet(e.api, 'tok', target, sign);
+    const again = await linkWallet(e.api, 'tok', target, sign);
+    expect(again.ok).toBe(true);
+    expect(new Set(e.nonces).size).toBe(2);
+  });
+
+  it('explains an engine refusal in plain words', async () => {
+    const elsewhere = await linkWallet(
+      engineLinks(['https://whalestreet.example']).api,
+      'tok',
+      target,
+      async (message) => master.signMessage({ message }),
+    );
+    expect(elsewhere).toEqual({
+      ok: false,
+      code: 'DOMAIN_MISMATCH',
+      message: linkErrorText('DOMAIN_MISMATCH', ''),
     });
-    expect(r.ok).toBe(true);
-    expect(signed).toEqual([`Whale Street: link wallet ${master.address.toLowerCase()} nonce abc`]);
-    const declined = await linkWallet(api, 'tok', master.address, async () => {
-      throw new Error('User rejected the request');
+    const wrongSigner = await linkWallet(engineLinks().api, 'tok', target, async (message) =>
+      agent.signMessage({ message }),
+    );
+    expect(wrongSigner).toMatchObject({ ok: false, code: 'BAD_SIGNATURE' });
+    expect(wrongSigner.ok ? '' : wrongSigner.message).toMatch(/does not match this wallet/);
+  });
+
+  it('says so when the wallet declines the signature', async () => {
+    const declined = await linkWallet(engineLinks().api, 'tok', target, async () => {
+      throw new UserRejectedRequestError(new Error('User rejected the request.'));
     });
-    expect(declined).toEqual({ ok: false, message: 'You declined the signature.' });
+    expect(declined).toEqual({
+      ok: false,
+      code: 'DECLINED',
+      message: 'You declined the signature.',
+    });
+  });
+
+  it('maps every engine link refusal to its own sentence', () => {
+    const codes: LinkErrorCode[] = [
+      'INVALID_MESSAGE',
+      'NO_NONCE',
+      'DOMAIN_MISMATCH',
+      'NONCE_MISMATCH',
+      'MESSAGE_EXPIRED',
+      'MESSAGE_NOT_YET_VALID',
+      'BAD_SIGNATURE',
+    ];
+    const texts = codes.map((c) => linkErrorText(c, 'raw engine text'));
+    expect(texts.every((t) => t !== 'raw engine text')).toBe(true);
+    expect(new Set(texts).size).toBe(codes.length);
   });
 });
 

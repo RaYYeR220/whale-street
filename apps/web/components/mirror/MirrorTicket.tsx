@@ -295,11 +295,35 @@ export function MirrorTicket({
   const doLink = () =>
     guarded('link', async () => {
       if (!token || !address) return;
-      const r = await linkWallet(api, token, address, (message) =>
-        signMessage.mutateAsync({ message }),
+      if (conn.chainId === undefined) {
+        setProblem('Your wallet did not say which network it is on. Reconnect it and try again.');
+        return;
+      }
+      const before = player?.walletAddress ?? null;
+      const r = await linkWallet(
+        api,
+        token,
+        {
+          address,
+          chainId: conn.chainId,
+          host: window.location.host,
+          origin: window.location.origin,
+        },
+        (message) => signMessage.mutateAsync({ message }),
       );
-      if (!r.ok) setProblem(r.message);
-      else await refresh();
+      if (!r.ok) {
+        setProblem(r.message);
+        return;
+      }
+      // A new wallet drops the engine's agent registration: the key this browser holds for it
+      // (if any) has to be registered again. It stays approved on Hyperliquid, so approving it
+      // again is only the builder-fee check and the engine registration.
+      if (before !== address && store) {
+        const rec = await store.load(address);
+        if (rec && rec.approvedAt !== null) await store.save({ ...rec, approvedAt: null });
+        setAgentReady(false);
+      }
+      await refresh();
     });
 
   /** Hyperliquid approvals and engine registration; the key counts as ready only after all of them. */
@@ -525,12 +549,16 @@ export function MirrorTicket({
         return (
           <>
             <p>
-              Sign one message so the engine knows {shortAddress(address)} belongs to your player.
-              It costs nothing and moves no funds.
-              {player?.walletAddress
-                ? ` This player is linked to ${shortAddress(player.walletAddress)} now.`
-                : ''}
+              Sign in with Ethereum once, so the engine knows {shortAddress(address)} belongs to
+              your player. It costs nothing and moves no funds.
             </p>
+            {player?.walletAddress ? (
+              <p className="co-sub ws-v-red" data-testid="relink-warning" style={{ margin: 0 }}>
+                This player is linked to {shortAddress(player.walletAddress)} now. Linking{' '}
+                {shortAddress(address)} replaces it, and Mirror then needs its agent key approved
+                again for the new wallet.
+              </p>
+            ) : null}
             <button
               className="ws-btn"
               type="button"

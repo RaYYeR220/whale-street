@@ -41,7 +41,10 @@ import type {
   MirrorStep as EStep,
   MirrorService,
 } from '../../engine/src/services/mirror';
-import type { PlayerView as EPlayer } from '../../engine/src/services/players';
+import type {
+  LinkErrorCode as ELinkError,
+  PlayerView as EPlayer,
+} from '../../engine/src/services/players';
 import type * as W from '../lib/api-types';
 
 /** Compiles only when `Engine` is assignable to `Web`. */
@@ -90,3 +93,9 @@ export type EngineToWeb = [
 ];
 
 export type WebToEngine = [Accepts<EClient, W.ClientMessage>];
+
+/** Error codes the web words for players: the same set as the engine's, in both directions. */
+export type SameCodes = [
+  Accepts<W.LinkErrorCode, ELinkError>,
+  Accepts<ELinkError, W.LinkErrorCode>,
+];

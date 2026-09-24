@@ -64,6 +64,16 @@ export interface PlayerView {
   createdAt: number;
 }
 
+/** Refusals of POST /api/auth/link: 400 INVALID_MESSAGE and NO_NONCE, 401 for the rest. */
+export type LinkErrorCode =
+  | 'INVALID_MESSAGE'
+  | 'NO_NONCE'
+  | 'DOMAIN_MISMATCH'
+  | 'NONCE_MISMATCH'
+  | 'MESSAGE_EXPIRED'
+  | 'MESSAGE_NOT_YET_VALID'
+  | 'BAD_SIGNATURE';
+
 export interface PublicPlayerView {
   id: string;
   handle: string;

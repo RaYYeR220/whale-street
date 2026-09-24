@@ -4,8 +4,9 @@
  * API client, and an in-memory agent key store. Real money depends on these paths.
  */
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { type Hex, UserRejectedRequestError } from 'viem';
+import { type Hex, UserRejectedRequestError, verifyMessage } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import { parseSiweMessage } from 'viem/siwe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DrawerProvider } from '../components/chrome/Drawer';
 import { ToastProvider } from '../components/chrome/Toast';
@@ -29,13 +30,18 @@ import { companyView, FakeSocket, fakeFetch, json, portfolio } from './helpers';
 
 const wallet = vi.hoisted(() => ({
   address: undefined as string | undefined,
+  chainId: 42_161 as number | undefined,
   client: null as unknown,
+  /** personal_sign of the connected wallet. */
+  sign: async (_message: string): Promise<string> => '0x',
 }));
 vi.mock('wagmi', () => ({
-  useConnection: () => ({ address: wallet.address }),
+  useConnection: () => ({ address: wallet.address, chainId: wallet.chainId }),
   useConnectors: () => [],
   useConnect: () => ({ mutateAsync: async () => undefined }),
-  useSignMessage: () => ({ mutateAsync: async () => '0x' }),
+  useSignMessage: () => ({
+    mutateAsync: ({ message }: { message: string }) => wallet.sign(message),
+  }),
   createConfig: () => ({}),
   http: () => ({}),
   injected: () => ({}),
@@ -125,9 +131,24 @@ function fakeEngine(o: {
   execute?: (stepId: string) => Reply;
   orders?: () => MirrorOrderView[];
   status?: () => Reply;
+  /** The player's linked wallet as /api/me reports it (default: the connected master). */
+  linked?: () => string | null;
+  link?: (body: { message: string; signature: string }) => Reply;
 }) {
-  const seen = { prepare: 0, execute: [] as string[], orders: 0, agents: [] as string[] };
+  const seen = {
+    prepare: 0,
+    execute: [] as string[],
+    orders: 0,
+    agents: [] as string[],
+    links: [] as Array<{ message: string; signature: string }>,
+  };
   const fake = fakeFetch({
+    'GET /api/auth/nonce': () => json({ nonce: 'a1b2c3d4e5f60718', message: 'Link this wallet.' }),
+    'POST /api/auth/link': ({ init }) => {
+      const body = JSON.parse(String(init.body)) as { message: string; signature: string };
+      seen.links.push(body);
+      return o.link?.(body) ?? json({ error: 'BAD_SIGNATURE', message: 'no' }, 401);
+    },
     'GET /api/mirror/builder-fee': () =>
       json({
         approved: false,
@@ -141,7 +162,13 @@ function fakeEngine(o: {
     },
     'GET /api/me': () =>
       json({
-        player: { id: 'p1', handle: 'Tester', kind: 'human', walletAddress: MASTER, createdAt: 0 },
+        player: {
+          id: 'p1',
+          handle: 'Tester',
+          kind: 'human',
+          walletAddress: o.linked ? o.linked() : MASTER,
+          createdAt: 0,
+        },
         portfolio: portfolio(),
         seasons: [],
       }),
@@ -202,6 +229,8 @@ async function toSend(): Promise<HTMLButtonElement> {
 
 beforeEach(() => {
   wallet.address = master.address;
+  wallet.chainId = 42_161;
+  wallet.sign = async () => '0x';
   wallet.client = master;
   localStorage.setItem(TOKEN_KEY, 'tok');
 });
@@ -430,6 +459,67 @@ describe('Mirror ticket: a browser that cannot keep the key', () => {
     mount(fakeEngine({}), blocked);
     expect((await screen.findByRole('alert')).textContent).toBe(
       'This browser cannot keep a Mirror agent key: The operation is insecure.',
+    );
+  });
+});
+
+describe('Mirror ticket: linking a wallet', () => {
+  it('signs in with Ethereum for this page, then asks to approve the agent again for the new wallet', async () => {
+    let linked: string | null = `0x${'c'.repeat(40)}`;
+    wallet.sign = (message) => master.signMessage({ message });
+    const store = await approvedStore();
+    const engine = fakeEngine({
+      linked: () => linked,
+      link: () => {
+        linked = MASTER;
+        return json({
+          player: {
+            id: 'p1',
+            handle: 'Tester',
+            kind: 'human',
+            walletAddress: MASTER,
+            createdAt: 0,
+          },
+        });
+      },
+    });
+    mount(engine, store);
+    expect((await screen.findByTestId('relink-warning')).textContent).toMatch(
+      /replaces it, and Mirror then needs its agent key approved again/,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Sign to link' }));
+    await screen.findByRole('button', { name: 'Approve agent key' });
+    const sent = engine.seen.links[0] as { message: string; signature: Hex };
+    expect(parseSiweMessage(sent.message)).toMatchObject({
+      domain: window.location.host,
+      uri: window.location.origin,
+      address: master.address,
+      chainId: 42_161,
+      nonce: 'a1b2c3d4e5f60718',
+      statement: 'Link this wallet.',
+      version: '1',
+    });
+    expect(
+      await verifyMessage({
+        address: master.address,
+        message: sent.message,
+        signature: sent.signature,
+      }),
+    ).toBe(true);
+    expect((await store.load(MASTER))?.approvedAt).toBeNull();
+  });
+
+  it('explains a refused link in plain words', async () => {
+    wallet.sign = (message) => master.signMessage({ message });
+    const engine = fakeEngine({
+      linked: () => null,
+      link: () => json({ error: 'DOMAIN_MISMATCH', message: 'raw' }, 401),
+    });
+    mount(engine, await approvedStore());
+    expect(screen.queryByTestId('relink-warning')).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign to link' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(
+      /does not accept wallet links from this web address/,
     );
   });
 });
