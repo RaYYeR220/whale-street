@@ -11,6 +11,12 @@ export interface PositionsResult {
 }
 
 /**
+ * A row at exactly zero size is a closed coin (Hyperliquid, and Nansen proxying it, may still list
+ * one), not a position. Anything else stays, so a non-finite size still fails the sanity checks.
+ */
+const open = (positions: readonly Position[]): Position[] => positions.filter((p) => p.size !== 0);
+
+/**
  * Live positions + equity for an address. Nansen profiler/perp-positions normally;
  * Hyperliquid clearinghouseState (free, same underlying source) in credit-saver mode.
  */
@@ -23,7 +29,7 @@ export async function fetchPositions(
     if (!r.ok) return none(`hyperliquid: ${r.error}`);
     if (!Number.isFinite(r.value.accountValue)) return none('hyperliquid: invalid account value');
     return some({
-      positions: r.value.positions,
+      positions: open(r.value.positions),
       accountValue: r.value.accountValue,
       provenance: ['hl:clearinghouseState'],
       source: 'hyperliquid',
@@ -33,7 +39,7 @@ export async function fetchPositions(
   if (!r.ok) return none(`nansen: ${r.error}`);
   if (!Number.isFinite(r.value.accountValue)) return none('nansen: invalid account value');
   return some({
-    positions: r.value.positions,
+    positions: open(r.value.positions),
     accountValue: r.value.accountValue,
     provenance: [r.callId],
     source: 'nansen',

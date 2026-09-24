@@ -135,6 +135,31 @@ describe('refresher', () => {
     expect(rt.nav.snapshot.positions[0]?.coin).toBe('SOL');
   });
 
+  it('drops zero-size rows (closed coins) from both sources; a non-finite size still fails the snapshot', async () => {
+    const { w, nansen, info, refresher, rt, serve } = setup();
+    serve([pos('ETH', 10, 3_000), pos('DOGE', 0, 0.1)]);
+    expect(await refresher.refresh(A, 'heartbeat')).toEqual({ kind: 'ok' });
+    expect(rt.nav.snapshot.positions.map((p) => p.coin)).toEqual(['ETH']);
+    expect(rt.status).toBe('ACTIVE');
+
+    w.state.flags.creditSaver = true;
+    info.states.set(A, {
+      positions: [pos('SOL', 0, 150), pos('ETH', 10, 3_000)],
+      accountValue: 100_000,
+      time: null,
+    });
+    expect(await refresher.refresh(A, 'heartbeat')).toEqual({ kind: 'ok' });
+    expect(rt.nav.snapshot.positions.map((p) => p.coin)).toEqual(['ETH']);
+
+    w.state.flags.creditSaver = false;
+    serve([pos('ETH', 10, 3_000), { ...pos('DOGE', 1, 0.1), size: Number.NaN }]);
+    expect(await refresher.refresh(A, 'heartbeat')).toEqual({
+      kind: 'failed',
+      error: 'snapshot failed sanity checks',
+    });
+    expect(nansen.count('perpPositions')).toBe(2);
+  });
+
   it('declares bankruptcy on a liquidation that wipes out equity', async () => {
     const { w, refresher, rt, serve } = setup([pos('ETH', 100, 3_000, 2_800)], 30_000);
     w.repos.seasons.insert({

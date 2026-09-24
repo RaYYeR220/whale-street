@@ -103,6 +103,22 @@ describe('scout', () => {
     expect(w.repos.kv.get(deniedKey(addr(2)))).toBe(String(now));
   });
 
+  it('lists a trader whose Nansen positions include a closed coin at zero size', async () => {
+    const { w, nansen, info, run } = setup(1);
+    const now = w.clock.now();
+    programCleanTrader(nansen, info, addr(1), now);
+    nansen.positions.set(addr(1), {
+      positions: [pos('BTC', 2, 60_000, 40_000), pos('ETH', 0, 3_000)],
+      accountValue: 600_000,
+      time: null,
+    });
+    nansen.leaderboard = [
+      { address: addr(1), totalPnl: 1, roi: 1, accountValue: 600_000, totalTrades: 10 },
+    ];
+    expect((await run()).listed).toHaveLength(1);
+    expect(w.state.get(addr(1))?.nav.snapshot.positions.map((p) => p.coin)).toEqual(['BTC']);
+  });
+
   it('never stores raw leaderboard data', async () => {
     const { w, nansen, run } = setup(1);
     nansen.leaderboard = [
