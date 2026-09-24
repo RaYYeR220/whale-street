@@ -1,0 +1,70 @@
+import type { HlRecord } from '@whale-street/hl';
+import type { NansenRecord } from '@whale-street/nansen';
+import type { SeedCompany, SessionLine } from './session';
+
+export interface LoadedSession {
+  nansen: NansenRecord[];
+  hl: HlRecord[];
+  seeds: SeedCompany[];
+  startT: number;
+  endT: number;
+  recordedAt: number;
+  /** Addresses the recording can answer for (seeds + any address in a recorded request). */
+  knownAddresses: ReadonlySet<string>;
+}
+
+export function parseSessionLine(line: string, lineNo: number): SessionLine {
+  let v: unknown;
+  try {
+    v = JSON.parse(line);
+  } catch {
+    throw new Error(`session line ${lineNo}: invalid JSON`);
+  }
+  const r = v as { k?: unknown; t?: unknown } | null;
+  if (
+    r === null ||
+    typeof r !== 'object' ||
+    typeof r.t !== 'number' ||
+    !Number.isFinite(r.t) ||
+    (r.k !== 'nansen' && r.k !== 'hl' && r.k !== 'seed')
+  ) {
+    throw new Error(`session line ${lineNo}: not a session record`);
+  }
+  return v as SessionLine;
+}
+
+export function parseSession(text: string): LoadedSession {
+  const nansen: NansenRecord[] = [];
+  const hl: HlRecord[] = [];
+  const seeds = new Map<string, SeedCompany>();
+  const known = new Set<string>();
+  let startT = Number.POSITIVE_INFINITY;
+  let endT = Number.NEGATIVE_INFINITY;
+
+  text.split(/\r?\n/).forEach((line, i) => {
+    if (line.trim() === '') return;
+    const r = parseSessionLine(line, i + 1);
+    startT = Math.min(startT, r.t);
+    endT = Math.max(endT, r.t);
+    if (r.k === 'nansen') {
+      nansen.push(r);
+      for (const a of r.key.toLowerCase().match(/0x[0-9a-f]{40}/g) ?? []) known.add(a);
+    } else if (r.k === 'hl') {
+      hl.push(r);
+    } else {
+      const address = r.company.address.toLowerCase();
+      known.add(address);
+      if (!seeds.has(address)) seeds.set(address, { ...r.company, address });
+    }
+  });
+  if (!Number.isFinite(startT)) throw new Error('session is empty');
+  return {
+    nansen,
+    hl,
+    seeds: [...seeds.values()],
+    startT,
+    endT,
+    recordedAt: startT,
+    knownAddresses: known,
+  };
+}

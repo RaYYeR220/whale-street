@@ -154,7 +154,7 @@ export function createEngine(deps: EngineDeps): Engine {
     refresher,
     clock,
     log,
-    info: hl.info,
+    info: hl.mirrorInfo ?? hl.info,
     params,
   });
   const loop = createMarketLoop({

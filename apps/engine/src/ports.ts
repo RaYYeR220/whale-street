@@ -24,5 +24,11 @@ export type TradingPort = Pick<
 
 export interface HlPorts {
   feed: HlFeed;
+  /** Company / IPO / scout reads (recorded into the session file when RECORD=1). */
   info: HlInfo;
+  /**
+   * Mirror reads of a player's own wallet: must never be recorded, so LIVE + RECORD=1 wires an
+   * unrecorded HlInfo here. Defaults to `info`.
+   */
+  mirrorInfo?: HlInfo;
 }

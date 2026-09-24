@@ -4,6 +4,7 @@
     "packages/*/src",
     "packages/*/test",
     "apps/engine/src",
+    "apps/engine/scripts",
     "apps/engine/test",
     "vitest.config.ts"
   ]

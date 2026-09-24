@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
+    "build-replay": "tsx scripts/build-replay.ts"
+  },
   "dependencies": {
     "@fastify/cors": "11.3.0",
     "@fastify/websocket": "11.3.1",
