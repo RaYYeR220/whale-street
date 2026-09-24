@@ -4,6 +4,7 @@ import { silentLogger } from '../src/log';
 import { createExchange } from '../src/services/exchange';
 import { createPlayersService } from '../src/services/players';
 import { createSeasonService } from '../src/services/seasons';
+import { testEngine } from './helpers/engine';
 import { addCompany, makeWorld } from './helpers/world';
 
 const A = '0x00000000000000000000000000000000000000a1' as const;
@@ -100,6 +101,50 @@ describe('exchange', () => {
     exchange.autoCover(rt, w.clock.now());
     expect(exchange.portfolio(alice.id).holdings).toEqual([]);
     expect(w.repos.trades.recent(1)[0]).toMatchObject({ side: 'COVER', forced: true });
+  });
+
+  it('stores a forced cover write-off on its trade row and logs it', () => {
+    const w = makeWorld();
+    const warnings: Array<{ msg: string; data: unknown }> = [];
+    const log = {
+      ...silentLogger,
+      warn: (msg: string, data?: unknown) => warnings.push({ msg, data }),
+    };
+    const seasons = createSeasonService({ ...w, seasonDays: 7 });
+    const exchange = createExchange({ ...w, seasons, log });
+    const alice = createPlayersService(w).create('human').player;
+    const rt = addCompany(w, { id: A, ticker: 'AAA' });
+    w.clock.advance(61_000);
+    exchange.placeOrder(alice.id, { ticker: 'AAA', side: 'SHORT', qty: 10 });
+    expect(w.repos.trades.recent(1)[0]?.writeOffUsd).toBe(0);
+    const collateral = exchange.portfolio(alice.id).holdings[0]?.shortCollateral ?? 0;
+    // The buy-back now costs far more than the collateral the short put up.
+    rt.nav = { ...rt.nav, nav: 1_000 };
+    exchange.autoCover(rt, w.clock.now());
+    const cover = w.repos.trades.recent(1)[0];
+    expect(cover).toMatchObject({ side: 'COVER', forced: true });
+    expect(cover?.writeOffUsd).toBeGreaterThan(0);
+    expect(cover?.writeOffUsd).toBeCloseTo((cover?.cash ?? 0) - collateral, 6);
+    expect(warnings).toMatchObject([
+      { msg: 'forced cover write-off', data: { writeOffUsd: cover?.writeOffUsd } },
+    ]);
+  });
+
+  it('the engine exchange writes its write-off warning to the engine logger', async () => {
+    const warnings: string[] = [];
+    const t = await testEngine({ log: { ...silentLogger, warn: (msg) => warnings.push(msg) } });
+    const rt = addCompany(t.engine, { id: A, ticker: 'AAA' });
+    t.clock.advance(61_000);
+    t.engine.state.setMarks({}, t.clock.now());
+    t.engine.tick();
+    const { player } = t.engine.players.create('human');
+    expect(
+      t.engine.exchange.placeOrder(player.id, { ticker: 'AAA', side: 'SHORT', qty: 10 }).ok,
+    ).toBe(true);
+    rt.nav = { ...rt.nav, nav: 1_000 };
+    t.engine.exchange.autoCover(rt, t.clock.now());
+    expect(warnings).toContain('forced cover write-off');
+    await t.app.close();
   });
 
   it('quotes without trading and ranks the leaderboard by net worth', () => {

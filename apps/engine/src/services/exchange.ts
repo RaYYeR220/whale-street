@@ -125,7 +125,7 @@ export interface ExchangeDeps {
   clock: Clock;
   seasons: SeasonService;
   params?: Params;
-  /** The trades table has no write-off column; a forced cover's write-off is logged, not persisted. */
+  /** A forced cover's write-off is stored on its trade row and also logged as a warning. */
   log?: Logger;
 }
 
@@ -240,10 +240,9 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
           multAfter: r.fill.multiplierAfter,
           forced: ctx.forced === true,
           at: now,
+          writeOffUsd: r.fill.writeOffUsd,
         });
         if (r.fill.writeOffUsd > 0) {
-          // The trades table has no write-off column (the schema predates this Fill field);
-          // logging is the minimal way to keep the amount observable without a migration.
           log.warn('forced cover write-off', {
             playerId,
             companyId: rt.id,

@@ -105,6 +105,8 @@ export const trades = sqliteTable('trades', {
   multAfter: real('mult_after').notNull(),
   forced: integer('forced', { mode: 'boolean' }).notNull(),
   at: integer('at').notNull(),
+  /** A forced cover's cost beyond the short's collateral, written off by the house (else 0). */
+  writeOffUsd: real('write_off_usd').notNull().default(0),
 });
 
 export const ipoSpend = sqliteTable('ipo_spend', {

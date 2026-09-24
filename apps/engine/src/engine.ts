@@ -181,7 +181,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const players = createPlayersService({ repos, clock, origins: config.corsOrigins, wallNow });
   const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays, log });
   seasons.ensure(now);
-  const exchange = createExchange({ state, repos, bus, clock, seasons, params });
+  const exchange = createExchange({ state, repos, bus, clock, seasons, params, log });
   const mirror = createMirrorService({
     config,
     trading: deps.trading,

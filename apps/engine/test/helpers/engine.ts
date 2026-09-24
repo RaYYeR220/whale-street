@@ -3,7 +3,7 @@ import { buildApp } from '../../src/app';
 import { loadConfig } from '../../src/config';
 import { type Db, openDb } from '../../src/db/index';
 import { createEngine, type Engine } from '../../src/engine';
-import { silentLogger } from '../../src/log';
+import { type Logger, silentLogger } from '../../src/log';
 import type { TradingPort } from '../../src/ports';
 import { FakeClock } from './fake-clock';
 import { FakeFeed, FakeInfo } from './fake-hl';
@@ -27,6 +27,8 @@ export async function testEngine(
     env?: Record<string, string>;
     /** A pre-seeded database (default: a fresh in-memory one). */
     db?: Db;
+    /** The engine logger (default: silent). */
+    log?: Logger;
   } = {},
 ): Promise<TestEngine> {
   const clock = new FakeClock();
@@ -49,7 +51,7 @@ export async function testEngine(
     trading: o.trading ?? null,
     hl: { feed, info },
     clock,
-    log: silentLogger,
+    log: o.log ?? silentLogger,
     replay: null,
   });
   const app = await buildApp(engine);

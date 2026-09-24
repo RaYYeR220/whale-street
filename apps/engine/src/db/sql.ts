@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS trades (
   mult_before REAL NOT NULL,
   mult_after REAL NOT NULL,
   forced INTEGER NOT NULL DEFAULT 0,
-  at INTEGER NOT NULL
+  at INTEGER NOT NULL,
+  write_off_usd REAL NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS trades_company_at ON trades (company_id, at);
 CREATE TABLE IF NOT EXISTS ipo_spend (
@@ -178,11 +179,23 @@ export function ensureColumn(
     sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
 }
 
+/**
+ * Indexes created after the columns they cover exist (so an upgraded database gets them too):
+ * the per-season leaderboard / rollover reads and the per-wallet Mirror cap reads.
+ */
+const INDEX_SQL = `
+CREATE INDEX IF NOT EXISTS holdings_season ON holdings (season_id, company_id);
+CREATE INDEX IF NOT EXISTS portfolios_season ON portfolios (season_id);
+CREATE INDEX IF NOT EXISTS mirror_orders_master ON mirror_orders (master_address, created_at);
+`;
+
 /** Creates missing tables, then adds columns introduced after a table was first created. */
 export function migrate(sqlite: Database.Database): void {
   sqlite.exec(SCHEMA_SQL);
   ensureColumn(sqlite, 'mirror_orders', 'master_address', 'TEXT');
   ensureColumn(sqlite, 'ipo_apps', 'applied_wall_at', 'INTEGER');
+  ensureColumn(sqlite, 'trades', 'write_off_usd', 'REAL NOT NULL DEFAULT 0');
   // Rows written before the column existed were LIVE rows, whose created_at is wall time.
   sqlite.exec('UPDATE ipo_apps SET applied_wall_at = created_at WHERE applied_wall_at IS NULL');
+  sqlite.exec(INDEX_SQL);
 }
