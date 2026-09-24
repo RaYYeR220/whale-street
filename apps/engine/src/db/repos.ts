@@ -108,6 +108,10 @@ export interface Repos {
     recent(limit: number): IpoAppRow[];
     /** Applications by a player whose wall-clock `appliedWallAt` is at or after `wallSince`. */
     countByPlayerAppliedSince(playerId: string, wallSince: number): number;
+    /** Applications by anyone whose wall-clock `appliedWallAt` is at or after `wallSince`. */
+    countAppliedSince(wallSince: number): number;
+    /** Applications for one (lowercase) address, newest first. */
+    byAddress(address: string, limit: number): IpoAppRow[];
   };
   nansenCalls: {
     insert(r: CallRecord): void;
@@ -430,6 +434,20 @@ export function createRepos({ sqlite, db }: Db): Repos {
           .from(ipoApps)
           .where(and(eq(ipoApps.playerId, playerId), gte(ipoApps.appliedWallAt, wallSince)))
           .all().length,
+      countAppliedSince: (wallSince) =>
+        db
+          .select({ n: sql<number>`count(*)` })
+          .from(ipoApps)
+          .where(gte(ipoApps.appliedWallAt, wallSince))
+          .get()?.n ?? 0,
+      byAddress: (address, limit) =>
+        db
+          .select()
+          .from(ipoApps)
+          .where(eq(ipoApps.address, address))
+          .orderBy(desc(sql`rowid`))
+          .limit(limit)
+          .all(),
     },
 
     nansenCalls: {

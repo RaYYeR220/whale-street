@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import {
   type CallToolResult,
@@ -38,8 +39,16 @@ const hostsOf = (origins: readonly string[]): string[] =>
     }
   });
 
-/** One MCP server per request (stateless); tools act for the bearer-token player, if any. */
-export function buildMcpServer(e: Engine, player: PlayerView | null, gates: Gates): McpServer {
+/**
+ * One MCP server per request (stateless); tools act for the bearer-token player, if any.
+ * `clientIp` is the caller's address as resolved by Fastify (per-IP caps).
+ */
+export function buildMcpServer(
+  e: Engine,
+  player: PlayerView | null,
+  gates: Gates,
+  clientIp: string | null = null,
+): McpServer {
   const s = new McpServer({ name: 'whale-street', version: '0.1.0' });
 
   s.registerTool(
@@ -151,7 +160,7 @@ export function buildMcpServer(e: Engine, player: PlayerView | null, gates: Gate
     },
     async ({ address }) => {
       if (!player) return fail(NEEDS_TOKEN);
-      const r = e.ipo.apply(player.id, address);
+      const r = e.ipo.apply(player.id, address, clientIp);
       return r.ok ? json(r.app) : fail(`${r.code}: ${r.message}`);
     },
   );
@@ -161,12 +170,15 @@ export function buildMcpServer(e: Engine, player: PlayerView | null, gates: Gate
 
 /** Stateless MCP (Streamable HTTP) at /mcp with Host/Origin validation (the SDK handler validates nothing). */
 export function registerMcp(app: FastifyInstance, e: Engine, gates: Gates): void {
+  // The SDK hands the factory a web Request without the socket: carry the resolved client IP.
+  const caller = new AsyncLocalStorage<{ ip: string }>();
   const handler = createMcpHandler(
     (ctx) =>
       buildMcpServer(
         e,
         e.players.auth(bearerToken(ctx.requestInfo?.headers.get('authorization'))),
         gates,
+        caller.getStore()?.ip ?? null,
       ),
     { onerror: (err) => e.log.warn('mcp request failed', { error: err.message }) },
   );
@@ -186,7 +198,7 @@ export function registerMcp(app: FastifyInstance, e: Engine, gates: Gates): void
     const origin = validateOriginHeader(req.headers.origin, origins);
     if (!origin.ok) return sendError(reply, 403, 'FORBIDDEN_ORIGIN', origin.message);
     reply.hijack();
-    await node(req.raw, reply.raw, req.body);
+    await caller.run({ ip: req.ip }, () => node(req.raw, reply.raw, req.body));
   });
 
   app.addHook('onClose', async () => {

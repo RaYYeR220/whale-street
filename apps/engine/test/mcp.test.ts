@@ -186,6 +186,33 @@ describe('MCP /mcp', () => {
     expect(t.engine.repos.trades.recent(10)).toEqual([]);
   });
 
+  it('apply_ipo shares the desk rules: dedup, listed refusal and the per-IP cap', async () => {
+    t = await testEngine();
+    addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    const agents: Array<{ token: string }> = [];
+    for (let i = 0; i < 3; i++)
+      agents.push(
+        (
+          await t.app.inject({ method: 'POST', url: '/api/agents', payload: { name: `Desk ${i}` } })
+        ).json() as { token: string },
+      );
+    const apply = async (i: number, address: string) =>
+      toolText((await call('apply_ipo', { address }, bearer(agents[i]?.token ?? ''))).first);
+    expect(await apply(0, '0x00000000000000000000000000000000000000a1')).toMatchObject({
+      isError: true,
+      text: expect.stringContaining('ALREADY_LISTED'),
+    });
+    const addr = (n: number) => `0x${(0xe00 + n).toString(16).padStart(40, '0')}`;
+    const first = JSON.parse((await apply(0, addr(0))).text);
+    expect(JSON.parse((await apply(1, addr(0))).text)).toMatchObject({ id: first.id });
+    for (let n = 1; n < 6; n++) expect((await apply(n < 3 ? 0 : 1, addr(n))).isError).toBe(false);
+    expect(await apply(2, addr(6))).toMatchObject({
+      isError: true,
+      text: expect.stringContaining('IPO_DESK_BUSY'),
+    });
+    await t.engine.settle();
+  });
+
   it('rejects foreign Host and Origin headers (DNS-rebinding guard)', async () => {
     t = await testEngine();
     expect((await rpc({ id: 2, method: 'tools/list' }, { host: 'evil.example' })).status).toBe(403);

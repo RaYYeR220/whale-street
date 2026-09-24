@@ -1,17 +1,16 @@
 import { type Address, evaluateListing, PARAMS, type Params } from '@whale-street/core';
 import type { HlInfo } from '@whale-street/hl';
 import type { Clock } from '../clock';
-import { DAY_MS, daysBefore, utcDate } from '../dates';
+import { daysBefore, utcDate } from '../dates';
 import type { Repos } from '../db/repos';
 import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
 import type { NansenPort } from '../ports';
-import { deniedKey } from '../services/ipo';
+import { DENIAL_MEMORY_MS, deniedKey } from '../services/ipo';
 import type { ListingService } from '../services/listing';
 import { gatherEvidence } from './evidence';
 
 export const SCOUT_MAX_EVALUATIONS = 5;
-export const DENIAL_MEMORY_MS = 7 * DAY_MS;
 
 export interface ScoutDeps {
   nansen: NansenPort;

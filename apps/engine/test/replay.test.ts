@@ -790,9 +790,10 @@ describe('REPLAY loop wrap', () => {
     const { engine, app } = r;
     const { player } = engine.players.create('human');
     await r.step(500_000);
-    const late = engine.ipo.apply(player.id, SYNTHETIC_A);
+    // Two unlisted addresses (a listed one is refused from local state).
+    const late = engine.ipo.apply(player.id, '0x00000000000000000000000000000000000000f1');
     await r.step(200_000); // wrapped: the next application has an earlier engine-clock time
-    const early = engine.ipo.apply(player.id, SYNTHETIC_B);
+    const early = engine.ipo.apply(player.id, '0x00000000000000000000000000000000000000f2');
     if (!late.ok || !early.ok) throw new Error('apply failed');
     expect(early.app.createdAt).toBeLessThan(late.app.createdAt);
     const apps = (await app.inject({ url: '/api/ipo' })).json().apps as Array<{ id: string }>;

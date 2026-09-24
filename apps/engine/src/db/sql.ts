@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS ipo_apps (
   decided_at INTEGER,
   applied_wall_at INTEGER
 );
+CREATE INDEX IF NOT EXISTS ipo_apps_address ON ipo_apps (address);
 CREATE TABLE IF NOT EXISTS nansen_calls (
   id TEXT PRIMARY KEY,
   method TEXT NOT NULL,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HOUR_MS, MINUTE_MS } from '../dates';
 import type { Engine } from '../engine';
 import type { ExchangeErrorCode } from '../services/exchange';
+import type { ApplyErrorCode } from '../services/ipo';
 import { playerView } from '../services/players';
 import { requirePlayer, sendError } from './auth';
 import { type Gates, RateGate } from './rate';
@@ -56,6 +57,13 @@ const statusFor = (code: ExchangeErrorCode): number =>
     : code === 'BAD_REQUEST' || code === 'INVALID_QTY'
       ? 400
       : 422;
+
+const ipoStatusFor = (code: ApplyErrorCode): number =>
+  code === 'RATE_LIMITED' || code === 'IPO_DESK_BUSY'
+    ? 429
+    : code === 'INVALID_ADDRESS'
+      ? 400
+      : 409;
 
 export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): void {
   const now = () => e.clock.now();
@@ -200,9 +208,10 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     if (!player) return reply;
     const body = parse(IpoBody, req.body, reply);
     if (!body) return reply;
-    const r = e.ipo.apply(player.id, body.address);
-    if (!r.ok) return sendError(reply, r.code === 'RATE_LIMITED' ? 429 : 400, r.code, r.message);
-    return reply.code(202).send({ app: r.app });
+    const r = e.ipo.apply(player.id, body.address, req.ip);
+    if (!r.ok) return sendError(reply, ipoStatusFor(r.code), r.code, r.message);
+    // 200: the address already had an application (returned as it stands); 202: a new one.
+    return reply.code(r.existing ? 200 : 202).send({ app: r.app });
   });
 
   app.get('/api/ipo', async (req, reply) => {

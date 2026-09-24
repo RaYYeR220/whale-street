@@ -152,6 +152,17 @@ describe('REST', () => {
     const app = (await t.app.inject({ url: `/api/ipo/${id}` })).json().app;
     expect(app).toMatchObject({ status: 'APPROVED', address: A });
     expect((await t.app.inject({ url: '/api/ipo?limit=5' })).json().apps).toHaveLength(1);
+    // The same address again: 200 with the existing application, no new evidence run.
+    const calls = t.nansen.calls.length;
+    const again = await t.app.inject({
+      method: 'POST',
+      url: '/api/ipo',
+      headers: bearer(token),
+      payload: { address: A },
+    });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().app).toMatchObject({ id, status: 'APPROVED' });
+    expect(t.nansen.calls).toHaveLength(calls);
     expect(
       (
         await t.app.inject({
@@ -162,6 +173,31 @@ describe('REST', () => {
         })
       ).statusCode,
     ).toBe(400);
+  });
+
+  it('IPO desk refusals: listed → 409, per-IP cap → 429 IPO_DESK_BUSY', async () => {
+    t = await testEngine();
+    seedCompany();
+    const players = [await signup(), await signup(), await signup()];
+    const apply = (token: string, address: string) =>
+      t.app.inject({
+        method: 'POST',
+        url: '/api/ipo',
+        headers: bearer(token),
+        payload: { address },
+      });
+    const listed = await apply(players[0]?.token ?? '', A);
+    expect(listed.statusCode).toBe(409);
+    expect(listed.json()).toMatchObject({ error: 'ALREADY_LISTED' });
+    const addr = (i: number) => `0x${(0xd00 + i).toString(16).padStart(40, '0')}`;
+    for (let i = 0; i < 6; i++) {
+      const r = await apply(players[Math.floor(i / 3)]?.token ?? '', addr(i));
+      expect(r.statusCode).toBe(202);
+    }
+    const busy = await apply(players[2]?.token ?? '', addr(6));
+    expect(busy.statusCode).toBe(429);
+    expect(busy.json()).toMatchObject({ error: 'IPO_DESK_BUSY' });
+    await t.engine.settle();
   });
 
   it('seasons, agents and wallet linking', async () => {
