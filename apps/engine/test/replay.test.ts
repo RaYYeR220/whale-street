@@ -838,15 +838,15 @@ describe('REPLAY loop wrap', () => {
       rows.filter((x) => x.id > (bounds[l]?.[key] ?? 0) && x.id <= (bounds[l + 1]?.[key] ?? 0));
     const trades = engine.repos.trades.recent(100_000);
     const filings = engine.repos.filings.recent(100_000);
-    // A lively desk: every bot places at least one order of its own within the first two loops.
-    const placed = [...inLoop(trades, 0, 'trade'), ...inLoop(trades, 1, 'trade')].filter(
-      (t) => !t.forced && t.side !== 'SETTLE',
-    );
-    for (const bot of BOTS)
-      expect(
-        placed.filter((t) => t.playerId === bot.id).length,
-        `${bot.id} orders`,
-      ).toBeGreaterThan(0);
+    // A lively desk in steady state: every bot places orders of its own in every loop.
+    for (const l of [0, 1, 2]) {
+      const placed = inLoop(trades, l, 'trade').filter((t) => !t.forced && t.side !== 'SETTLE');
+      for (const bot of BOTS)
+        expect(
+          placed.filter((t) => t.playerId === bot.id).length,
+          `${bot.id} orders in loop ${l}`,
+        ).toBeGreaterThan(0);
+    }
     for (const l of [1, 2]) {
       expect(beats[l], `heartbeats in loop ${l}`).toBeGreaterThan(0);
       const bot = inLoop(trades, l, 'trade').filter((t) => t.playerId.startsWith('bot-'));

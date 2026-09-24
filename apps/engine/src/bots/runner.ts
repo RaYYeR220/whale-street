@@ -19,6 +19,8 @@ export const BOT_MIN_WAIT_MS = 20_000;
 export const BOT_JITTER_MS = 20_000;
 /** The Tape Reader follows the NAV direction over this window. */
 export const TAPE_WINDOW_MS = 5 * MINUTE_MS;
+/** A bot's recent trades searched for the ones that opened its current positions. */
+const OPENING_TRADES_SCAN = 200;
 
 /**
  * Momentum's lookback: 1 h in LIVE; in REPLAY a quarter of the loop span (at most 1 h), so a
@@ -53,6 +55,18 @@ export function createBotRunner(d: {
 
   const navAt = (id: string, t: number) => d.repos.navPoints.atOrBefore(id, t)?.nav ?? null;
 
+  /** Per held company: when the bot last added to its position (its latest BUY or SHORT there). */
+  const openedAt = (botId: string, holdings: Record<string, Holding>): Map<string, number> => {
+    const at = new Map<string, number>();
+    for (const t of d.repos.trades.forPlayer(botId, OPENING_TRADES_SCAN)) {
+      const h = holdings[t.companyId];
+      if (!h || t.forced || at.has(t.companyId)) continue;
+      if ((t.side === 'BUY' && h.longQty > 0) || (t.side === 'SHORT' && h.shortQty > 0))
+        at.set(t.companyId, t.at);
+    }
+    return at;
+  };
+
   const view = (botId: string, now: number): BotView => {
     const pf = d.exchange.portfolio(botId);
     const holdings: Record<string, Holding> = {};
@@ -64,6 +78,7 @@ export function createBotRunner(d: {
         shortCollateral: h.shortCollateral,
       };
     }
+    const opened = openedAt(botId, holdings);
     return {
       cash: pf.cash,
       holdings,
@@ -78,11 +93,14 @@ export function createBotRunner(d: {
         positions: rt.nav.snapshot.positions,
         navLookback: navAt(rt.id, now - lookback),
         nav5mAgo: navAt(rt.id, now - TAPE_WINDOW_MS),
+        heldSince: opened.get(rt.id) ?? null,
       })),
       mood: d.state.mood,
       marks: d.state.marks,
       rand,
       valueBuysDips: d.valueBuysDips ?? false,
+      now,
+      lookbackMs: lookback,
     };
   };
 

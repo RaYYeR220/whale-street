@@ -19,6 +19,11 @@ export interface BotCompany {
   navLookback: number | null;
   /** NAV five minutes ago (the Tape Reader's window), null when there is no history yet. */
   nav5mAgo: number | null;
+  /**
+   * Engine-clock time of this bot's latest BUY (long) or SHORT (short) into its current position
+   * here; null when flat or unknown. After a REPLAY loop wrap it can lie after `now`.
+   */
+  heldSince: number | null;
 }
 
 export interface BotView {
@@ -34,6 +39,10 @@ export interface BotView {
    * Value's hype bands are out of reach; it also trades healthy NAV dips there.
    */
   valueBuysDips: boolean;
+  /** Engine clock of the decision. */
+  now: number;
+  /** Momentum's lookback window (see BotCompany.navLookback); also its longest holding time. */
+  lookbackMs: number;
 }
 
 export type BotOrder =
@@ -125,11 +134,23 @@ function cohort(v: BotView): BotOrder | null {
   return scored ? { ticker: scored.c.ticker, side: 'BUY', cash: stake(v, 0.03) } : null;
 }
 
-/** Follows the NAV trend over its lookback (±2%). */
+/**
+ * Held for longer than the lookback window, or since an unknown time, or since a time after now
+ * (bought in an earlier REPLAY loop: the clock went back since).
+ */
+const heldTooLong = (v: BotView, c: BotCompany) =>
+  c.heldSince === null || c.heldSince > v.now || v.now - c.heldSince > v.lookbackMs;
+
+/**
+ * Buys an up-trend (+2% over its lookback); sells when that trend reverses (the change over the
+ * lookback turns negative) or once it has held for longer than the lookback window, so it keeps
+ * trading in every REPLAY loop instead of holding one position forever.
+ */
 function momentum(v: BotView): BotOrder | null {
   for (const c of active(v)) {
+    if (longOf(v, c.id) <= EPS) continue;
     const ch = lookbackChange(c);
-    if (longOf(v, c.id) > EPS && ch !== null && ch < -0.02)
+    if ((ch !== null && ch < 0) || heldTooLong(v, c))
       return { ticker: c.ticker, side: 'SELL', qty: longOf(v, c.id) };
   }
   const pick = active(v)
@@ -140,25 +161,34 @@ function momentum(v: BotView): BotOrder | null {
   return pick ? { ticker: pick.c.ticker, side: 'BUY', cash: stake(v, 0.03) } : null;
 }
 
+/** The Tape Reader's position cap in one company, as a fraction of its cash. */
+const TAPE_CAP = 0.1;
+/** At its cap it trims this fraction of the position. */
+const TAPE_TRIM = 0.5;
+
 /**
  * Tape Reader: a small trade (1–2% of cash) in the 5-minute NAV direction of one randomly picked
- * active company. Against its position it exits first; with it, it adds while the position is
- * worth less than 10% of its cash. Needs nothing but NAV history, so it works in REPLAY too.
+ * active company, long or short. Against its position it exits first; with it, it adds while the
+ * position is worth less than 10% of its cash, and at that cap it trims half (takes profit), so a
+ * company that only ever rises keeps it trading both ways. Needs nothing but NAV history, so it
+ * works in REPLAY too.
  */
 function tape(v: BotView): BotOrder | null {
   const tradable = active(v).filter((c) => c.price > 0);
   const c = tradable[Math.floor(v.rand() * tradable.length)];
   if (!c || c.nav5mAgo === null || !(c.nav5mAgo > 0)) return null;
   const dir = Math.sign(c.nav - c.nav5mAgo);
-  const room = (qty: number) => qty * c.price < 0.1 * v.cash;
+  const atCap = (qty: number) => qty * c.price >= TAPE_CAP * v.cash;
+  const long = longOf(v, c.id);
+  const short = shortOf(v, c.id);
   if (dir > 0) {
-    if (shortOf(v, c.id) > EPS) return { ticker: c.ticker, side: 'COVER', qty: shortOf(v, c.id) };
-    if (!room(longOf(v, c.id))) return null;
+    if (short > EPS) return { ticker: c.ticker, side: 'COVER', qty: short };
+    if (atCap(long)) return { ticker: c.ticker, side: 'SELL', qty: long * TAPE_TRIM };
     return { ticker: c.ticker, side: 'BUY', cash: stake(v, 0.01 + 0.01 * v.rand()) };
   }
   if (dir < 0) {
-    if (longOf(v, c.id) > EPS) return { ticker: c.ticker, side: 'SELL', qty: longOf(v, c.id) };
-    if (!room(shortOf(v, c.id))) return null;
+    if (long > EPS) return { ticker: c.ticker, side: 'SELL', qty: long };
+    if (atCap(short)) return { ticker: c.ticker, side: 'COVER', qty: short * TAPE_TRIM };
     return { ticker: c.ticker, side: 'SHORT', qty: stake(v, 0.01 + 0.01 * v.rand()) / c.price };
   }
   return null;

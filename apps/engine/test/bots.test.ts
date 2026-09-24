@@ -10,6 +10,7 @@ import { createPlayersService } from '../src/services/players';
 import { createSeasonService } from '../src/services/seasons';
 import { addCompany, makeWorld, pos } from './helpers/world';
 
+const NOW = 1_790_000_000_000;
 const co = (over: Partial<BotCompany> & { id: string }): BotCompany => ({
   ticker: over.id.toUpperCase(),
   status: 'ACTIVE',
@@ -20,6 +21,7 @@ const co = (over: Partial<BotCompany> & { id: string }): BotCompany => ({
   positions: [],
   navLookback: null,
   nav5mAgo: null,
+  heldSince: null,
   ...over,
 });
 const long = (qty: number): Holding => ({
@@ -43,6 +45,8 @@ const view = (over: Partial<BotView>): BotView => ({
   marks: {},
   rand: () => 0.5,
   valueBuysDips: false,
+  now: NOW,
+  lookbackMs: 150_000,
   ...over,
 });
 
@@ -153,6 +157,29 @@ describe('bot strategies', () => {
     ).toBeNull();
   });
 
+  it('momentum exits when its signal reverses or once it has held longer than its lookback', () => {
+    const held = (over: Partial<BotCompany>) =>
+      decide(
+        'momentum',
+        view({
+          companies: [co({ id: 'a', heldSince: NOW - 60_000, ...over })],
+          holdings: { a: long(3) },
+        }),
+      );
+    const sell = { ticker: 'A', side: 'SELL', qty: 3 };
+    // Bought a minute ago on an up-trend that still holds (or has no history yet): keeps it.
+    expect(held({ nav: 101, navLookback: 100 })).toBeNull();
+    expect(held({ nav: 101, navLookback: null })).toBeNull();
+    // The trend turned down, even mildly: the signal it bought on is gone.
+    expect(held({ nav: 99.5, navLookback: 100 })).toEqual(sell);
+    // Held past its lookback window, whatever the trend.
+    expect(held({ nav: 101, navLookback: 100, heldSince: NOW - 150_001 })).toEqual(sell);
+    // Opened after "now": bought in an earlier REPLAY loop (the clock went back), so it is old.
+    expect(held({ nav: 101, navLookback: null, heldSince: NOW + 30_000 })).toEqual(sell);
+    // A position without a known opening trade is treated as old.
+    expect(held({ nav: 101, navLookback: 100, heldSince: null })).toEqual(sell);
+  });
+
   it('momentum looks back 1 h in LIVE and a quarter of the loop (at most 1 h) in REPLAY', () => {
     expect(momentumLookbackMs(null)).toBe(HOUR_MS);
     expect(momentumLookbackMs(600_000)).toBe(150_000);
@@ -184,13 +211,22 @@ describe('bot strategies', () => {
       side: 'COVER',
       qty: 2,
     });
-    // Keeps adding while the position is small; stops at 10% of its cash.
+    // Keeps adding while the position is small; at 10% of its cash it trims half instead.
     expect(decide('tape', view({ companies: [down, up], holdings: { a: long(2) } }))).toEqual({
       ticker: 'A',
       side: 'BUY',
       cash: 150,
     });
-    expect(decide('tape', view({ companies: [down, up], holdings: { a: long(20) } }))).toBeNull();
+    expect(decide('tape', view({ companies: [down, up], holdings: { a: long(20) } }))).toEqual({
+      ticker: 'A',
+      side: 'SELL',
+      qty: 10,
+    });
+    expect(decide('tape', view({ companies: [up, down], holdings: { b: short(20) } }))).toEqual({
+      ticker: 'B',
+      side: 'COVER',
+      qty: 10,
+    });
     // No history, a flat NAV, or nothing tradable: no order.
     expect(decide('tape', view({ companies: [co({ id: 'a', nav5mAgo: null })] }))).toBeNull();
     expect(decide('tape', view({ companies: [co({ id: 'a', nav5mAgo: 100 })] }))).toBeNull();
@@ -261,5 +297,54 @@ describe('bot runner', () => {
       ['bot-momentum', 'BUY'],
       ['bot-tape', 'SHORT'],
     ]);
+  });
+
+  it('momentum sells a position held past its lookback, and one opened before a REPLAY wrap', () => {
+    const w = makeWorld();
+    const seasons = createSeasonService({ ...w, seasonDays: 7 });
+    const exchange = createExchange({ ...w, seasons });
+    const players = createPlayersService(w);
+    const runner = createBotRunner({
+      ...w,
+      exchange,
+      players,
+      log: silentLogger,
+      momentumLookbackMs: 150_000,
+    });
+    const rt = addCompany(w, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    rt.ipoUntil = 0;
+    const momentumSides = () =>
+      w.repos.trades
+        .recent(20)
+        .filter((t) => t.playerId === 'bot-momentum')
+        .map((t) => t.side)
+        .reverse();
+    const run = (seconds: number) => {
+      for (let i = 0; i < seconds; i++) {
+        w.clock.advance(1_000);
+        runner.onTick(w.clock.now());
+      }
+    };
+    // Momentum holds AAA (no NAV history: no trend signal either way).
+    expect(exchange.placeOrder('bot-momentum', { ticker: 'AAA', side: 'BUY', cash: 300 }).ok).toBe(
+      true,
+    );
+    runner.onTick(w.clock.now());
+    run(100);
+    expect(momentumSides()).toEqual(['BUY']);
+    run(90);
+    expect(momentumSides()).toEqual(['BUY', 'SELL']);
+
+    // Bought again, then the REPLAY clock goes back 5 minutes: the position is from a later
+    // point of an earlier loop, so it is old.
+    const boughtAt = w.clock.now();
+    expect(exchange.placeOrder('bot-momentum', { ticker: 'AAA', side: 'BUY', cash: 300 }).ok).toBe(
+      true,
+    );
+    w.clock.t = boughtAt - 300_000;
+    runner.reset();
+    runner.onTick(w.clock.now());
+    run(41);
+    expect(momentumSides()).toEqual(['BUY', 'SELL', 'BUY', 'SELL']);
   });
 });
