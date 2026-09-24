@@ -196,6 +196,48 @@ describe('REST', () => {
     expect(linked.json().player.walletAddress).toBe(account.address.toLowerCase());
   });
 
+  it('TRUST_PROXY=0 (default): a spoofed X-Forwarded-For does not change the rate key', async () => {
+    t = await testEngine();
+    for (let i = 0; i < 20; i++) {
+      const r = await t.app.inject({
+        method: 'POST',
+        url: '/api/players',
+        headers: { 'x-forwarded-for': `10.0.0.${i}` },
+      });
+      expect(r.statusCode).toBe(201);
+    }
+    const spoofed = await t.app.inject({
+      method: 'POST',
+      url: '/api/players',
+      headers: { 'x-forwarded-for': '10.9.9.9' },
+    });
+    expect(spoofed.statusCode).toBe(429);
+  });
+
+  it('TRUST_PROXY=1: the right-most X-Forwarded-For hop is the client', async () => {
+    t = await testEngine({ env: { TRUST_PROXY: '1' } });
+    for (let i = 0; i < 20; i++) {
+      const r = await t.app.inject({
+        method: 'POST',
+        url: '/api/players',
+        headers: { 'x-forwarded-for': `10.0.0.${i}, 203.0.113.7` },
+      });
+      expect(r.statusCode).toBe(201);
+    }
+    const sameClient = await t.app.inject({
+      method: 'POST',
+      url: '/api/players',
+      headers: { 'x-forwarded-for': '10.9.9.9, 203.0.113.7' },
+    });
+    expect(sameClient.statusCode).toBe(429);
+    const otherClient = await t.app.inject({
+      method: 'POST',
+      url: '/api/players',
+      headers: { 'x-forwarded-for': '203.0.113.7, 198.51.100.4' },
+    });
+    expect(otherClient.statusCode).toBe(201);
+  });
+
   it('rate-limits signups per IP and orders per player', async () => {
     t = await testEngine();
     seedCompany();

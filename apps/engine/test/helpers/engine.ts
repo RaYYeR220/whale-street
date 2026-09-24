@@ -20,14 +20,22 @@ export interface TestEngine {
 
 /** A full engine on fakes + in-memory SQLite, with its Fastify app (ready for inject / injectWS). */
 export async function testEngine(
-  o: { mode?: 'live' | 'replay'; trading?: TradingPort | null } = {},
+  o: {
+    mode?: 'live' | 'replay';
+    trading?: TradingPort | null;
+    /** Extra settings (e.g. TRUST_PROXY) passed to loadConfig. */
+    env?: Record<string, string>;
+  } = {},
 ): Promise<TestEngine> {
   const clock = new FakeClock();
   const nansen = new FakeNansen();
   const info = new FakeInfo();
   const feed = new FakeFeed();
   const config = loadConfig(
-    o.mode === 'live' ? { MODE: 'live', NANSEN_API_KEY: 'test-key' } : { MODE: 'replay' },
+    {
+      ...(o.mode === 'live' ? { MODE: 'live', NANSEN_API_KEY: 'test-key' } : { MODE: 'replay' }),
+      ...o.env,
+    },
     () => {
       throw new Error('no env file in tests');
     },

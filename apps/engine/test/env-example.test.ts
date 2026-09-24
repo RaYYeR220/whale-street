@@ -25,6 +25,7 @@ describe('.env.example', () => {
         'REPLAY_FILE',
         'SEASON_DAYS',
         'TARGET_COMPANIES',
+        'TRUST_PROXY',
       ].sort(),
     );
   });

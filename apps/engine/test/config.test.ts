@@ -22,7 +22,15 @@ describe('loadConfig', () => {
       publicHosts: [],
       targetCompanies: 20,
       seasonDays: 7,
+      trustProxy: 0,
     });
+  });
+
+  it('TRUST_PROXY is a hop count (integer >= 0)', () => {
+    expect(loadConfig({ TRUST_PROXY: '1' }, noFile).trustProxy).toBe(1);
+    expect(() => loadConfig({ TRUST_PROXY: '-1' }, noFile)).toThrow();
+    expect(() => loadConfig({ TRUST_PROXY: 'true' }, noFile)).toThrow();
+    expect(() => loadConfig({ TRUST_PROXY: '1.5' }, noFile)).toThrow();
   });
 
   it('auto mode goes live when a key is present; empty values count as unset', () => {

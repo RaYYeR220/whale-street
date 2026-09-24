@@ -25,6 +25,7 @@ const EnvSchema = z.object({
   PUBLIC_HOSTS: csv(''),
   TARGET_COMPANIES: z.coerce.number().int().positive().default(20),
   SEASON_DAYS: z.coerce.number().int().positive().default(7),
+  TRUST_PROXY: z.coerce.number().int().min(0).default(0),
 });
 
 export interface Config {
@@ -41,6 +42,11 @@ export interface Config {
   publicHosts: string[];
   targetCompanies: number;
   seasonDays: number;
+  /**
+   * Reverse-proxy hops in front of the engine whose X-Forwarded-For entries are trusted (0 = none:
+   * the socket address is the client). Behind exactly one proxy (e.g. Fly) set 1.
+   */
+  trustProxy: number;
 }
 
 function keyFromEnvFile(path: string, readFile: (p: string) => string): string | null {
@@ -77,6 +83,7 @@ export function loadConfig(
     publicHosts: e.PUBLIC_HOSTS,
     targetCompanies: e.TARGET_COMPANIES,
     seasonDays: e.SEASON_DAYS,
+    trustProxy: e.TRUST_PROXY,
   };
 }
 
