@@ -15,9 +15,13 @@ import type { NansenPort } from '../../src/ports';
 
 /** Marks a programmed reply as a failed call. */
 export class Fail {
-  constructor(readonly error: string) {}
+  constructor(
+    readonly error: string,
+    readonly status: number | null = 500,
+  ) {}
 }
-export const fail = (error = 'HTTP 500: upstream error') => new Fail(error);
+export const fail = (error = 'HTTP 500: upstream error', status: number | null = 500) =>
+  new Fail(error, status);
 
 type Reply<T> = T | Fail;
 
@@ -51,7 +55,7 @@ export class FakeNansen implements NansenPort {
     if (v === undefined)
       return Promise.resolve({ ok: false, error: 'HTTP 404: not programmed', status: 404, callId });
     if (v instanceof Fail)
-      return Promise.resolve({ ok: false, error: v.error, status: 500, callId });
+      return Promise.resolve({ ok: false, error: v.error, status: v.status, callId });
     return Promise.resolve({ ok: true, value: v, callId });
   }
 

@@ -88,11 +88,8 @@ export async function gatherEvidence(
   onProgress('track_record', 'done');
 
   onProgress('size', 'running');
-  const pos = await fetchPositions(address, {
-    nansen: d.nansen,
-    info: d.info,
-    creditSaver: d.state.flags.creditSaver,
-  });
+  // The committee's size evidence keeps Nansen as its source in credit-saver mode too.
+  const pos = await fetchPositions(address, { nansen: d.nansen, info: d.info, creditSaver: false });
   onProgress('size', 'done');
 
   onProgress('human', 'running');

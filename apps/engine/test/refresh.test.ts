@@ -135,6 +135,44 @@ describe('refresher', () => {
     expect(rt.nav.snapshot.positions[0]?.coin).toBe('SOL');
   });
 
+  it('in credit-saver only routine refreshes move to Hyperliquid; mirror refreshes keep Nansen', async () => {
+    const { w, nansen, info, refresher, rt, serve } = setup();
+    w.state.flags.creditSaver = true;
+    serve([pos('ETH', 10, 3_000)]);
+    info.states.set(A, { positions: [pos('SOL', 5, 150)], accountValue: 99_000, time: null });
+    for (const reason of ['heartbeat', 'trigger', 'wake'] as const) {
+      await refresher.refresh(A, reason);
+      expect(rt.nav.snapshot.provenance).toEqual(['hl:clearinghouseState']);
+    }
+    expect(nansen.count('perpPositions')).toBe(0);
+    await refresher.refresh(A, 'mirror');
+    expect(nansen.count('perpPositions')).toBe(1);
+    expect(rt.nav.snapshot.positions.map((p) => p.coin)).toEqual(['ETH']);
+    expect(rt.nav.snapshot.provenance[0]).toMatch(/^nc_/);
+  });
+
+  it('a mirror refresh never rides on an in-flight Hyperliquid refresh: it runs its own Nansen fetch', async () => {
+    const { w, nansen, info, refresher, rt, serve } = setup();
+    w.state.flags.creditSaver = true;
+    serve([pos('ETH', 10, 3_000)]);
+    info.states.set(A, { positions: [pos('SOL', 5, 150)], accountValue: 99_000, time: null });
+    const routine = refresher.refresh(A, 'heartbeat');
+    const mirror = refresher.refresh(A, 'mirror');
+    expect(mirror).not.toBe(routine);
+    // Another routine refresh joins the queued Nansen one (Nansen data serves every reason).
+    expect(refresher.refresh(A, 'trigger')).toBe(mirror);
+    expect(await mirror).toEqual({ kind: 'ok' });
+    expect(await routine).toEqual({ kind: 'ok' });
+    expect(nansen.count('perpPositions')).toBe(1);
+    expect(rt.nav.snapshot.provenance[0]).toMatch(/^nc_/);
+    expect(refresher.pending()).toEqual([]);
+    // In-flight Nansen refresh: a mirror refresh joins it.
+    w.state.flags.creditSaver = false;
+    const first = refresher.refresh(A, 'heartbeat');
+    expect(refresher.refresh(A, 'mirror')).toBe(first);
+    await first;
+  });
+
   it('drops zero-size rows (closed coins) from both sources; a non-finite size still fails the snapshot', async () => {
     const { w, nansen, info, refresher, rt, serve } = setup();
     serve([pos('ETH', 10, 3_000), pos('DOGE', 0, 0.1)]);

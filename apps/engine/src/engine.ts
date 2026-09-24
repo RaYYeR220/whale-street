@@ -6,7 +6,7 @@ import { DAY_MS } from './dates';
 import type { Db } from './db/index';
 import { createRepos, type Repos } from './db/repos';
 import { EventBus } from './events';
-import { createCreditMonitor } from './ingest/credits';
+import { createCreditMonitor, withCreditAlarm } from './ingest/credits';
 import { createIdleGate, type IdleGate } from './ingest/idle';
 import { MOOD_LAST_KEY, refreshMood } from './ingest/mood';
 import { createRefresher, type Refresher } from './ingest/refresh';
@@ -123,7 +123,7 @@ export interface Engine {
 }
 
 export function createEngine(deps: EngineDeps): Engine {
-  const { config, clock, log, nansen, hl } = deps;
+  const { config, clock, log, hl } = deps;
   const params = deps.params ?? PARAMS;
   const wallNow = deps.wallNow ?? (() => clock.now());
   const now = clock.now();
@@ -140,6 +140,13 @@ export function createEngine(deps: EngineDeps): Engine {
     tasks.add(p);
     void p.catch(() => {}).finally(() => tasks.delete(p));
   };
+
+  const live = config.mode === 'live';
+  const credits = live
+    ? createCreditMonitor({ nansen: deps.nansen, state, repos, bus, clock, log, track })
+    : null;
+  // Every data call reports a refusal for credits to the monitor, which checks the account at once.
+  const nansen = credits ? withCreditAlarm(deps.nansen, () => credits.alarm()) : deps.nansen;
 
   const filings = createFilingService(repos, state, bus);
   const statusOps = createStatusOps(repos, filings);
@@ -194,8 +201,6 @@ export function createEngine(deps: EngineDeps): Engine {
     autoCover: (rt, t) => exchange.autoCover(rt, t),
   });
 
-  const live = config.mode === 'live';
-  const credits = live ? createCreditMonitor({ nansen, state, repos, bus, clock, log }) : null;
   const lastRunAt = (key: string): number | null => {
     const v = Number(repos.kv.get(key) ?? Number.NaN);
     return Number.isFinite(v) ? v : null;

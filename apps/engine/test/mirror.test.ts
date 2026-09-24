@@ -999,6 +999,34 @@ describe('mirror', () => {
     expect(orderExecutes()).toBe(1);
   });
 
+  it('refuses at the credit floor with a visible reason, before any Nansen call', async () => {
+    const { e, trading, master, agent, player, token } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    e.state.flags.creditSaver = true;
+    e.state.flags.creditFloor = true;
+    const positionCalls = t.nansen.count('perpPositions');
+    const res = await t.app.inject({
+      method: 'POST',
+      url: '/api/mirror/prepare',
+      headers: bearer(token),
+      payload: HYP_50,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ ok: false, refusals: [{ code: 'CREDIT_FLOOR' }] });
+    expect(res.json().refusals[0].message).toContain('credits');
+    expect(t.nansen.count('perpPositions')).toBe(positionCalls);
+    expect(t.info.calls.filter((c) => c.startsWith(`clearinghouse:${TRADER}`))).toEqual([]);
+    expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    expect(e.mirror.orders(player.id)[0]).toMatchObject({
+      status: 'REFUSED',
+      refusals: [{ code: 'CREDIT_FLOOR' }],
+    });
+    // Credit-saver alone (above the floor): the fresh snapshot still comes from Nansen.
+    e.state.flags.creditFloor = false;
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toBe('allowed');
+    expect(t.nansen.count('perpPositions')).toBe(positionCalls + 1);
+  });
+
   it('never leaks the Nansen API key into responses or the database', async () => {
     const { e, trading, master, agent, player } = await setup();
     e.mirror.registerAgent(player.id, master.address, agent.address);

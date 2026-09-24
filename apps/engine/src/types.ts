@@ -34,11 +34,16 @@ export type MirrorStatus =
 
 /**
  * A reason stored with a mirror attempt (mirror_orders.refusals_json): a core policy refusal, or
- * an engine-side one — the size rounds below the minimum, the policy changed before execute, or
- * trading is unavailable (region block).
+ * an engine-side one — the size rounds below the minimum, the policy changed before execute,
+ * trading is unavailable (region block), or Nansen credits are at the floor (no fresh snapshot).
  */
 export interface MirrorReason {
-  code: MirrorRefusalCode | 'BELOW_MIN_SIZE' | 'POLICY_CHANGED' | 'TRADING_UNAVAILABLE';
+  code:
+    | MirrorRefusalCode
+    | 'BELOW_MIN_SIZE'
+    | 'POLICY_CHANGED'
+    | 'TRADING_UNAVAILABLE'
+    | 'CREDIT_FLOOR';
   message: string;
 }
 

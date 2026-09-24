@@ -66,6 +66,17 @@ describe('gatherEvidence', () => {
     ]);
   });
 
+  it('keeps Nansen as the size source in credit-saver mode (no silent switch to Hyperliquid)', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    w.state.flags.creditSaver = true;
+    const { ev, positions } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(nansen.count('perpPositions')).toBe(1);
+    expect(info.calls).not.toContain(`clearinghouse:${APP}`);
+    expect(positions?.source).toBe('nansen');
+    expect(ev.equityUsd).toEqual({ ok: true, value: 600_000 });
+  });
+
   it('turns failed calls into none (never fabricated)', async () => {
     const { w, nansen, info } = setup();
     programCleanTrader(nansen, info, APP, w.clock.now());

@@ -38,7 +38,12 @@ export function createMarketLoop(d: LoopDeps): MarketLoop {
 
   const checkHalts = (rt: CompanyRuntime, now: number) => {
     const f = state.flags;
-    if (rt.pendingTriggerAt !== null && now - rt.pendingTriggerAt > params.triggerStaleMs) {
+    // Like the stale-snapshot check, never while IDLE: refreshes are skipped then.
+    if (
+      !f.idle &&
+      rt.pendingTriggerAt !== null &&
+      now - rt.pendingTriggerAt > params.triggerStaleMs
+    ) {
       d.statusOps.halt(rt, 'data', 'triggered refresh unresolved for 120 s', now);
     } else if (!f.idle && now - Math.max(rt.lastSnapshotAt, f.wokeAt) > params.staleHaltMs) {
       d.statusOps.halt(rt, 'data', 'no fresh snapshot for 30 min', now);

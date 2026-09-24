@@ -10,6 +10,8 @@ import type { Refresher } from './refresh';
 export const HEARTBEAT_MS = 12 * MINUTE_MS;
 export const TRIGGER_DEBOUNCE_MS = 10_000;
 export const WAKE_STAGGER_MS = 3_000;
+/** The wake catch-up skips a company whose snapshot is at most this old (its data is fresh). */
+export const WAKE_REFRESH_AFTER_MS = 5 * MINUTE_MS;
 export const COIN_SYNC_MS = 10_000;
 export const CREDIT_CHECK_MS = 10 * MINUTE_MS;
 export const MOOD_EVERY_MS = 15 * MINUTE_MS;
@@ -40,7 +42,11 @@ export interface Scheduler {
   start(now: number): void;
   stop(): void;
   onTick(now: number): void;
-  /** First viewer after IDLE: staggered catch-up refresh of every listed company. */
+  /**
+   * First viewer after IDLE: staggered catch-up refresh of every listed company whose snapshot is
+   * older than WAKE_REFRESH_AFTER_MS, plus any that traded (or had a trigger armed) around IDLE.
+   * The street mood is not forced: it runs on wake only when its cadence is due.
+   */
   wake(now: number): void;
   /**
    * Forgets every due time (triggers, wake-ups, heartbeats, periodic jobs) and restarts the
@@ -59,6 +65,9 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
   const wakeDue = new Map<string, number>();
   const nextBeat = new Map<string, number>();
   const busy = new Set<string>();
+  /** Companies owed a refresh on wake: a trigger dropped on entering IDLE, or a trade seen while IDLE. */
+  const owed = new Set<string>();
+  let wasIdle = d.state.flags.idle;
   const next = { coins: 0, credits: 0, mood: 0, scout: 0 };
   const unsubs: Array<() => void> = [];
 
@@ -76,12 +85,17 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
     d.track(d.refresher.refresh(id, reason));
 
   const onTrades = (trades: HlTrade[]) => {
-    if (d.state.flags.idle) return;
+    const idle = d.state.flags.idle;
     const now = d.clock.now();
     for (const t of trades) {
       for (const user of t.users) {
         const rt = d.state.get(user);
         if (!rt || (rt.status !== 'ACTIVE' && rt.status !== 'HALTED')) continue;
+        // No refresh runs while IDLE: arm nothing, remember it for the wake catch-up instead.
+        if (idle) {
+          owed.add(rt.id);
+          continue;
+        }
         if (!triggerDue.has(rt.id)) triggerDue.set(rt.id, now + TRIGGER_DEBOUNCE_MS);
         if (rt.pendingTriggerAt === null) rt.pendingTriggerAt = now;
       }
@@ -101,15 +115,19 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
       for (const u of unsubs.splice(0)) u();
     },
     wake(now) {
-      d.state.listed().forEach((rt, i) => {
-        wakeDue.set(rt.id, now + i * WAKE_STAGGER_MS);
-      });
-      next.mood = now;
+      d.state
+        .listed()
+        .filter((rt) => owed.has(rt.id) || now - rt.lastSnapshotAt > WAKE_REFRESH_AFTER_MS)
+        .forEach((rt, i) => {
+          wakeDue.set(rt.id, now + i * WAKE_STAGGER_MS);
+        });
+      owed.clear();
     },
     reset(now) {
       triggerDue.clear();
       wakeDue.clear();
       nextBeat.clear();
+      owed.clear();
       next.coins = now;
       next.credits = now;
       next.mood = now;
@@ -117,6 +135,17 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
     },
     onTick(now) {
       const idle = d.state.flags.idle;
+      if (idle && !wasIdle) {
+        // Entering IDLE: armed triggers could only be skipped (and then look unresolved), so drop
+        // them; the wake catch-up refreshes those companies instead.
+        for (const id of triggerDue.keys()) owed.add(id);
+        triggerDue.clear();
+        for (const rt of d.state.list()) {
+          if (rt.pendingTriggerAt !== null) owed.add(rt.id);
+          rt.pendingTriggerAt = null;
+        }
+      }
+      wasIdle = idle;
 
       if (now >= next.coins) {
         next.coins = now + COIN_SYNC_MS;

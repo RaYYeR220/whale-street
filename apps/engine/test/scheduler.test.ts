@@ -7,6 +7,7 @@ import {
   MOOD_EVERY_MS,
   SCOUT_EVERY_MS,
   TRIGGER_DEBOUNCE_MS,
+  WAKE_REFRESH_AFTER_MS,
 } from '../src/ingest/scheduler';
 import { silentLogger } from '../src/log';
 import { FakeFeed, hlTrade } from './helpers/fake-hl';
@@ -98,13 +99,62 @@ describe('scheduler', () => {
     expect(feed.coins).toEqual(['BTC', 'ETH']);
   });
 
-  it('wake staggers a catch-up refresh of every listed company', () => {
-    const { w, refresh, scheduler, tickFor } = setup();
+  it('wake staggers a catch-up refresh of every listed company with an old snapshot', () => {
+    const { w, refresh, scheduler, tickFor, a, b } = setup();
+    a.lastSnapshotAt = w.clock.now() - WAKE_REFRESH_AFTER_MS - 1;
+    b.lastSnapshotAt = w.clock.now() - WAKE_REFRESH_AFTER_MS - 1;
     scheduler.wake(w.clock.now());
     scheduler.onTick(w.clock.now());
     expect(calls(refresh, 'wake')).toEqual([A]);
     tickFor(3_000);
     expect(calls(refresh, 'wake')).toEqual([A, B]);
+  });
+
+  it('wake skips companies refreshed within 5 minutes (no credits re-spent on fresh data)', () => {
+    const { w, refresh, scheduler, tickFor, a, b } = setup();
+    a.lastSnapshotAt = w.clock.now() - WAKE_REFRESH_AFTER_MS;
+    b.lastSnapshotAt = w.clock.now() - WAKE_REFRESH_AFTER_MS - 1;
+    scheduler.wake(w.clock.now());
+    tickFor(10_000);
+    expect(calls(refresh, 'wake')).toEqual([B]);
+  });
+
+  it('entering IDLE drops armed triggers; the wake catch-up refreshes those companies', () => {
+    const { w, feed, refresh, scheduler, tickFor, a, b } = setup();
+    feed.emitTrades([hlTrade('BTC', [A, OTHER])]);
+    expect(a.pendingTriggerAt).toBe(w.clock.now());
+    w.state.flags.idle = true;
+    tickFor(TRIGGER_DEBOUNCE_MS + 5_000);
+    expect(a.pendingTriggerAt).toBeNull();
+    expect(calls(refresh, 'trigger')).toEqual([]);
+    // A trade seen while IDLE arms nothing, but the company is owed a refresh on wake.
+    feed.emitTrades([hlTrade('ETH', [B, OTHER])]);
+    expect(b.pendingTriggerAt).toBeNull();
+    w.state.flags.idle = false;
+    scheduler.wake(w.clock.now());
+    tickFor(10_000);
+    expect(calls(refresh, 'wake').sort()).toEqual([A, B]);
+    expect(calls(refresh, 'trigger')).toEqual([]);
+  });
+
+  it('wake does not force a mood refresh: it runs only when its 15-minute cadence is due', async () => {
+    const { w, mood, scheduler, tickFor, flush } = setup();
+    scheduler.onTick(w.clock.now());
+    await flush();
+    expect(mood.mock.calls.length).toBe(1);
+    w.state.flags.idle = true;
+    tickFor(3 * 60_000, 60_000);
+    w.state.flags.idle = false;
+    scheduler.wake(w.clock.now());
+    tickFor(60_000, 60_000);
+    expect(mood.mock.calls.length).toBe(1);
+    w.state.flags.idle = true;
+    tickFor(MOOD_EVERY_MS, 60_000);
+    w.state.flags.idle = false;
+    scheduler.wake(w.clock.now());
+    scheduler.onTick(w.clock.now());
+    expect(mood.mock.calls.length).toBe(2);
+    await flush();
   });
 
   it('runs credit, mood and scout jobs on start and on their cadence, never while idle', async () => {

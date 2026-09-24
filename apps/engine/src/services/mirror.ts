@@ -69,6 +69,12 @@ const PLACED_STATUSES: ReadonlySet<MirrorStatus> = new Set([...OPEN_STATUS_LIST,
 const RECONCILABLE: ReadonlySet<MirrorStatus> = new Set(['UNKNOWN', 'SUBMITTED']);
 const REGION_MESSAGE = 'trading unavailable in this region';
 const TRADING_UNAVAILABLE: MirrorReason = { code: 'TRADING_UNAVAILABLE', message: REGION_MESSAGE };
+/** At the credit floor the fresh Nansen snapshot a mirror needs is not fetched: refuse visibly. */
+const CREDIT_FLOOR_REFUSAL: MirrorReason = {
+  code: 'CREDIT_FLOOR',
+  message:
+    'Nansen credits are nearly used up, so the trader data cannot be refreshed: mirror orders are paused',
+};
 
 export type MirrorErrorCode =
   | 'TRADING_UNAVAILABLE'
@@ -600,6 +606,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       };
       const failWith = (e: MirrorError) => fail(e.code, e.status, e.message);
 
+      if (d.state.flags.creditFloor) return refuse([CREDIT_FLOOR_REFUSAL]);
       await d.refresher.refresh(rt.id, 'mirror');
       const table = await assets();
       if (!(table instanceof Map)) return failWith(table);

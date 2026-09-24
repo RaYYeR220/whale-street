@@ -46,27 +46,37 @@ export interface Refresher {
 
 /** Reasons allowed to call Nansen while the engine is IDLE. */
 const IDLE_ALLOWED: ReadonlySet<RefreshReason> = new Set(['mirror', 'listing', 'wake']);
+/**
+ * Routine refreshes: the only ones credit-saver moves to Hyperliquid. The Mirror's fresh snapshot
+ * (and a listing) keeps Nansen as its source whatever the credit mode.
+ */
+const ROUTINE: ReadonlySet<RefreshReason> = new Set(['heartbeat', 'trigger', 'wake']);
 
 /** Realized-PnL drift that triggers a RESTATEMENT: max($50, 0.5% of equity). */
 export const restatementThreshold = (equity: number): number =>
   Math.max(50, 0.005 * Math.abs(equity));
 
+const listed = (rt: CompanyRuntime): boolean =>
+  rt.status !== 'BANKRUPT' && rt.status !== 'DELISTED';
+
 export function createRefresher(d: RefreshDeps): Refresher {
   const params = d.params ?? PARAMS;
-  const inflight = new Map<string, Promise<RefreshOutcome>>();
+  /** One refresh per company at a time; `viaHl` = served by Hyperliquid (credit-saver). */
+  const inflight = new Map<string, { p: Promise<RefreshOutcome>; viaHl: boolean }>();
 
-  async function run(rt: CompanyRuntime, reason: RefreshReason): Promise<RefreshOutcome> {
-    const res = await fetchPositions(rt.id, {
-      nansen: d.nansen,
-      info: d.info,
-      creditSaver: d.state.flags.creditSaver,
-    });
+  async function run(
+    rt: CompanyRuntime,
+    reason: RefreshReason,
+    viaHl: boolean,
+  ): Promise<RefreshOutcome> {
+    // A refresh queued behind another one may find the company gone by the time it starts.
+    if (!listed(rt)) return { kind: 'skipped', why: 'not listed' };
+    const res = await fetchPositions(rt.id, { nansen: d.nansen, info: d.info, creditSaver: viaHl });
     if (!res.ok) {
       d.log.warn('refresh failed', { company: rt.ticker, reason, error: res.error });
       return { kind: 'failed', error: res.error };
     }
-    if (rt.status === 'BANKRUPT' || rt.status === 'DELISTED')
-      return { kind: 'skipped', why: 'not listed' };
+    if (!listed(rt)) return { kind: 'skipped', why: 'not listed' };
 
     const now = d.clock.now();
     const prev = rt.nav.snapshot;
@@ -149,14 +159,22 @@ export function createRefresher(d: RefreshDeps): Refresher {
       }
       if (d.state.flags.idle && !IDLE_ALLOWED.has(reason))
         return Promise.resolve({ kind: 'skipped', why: 'idle' });
+      const viaHl = d.state.flags.creditSaver && ROUTINE.has(reason);
       const existing = inflight.get(rt.id);
-      if (existing) return existing;
-      const p = run(rt, reason)
+      // Nansen data serves every reason; a refresh that needs Nansen never rides on a
+      // Hyperliquid one (no silent source switch): it runs its own fetch right after it.
+      if (existing && (viaHl || !existing.viaHl)) return existing.p;
+      const start = existing
+        ? existing.p.then(() => run(rt, reason, viaHl))
+        : run(rt, reason, viaHl);
+      const p: Promise<RefreshOutcome> = start
         .catch((err: unknown): RefreshOutcome => ({ kind: 'failed', error: String(err) }))
-        .finally(() => inflight.delete(rt.id));
-      inflight.set(rt.id, p);
+        .finally(() => {
+          if (inflight.get(rt.id)?.p === p) inflight.delete(rt.id);
+        });
+      inflight.set(rt.id, { p, viaHl });
       return p;
     },
-    pending: () => [...inflight.values()],
+    pending: () => [...inflight.values()].map((f) => f.p),
   };
 }

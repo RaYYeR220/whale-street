@@ -18,7 +18,8 @@ const open = (positions: readonly Position[]): Position[] => positions.filter((p
 
 /**
  * Live positions + equity for an address. Nansen profiler/perp-positions normally;
- * Hyperliquid clearinghouseState (free, same underlying source) in credit-saver mode.
+ * Hyperliquid clearinghouseState (free, same underlying source) when `creditSaver` is set: the
+ * caller decides, since credit-saver moves only routine refreshes to Hyperliquid.
  */
 export async function fetchPositions(
   address: Address,

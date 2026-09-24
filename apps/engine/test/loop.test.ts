@@ -131,6 +131,18 @@ describe('market loop', () => {
     expect(a.status).toBe('ACTIVE');
   });
 
+  it('does not halt on an unresolved trigger while idle (refreshes are skipped then)', () => {
+    const { w, loop } = setup();
+    const a = addCompany(w, { id: A, ticker: 'AAA' });
+    a.pendingTriggerAt = w.clock.now();
+    w.state.flags.idle = true;
+    w.clock.advance(121_000);
+    w.state.setMarks({}, w.clock.now());
+    loop.tick(w.clock.now());
+    expect(a.status).toBe('ACTIVE');
+    expect(w.repos.filings.recent(5)).toEqual([]);
+  });
+
   it('persisted rows round-trip into runtime', () => {
     const { w } = setup();
     const a = addCompany(w, { id: A, ticker: 'AAA', positions: [pos('BTC', 1, 100)] });
