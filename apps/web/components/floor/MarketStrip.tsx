@@ -100,9 +100,13 @@ export function MarketStrip({
           <span className="ws-num" title={portfolio?.netWorthReason ?? undefined}>
             {usd(nw)}
           </span>
-          <small className={upDown(nw === null ? null : nw - PARAMS.seasonStartCash)}>
-            {pct(nw === null ? null : nw / PARAMS.seasonStartCash - 1)} season
-          </small>
+          {nw === null && portfolio?.netWorthReason ? (
+            <small className="ws-v-muted">{portfolio.netWorthReason}</small>
+          ) : (
+            <small className={upDown(nw === null ? null : nw - PARAMS.seasonStartCash)}>
+              {pct(nw === null ? null : nw / PARAMS.seasonStartCash - 1)} season
+            </small>
+          )}
           <small className="ws-v-muted">{rank !== null ? `rank ${rank}` : 'unranked'}</small>
         </span>
       </div>

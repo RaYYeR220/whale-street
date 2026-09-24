@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCompanyViews, useEngineNow } from '../providers/engine';
+import type { MarketEntry } from '../../lib/api-types';
+import { openIpoCount } from '../../lib/company';
+import { useCompanyViews, useEngine, useEngineNow } from '../providers/engine';
 import { ModeBadge } from './ModeBadge';
 import { PlayerChip } from './PlayerChip';
 import { SeasonClock } from './SeasonClock';
@@ -22,11 +24,14 @@ export function isCurrent(pathname: string, href: string): boolean {
   );
 }
 
+const NO_ENTRIES: Readonly<Record<string, MarketEntry>> = {};
+
 function IpoPip() {
   const views = useCompanyViews();
+  const live = useEngine((s) => s.market?.byTicker ?? NO_ENTRIES);
   const now = useEngineNow();
-  if (now === null) return null;
-  const open = Object.values(views).filter((v) => v.status === 'ACTIVE' && now < v.ipoUntil).length;
+  // The floor's own rule, so the pip never disagrees with the IPO panels.
+  const open = openIpoCount(views, live, now);
   if (open === 0) return null;
   return (
     <span className="ws-nav__pip" role="img" aria-label={`${open} IPO open`}>

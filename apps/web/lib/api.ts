@@ -99,6 +99,9 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
       });
     } catch (err) {
       const timedOut = timeout.aborted;
+      // The caller gave up (a stale quote, an unmounted view): not an engine or network failure.
+      if (!timedOut && o.signal?.aborted)
+        return { ok: false, status: 0, error: 'CANCELLED', message: 'request cancelled' };
       return {
         ok: false,
         status: 0,

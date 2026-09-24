@@ -15,12 +15,28 @@ import { Portrait } from '../ink/Portrait';
 import { useChannels, useEngine, useEngineNow, useEngineRuntime } from '../providers/engine';
 import { usePlayer } from '../providers/player';
 
-interface Row {
+export interface BoardRow {
   rank: number | null;
   handle: string;
   kind: PlayerKind;
   netWorth: number | null;
   you: boolean;
+}
+type Row = BoardRow;
+export type BoardFilter = 'all' | 'human' | 'machine';
+
+/**
+ * The podium (the top three) and the list under it. The list never repeats a podium row; a
+ * filter narrows it to humans or machines, and the player's own row always stays in view.
+ */
+export function splitBoard<R extends BoardRow>(
+  rows: readonly R[],
+  filter: BoardFilter,
+): { top: R[]; list: R[] } {
+  const top = rows.slice(0, 3);
+  const keep = (r: R) =>
+    r.you || filter === 'all' || (filter === 'human' ? r.kind === 'human' : r.kind !== 'human');
+  return { top, list: rows.filter((r) => !top.includes(r) && keep(r)) };
 }
 
 const ret = (nw: number | null) => (nw === null ? null : nw / PARAMS.seasonStartCash - 1);
@@ -133,7 +149,7 @@ export function BoardView({
   const current = seasons.find((s) => s.status === 'ACTIVE') ?? seasons[0] ?? null;
   const [seasonId, setSeasonId] = useState<number | null>(current?.id ?? null);
   const [closed, setClosed] = useState<SeasonResultView[] | null>(null);
-  const [filter, setFilter] = useState<'all' | 'human' | 'machine'>('all');
+  const [filter, setFilter] = useState<BoardFilter>('all');
   const [rising, setRising] = useState(true);
   const season = seasons.find((s) => s.id === seasonId) ?? current;
   // Without a season list (the request failed) the standings shown are the live ones.
@@ -165,12 +181,8 @@ export function BoardView({
   }, [live, closed, liveRows, initialRows, player]);
 
   const me = rows.find((r) => r.you) ?? null;
-  const top = rows.slice(0, 3);
+  const { top, list } = splitBoard(rows, filter);
   const ahead = me?.rank ? rows.find((r) => r.rank === (me.rank as number) - 1) : null;
-  const keep = (r: Row) =>
-    r.you || filter === 'all' || (filter === 'human' ? r.kind === 'human' : r.kind !== 'human');
-  // "Everyone" lists the rows under the podium; the filtered views list every matching row.
-  const list = rows.filter(keep).filter((r) => filter !== 'all' || !top.includes(r));
   const maxRet = Math.max(0.0001, ...rows.map((r) => ret(r.netWorth) ?? 0));
   const machines = top.filter((r) => r.kind !== 'human').length;
   const podiumNote =
@@ -354,7 +366,11 @@ export function BoardView({
       <section className="bd-standings" aria-labelledby="list-h">
         <div className="bd-standings__head">
           <h2 className="bd-h2" id="list-h">
-            {filter === 'all' ? 'Everyone else' : filter === 'human' ? 'Humans' : 'Bots and agents'}
+            {filter === 'all'
+              ? 'Everyone else'
+              : filter === 'human'
+                ? 'Other humans'
+                : 'Other bots and agents'}
           </h2>
           <fieldset className="bd-filter" aria-label="Show">
             {(

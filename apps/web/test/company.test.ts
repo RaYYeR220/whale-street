@@ -5,6 +5,7 @@ import {
   headline,
   liqDistance,
   notional,
+  openIpoCount,
   portraitStatus,
   toDisplay,
   unrealized,
@@ -152,5 +153,21 @@ describe('error wording', () => {
     expect(orderErrorText('INSUFFICIENT_CASH', 'x')).toBe('Not enough cash.');
     expect(orderErrorText('SOMETHING_NEW', 'engine says so')).toBe('engine says so');
     expect(ipoErrorText('RATE_LIMITED', 'x')).toMatch(/3 applications an hour/);
+  });
+});
+
+describe('open IPOs', () => {
+  it('counts them with the same rule as the floor, live status first', () => {
+    const views = {
+      OOH: companyView({ ticker: 'OOH', ipoUntil: T0 + 30_000 }),
+      HLT: companyView({ ticker: 'HLT', ipoUntil: T0 + 30_000 }),
+      OLD: companyView({ ticker: 'OLD', ipoUntil: T0 - 1 }),
+    };
+    // The live feed says HLT halted after its REST view was read: the floor shows it halted.
+    const byTicker = { HLT: entry({ ticker: 'HLT', status: 'HALTED' }) };
+    expect(toDisplay(byTicker.HLT, views.HLT, undefined, T0)?.display).toBe('halted');
+    expect(openIpoCount(views, byTicker, T0)).toBe(1);
+    expect(openIpoCount(views, {}, T0)).toBe(2);
+    expect(openIpoCount(views, byTicker, null)).toBe(0);
   });
 });

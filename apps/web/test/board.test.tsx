@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { BoardView } from '../components/board/BoardView';
+import { BoardView, splitBoard } from '../components/board/BoardView';
 import { ProfileView } from '../components/profile/ProfileView';
 import type { LeaderboardEntry } from '../lib/api-types';
 import { portfolio, T0 } from './helpers';
@@ -94,5 +94,26 @@ describe('player profile', () => {
     expect(html).toContain('Velvet Anchovy #412');
     expect(html).toContain('Net worth is hidden: QLP has no live price.');
     expect(html).toContain('No holdings this season.');
+  });
+});
+
+describe('the list under the podium', () => {
+  const rows = [
+    { rank: 1, handle: 'Ada', kind: 'human', netWorth: 10_400, you: false },
+    { rank: 2, handle: 'Vulture Fund', kind: 'bot', netWorth: 10_300, you: false },
+    { rank: 3, handle: 'Me', kind: 'human', netWorth: 10_200, you: true },
+    { rank: 4, handle: 'Bea', kind: 'human', netWorth: 10_100, you: false },
+    { rank: 5, handle: 'Deep Kelp', kind: 'agent', netWorth: 10_000, you: false },
+  ] as const;
+
+  it('never repeats a podium row, whatever the filter', () => {
+    for (const filter of ['all', 'human', 'machine'] as const) {
+      const { top, list } = splitBoard([...rows], filter);
+      expect(top.map((r) => r.handle)).toEqual(['Ada', 'Vulture Fund', 'Me']);
+      expect(list.filter((r) => top.includes(r))).toEqual([]);
+    }
+    expect(splitBoard([...rows], 'human').list.map((r) => r.handle)).toEqual(['Bea']);
+    expect(splitBoard([...rows], 'machine').list.map((r) => r.handle)).toEqual(['Deep Kelp']);
+    expect(splitBoard([...rows], 'all').list.map((r) => r.handle)).toEqual(['Bea', 'Deep Kelp']);
   });
 });

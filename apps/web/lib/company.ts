@@ -98,6 +98,18 @@ export function displayStatus(
   return 'active';
 }
 
+/** Companies whose IPO window is open now, by the floor's rule (live status before the REST view's). */
+export function openIpoCount(
+  views: Readonly<Record<string, CompanyView>>,
+  live: Readonly<Record<string, MarketEntry>>,
+  now: number | null,
+): number {
+  if (now === null) return 0;
+  return Object.values(views).filter(
+    (v) => displayStatus(live[v.ticker]?.status ?? v.status, v.ipoUntil, now) === 'ipo',
+  ).length;
+}
+
 export function portraitStatus(d: DisplayStatus): PortraitStatus {
   if (d === 'delisted' || d === 'bankrupt') return 'bankrupt';
   if (d === 'halted') return 'halted';

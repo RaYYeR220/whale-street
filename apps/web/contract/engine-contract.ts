@@ -8,6 +8,14 @@ import type {
   ClientMessage as EClient,
   ServerMessage as EServer,
 } from '../../engine/src/api/protocol';
+import type {
+  NansenCallRow as ECall,
+  NavPointRow as ENavPoint,
+  PlayerRow as EPlayerRow,
+  SeasonRow as ESeason,
+  SeasonResultRow as ESeasonResult,
+  TradeRow as ETrade,
+} from '../../engine/src/db/repos';
 import type { StatusView as EStatus } from '../../engine/src/engine';
 import type {
   FilingView as EFiling,
@@ -31,12 +39,27 @@ import type {
   PrepareResult as EPrepare,
   MirrorReceipt as EReceipt,
   MirrorStep as EStep,
+  MirrorService,
 } from '../../engine/src/services/mirror';
 import type { PlayerView as EPlayer } from '../../engine/src/services/players';
 import type * as W from '../lib/api-types';
 
 /** Compiles only when `Engine` is assignable to `Web`. */
 type Accepts<Web, Engine extends Web> = [Web, Engine];
+
+/** GET /api/mirror/builder-fee answers with the status MirrorService.builderStatus resolves to. */
+type EBuilderFee = Extract<
+  Awaited<ReturnType<MirrorService['builderStatus']>>,
+  { ok: true }
+>['status'];
+/** The shapes api/rest.ts assembles inline from repository rows. */
+// GET /api/companies/:ticker/history → points.map(({ t, nav, price }) => ({ t, nav, price }))
+type EHistoryPoint = Pick<ENavPoint, 't' | 'nav' | 'price'>;
+// GET /api/players/:handle → trades.map((t) => ({ ...t, ticker }))
+type ETradeView = ETrade & { ticker: string };
+// GET /api/seasons/:id → results.map((r) => ({ rank, netWorth, handle, kind }))
+type ESeasonResultView = Pick<ESeasonResult, 'rank' | 'netWorth'> &
+  Pick<EPlayerRow, 'handle' | 'kind'>;
 
 export type EngineToWeb = [
   Accepts<W.StatusView, EStatus>,
@@ -57,6 +80,13 @@ export type EngineToWeb = [
   Accepts<W.MirrorStep, EStep>,
   Accepts<W.MirrorReceipt, EReceipt>,
   Accepts<W.MirrorOrderView, EMirrorOrder>,
+  Accepts<W.BuilderFeeStatus, EBuilderFee>,
+  Accepts<W.SeasonRow, ESeason>,
+  Accepts<W.SeasonResultRow, ESeasonResult>,
+  Accepts<W.SeasonResultView, ESeasonResultView>,
+  Accepts<W.TradeRowView, ETradeView>,
+  Accepts<W.NansenCallView, ECall>,
+  Accepts<W.HistoryPoint, EHistoryPoint>,
 ];
 
 export type WebToEngine = [Accepts<EClient, W.ClientMessage>];

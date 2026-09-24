@@ -4,12 +4,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Banners } from '../components/chrome/Banners';
 import { EngineOffline } from '../components/chrome/EngineOffline';
 import { ModeBadge } from '../components/chrome/ModeBadge';
+import { PlayerChip } from '../components/chrome/PlayerChip';
 import { isCurrent, NAV } from '../components/chrome/TopBar';
 import { EngineProvider, type EngineRuntime } from '../components/providers/engine';
 import { createApi } from '../lib/api';
 import { createEngineStore } from '../lib/store';
 import { EngineSocket } from '../lib/ws-client';
-import { FakeSocket, fakeFetch, status } from './helpers';
+import { FakeSocket, fakeFetch, json, portfolio, status } from './helpers';
+import { testRuntime, Wrap } from './render';
 
 function runtime(): EngineRuntime {
   return {
@@ -109,5 +111,30 @@ describe('navigation', () => {
     expect(isCurrent('/c/OOH', '/floor')).toBe(true);
     expect(isCurrent('/ipo/abc', '/ipo')).toBe(true);
     expect(isCurrent('/ipox', '/ipo')).toBe(false);
+  });
+});
+
+describe('player chip', () => {
+  it('says why the net worth is hidden, in visible text as well as the label', async () => {
+    const player = { id: 'p1', handle: 'Tester', kind: 'human', walletAddress: null, createdAt: 0 };
+    const rt = testRuntime({
+      'POST /api/players': () => json({ player, token: 'tok' }),
+      'GET /api/me': () =>
+        json({
+          player,
+          portfolio: portfolio({ netWorth: null, netWorthReason: 'missing live price for OOH' }),
+          seasons: [],
+        }),
+    });
+    render(
+      <Wrap runtime={rt}>
+        <PlayerChip />
+      </Wrap>,
+    );
+    const chip = await screen.findByRole('button', { name: /^Your desk: Tester/ });
+    expect(chip.textContent).toContain('—');
+    expect(screen.getByText(/missing live price for OOH/)).toBeTruthy();
+    expect(chip.getAttribute('aria-label')).toMatch(/net worth — \(missing live price for OOH\)/);
+    localStorage.clear();
   });
 });

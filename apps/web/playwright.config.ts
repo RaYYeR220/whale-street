@@ -1,15 +1,13 @@
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { e2eDataDir } from './e2e/data-dir';
 import { ENGINE_PORT, ENGINE_URL, WEB_PORT, WEB_URL } from './e2e/env';
 
 /**
  * End-to-end suite against a real engine in REPLAY (no Nansen key: the bundled recording or the
  * labelled synthetic session) and a production build of the web app, on their own ports. Each run
- * starts from an empty engine database.
+ * starts from an empty engine database, in a temporary directory removed when the run ends.
  */
-const dataDir = mkdtempSync(join(tmpdir(), 'ws-e2e-'));
+const dataDir = e2eDataDir();
 
 export default defineConfig({
   testDir: './e2e',

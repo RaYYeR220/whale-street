@@ -78,6 +78,17 @@ describe('engine API client', () => {
     expect(r).toMatchObject({ ok: false, status: 0, error: 'TIMEOUT' });
   });
 
+  it('reports a request its caller cancelled as CANCELLED, not as a network failure', async () => {
+    const hanging = ((_: unknown, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      })) as typeof fetch;
+    const ctl = new AbortController();
+    const pending = createApi(BASE, hanging).quote('OOH', 'BUY', 1, ctl.signal);
+    ctl.abort();
+    expect(await pending).toMatchObject({ ok: false, status: 0, error: 'CANCELLED' });
+  });
+
   it('posts the agent signature to execute, with a 30 s budget', async () => {
     const f = fakeFetch({ 'POST /api/mirror/execute': () => json({ status: 'FILLED' }) });
     await createApi(BASE, f.impl).mirrorExecute('tok', 'step-1', { r: '0x1', s: '0x2', v: 27 });

@@ -9,9 +9,11 @@ import { useDrawer } from './Drawer';
 export function PlayerChip() {
   const { status, player, portfolio, rank } = usePlayer();
   const { open } = useDrawer();
+  // When net worth is unknown, say why in words (not only in a hover tooltip).
+  const why = portfolio && portfolio.netWorth === null ? portfolio.netWorthReason : null;
   const label =
     status === 'ready' && player
-      ? `Your desk: ${player.handle}, net worth ${usd(portfolio?.netWorth)}${rank !== null ? `, rank ${rank}` : ''}`
+      ? `Your desk: ${player.handle}, net worth ${usd(portfolio?.netWorth)}${why ? ` (${why})` : ''}${rank !== null ? `, rank ${rank}` : ''}`
       : 'Your desk';
   return (
     <button
@@ -26,8 +28,9 @@ export function PlayerChip() {
       </span>
       <span className="ws-player__t">
         <b>{player?.handle ?? (status === 'offline' ? 'Offline' : 'Signing in…')}</b>
-        <span title={portfolio?.netWorthReason ?? undefined}>
+        <span title={why ?? undefined}>
           {usd(portfolio?.netWorth)}
+          {why ? <span className="ws-player__rank">, {why}</span> : null}
           {rank !== null ? <span className="ws-player__rank">, rank {rank}</span> : null}
         </span>
       </span>
