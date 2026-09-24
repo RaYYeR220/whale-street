@@ -175,6 +175,8 @@ export const mirrorOrders = sqliteTable('mirror_orders', {
   error: text('error'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
+  /** The Hyperliquid master wallet the attempt was made for; caps are counted per wallet. */
+  masterAddress: text('master_address'),
 });
 
 export const agentKeys = sqliteTable('agent_keys', {

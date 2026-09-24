@@ -191,7 +191,13 @@ export function createPlayersService(d: { repos: Repos; clock: Clock }): Players
       }
       if (!valid)
         return { ok: false, code: 'BAD_SIGNATURE', message: 'signature does not match the wallet' };
-      d.repos.players.setWallet(playerId, address.toLowerCase());
+      const wallet = address.toLowerCase();
+      d.repos.tx(() => {
+        // A different wallet invalidates the mirror agent key: it must be re-approved for the new one.
+        if (d.repos.players.get(playerId)?.walletAddress?.toLowerCase() !== wallet)
+          d.repos.agentKeys.remove(playerId);
+        d.repos.players.setWallet(playerId, wallet);
+      });
       const p = d.repos.players.get(playerId);
       if (!p) return { ok: false, code: 'BAD_SIGNATURE', message: 'unknown player' };
       return { ok: true, player: playerView(p) };

@@ -31,7 +31,7 @@ import {
 import type { Clock } from '../clock';
 import type { Config } from '../config';
 import { DAY_MS, HOUR_MS } from '../dates';
-import type { MirrorOrderRow, Repos } from '../db/repos';
+import type { AgentKeyRow, MirrorOrderRow, Repos } from '../db/repos';
 import { explorerUrl } from '../events';
 import type { Refresher } from '../ingest/refresh';
 import type { Logger } from '../log';
@@ -66,6 +66,7 @@ export type MirrorErrorCode =
   | 'TRADING_UNAVAILABLE'
   | 'REGION_BLOCKED'
   | 'NO_WALLET'
+  | 'WALLET_IN_USE'
   | 'NO_AGENT'
   | 'UNKNOWN_TICKER'
   | 'INVALID_ADDRESS'
@@ -320,14 +321,25 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     return r.value.positions.find((p) => p.coin === coin)?.size ?? 0;
   };
 
+  /** The player's agent key, but only while the player's linked wallet is still its master. */
+  const boundAgent = (playerId: string): AgentKeyRow | MirrorError => {
+    const agent = d.repos.agentKeys.get(playerId);
+    if (!agent) return err(409, 'NO_AGENT', 'approve a Whale Street agent key first');
+    const wallet = d.repos.players.get(playerId)?.walletAddress?.toLowerCase();
+    if (!wallet || wallet !== agent.masterAddress.toLowerCase())
+      return err(403, 'NO_WALLET', 'your linked wallet changed; approve an agent key for it first');
+    return agent;
+  };
+
+  /** Caps are counted per master wallet (the real-money identity), whichever player placed them. */
   const context = (
     rt: CompanyRuntime,
     coin: string,
-    playerId: string,
+    master: string,
     supported: boolean,
   ): MirrorContext => {
     const now = d.clock.now();
-    const recent = d.repos.mirrorOrders.ordersSince(playerId, now - DAY_MS);
+    const recent = d.repos.mirrorOrders.ordersByMaster(master, now - DAY_MS);
     const live = recent.filter((o) => OPEN_STATUSES.has(o.status));
     return {
       companyStatus: rt.status,
@@ -343,6 +355,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
 
   const row = (o: {
     playerId: string;
+    master: string;
     rt: CompanyRuntime;
     coin: string;
     kind: MirrorKind;
@@ -374,24 +387,29 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       error: null,
       createdAt: now,
       updatedAt: now,
+      masterAddress: o.master,
     };
   };
 
-  const view = (o: MirrorOrderRow, master: string | null): MirrorOrderView => ({
-    id: o.id,
-    groupId: o.groupId,
-    kind: o.kind,
-    ticker: d.state.get(o.companyId)?.ticker ?? '?',
-    coin: o.coin,
-    status: o.status,
-    notionalUsd: o.notionalUsd,
-    refusals: o.refusals,
-    hlOid: o.hlOid,
-    avgPx: o.avgPx,
-    error: o.error,
-    createdAt: o.createdAt,
-    explorerUrl: master ? explorerUrl(master) : null,
-  });
+  /** `master` is the fallback wallet for rows written before master_address existed. */
+  const view = (o: MirrorOrderRow, master: string | null): MirrorOrderView => {
+    const wallet = o.masterAddress ?? master;
+    return {
+      id: o.id,
+      groupId: o.groupId,
+      kind: o.kind,
+      ticker: d.state.get(o.companyId)?.ticker ?? '?',
+      coin: o.coin,
+      status: o.status,
+      notionalUsd: o.notionalUsd,
+      refusals: o.refusals,
+      hlOid: o.hlOid,
+      avgPx: o.avgPx,
+      error: o.error,
+      createdAt: o.createdAt,
+      explorerUrl: wallet ? explorerUrl(wallet) : null,
+    };
+  };
 
   return {
     available,
@@ -414,12 +432,16 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       if (!isAddress(masterAddress) || !isAddress(agentAddress))
         return err(400, 'INVALID_ADDRESS', 'invalid address');
       const player = d.repos.players.get(playerId);
-      if (!player?.walletAddress || player.walletAddress !== masterAddress.toLowerCase()) {
+      const master = masterAddress.toLowerCase();
+      if (player?.walletAddress?.toLowerCase() !== master) {
         return err(403, 'NO_WALLET', 'link this wallet to your player first');
       }
+      // One agent key per master wallet: otherwise players sharing a wallet multiply its caps.
+      if (d.repos.agentKeys.byMaster(master).some((k) => k.playerId !== playerId))
+        return err(409, 'WALLET_IN_USE', 'this wallet already trades through another player');
       d.repos.agentKeys.upsert({
         playerId,
-        masterAddress: masterAddress.toLowerCase(),
+        masterAddress: master,
         agentAddress: agentAddress.toLowerCase(),
         registeredAt: d.clock.now(),
       });
@@ -430,8 +452,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const trading = d.trading;
       if (!available() || !trading)
         return err(503, 'TRADING_UNAVAILABLE', 'mirror trading is disabled in this mode');
-      const agent = d.repos.agentKeys.get(playerId);
-      if (!agent) return err(409, 'NO_AGENT', 'approve a Whale Street agent key first');
+      const agent = boundAgent(playerId);
+      if ('ok' in agent) return agent;
       const rt = d.state.byTicker(req.ticker);
       if (!rt) return err(404, 'UNKNOWN_TICKER', 'no such ticker');
       const master = agent.masterAddress as Address;
@@ -447,7 +469,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           leverage: req.leverage,
           stopLossPct: req.stopLossPct,
         },
-        context(rt, req.coin, playerId, asset !== null),
+        context(rt, req.coin, master, asset !== null),
         params,
       );
       const groupId = `mg_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
@@ -456,6 +478,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         const refusals = decision.allow ? [] : decision.refusals;
         const r = row({
           playerId,
+          master,
           rt,
           coin: req.coin,
           kind: 'order',
@@ -474,6 +497,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const fail = (code: MirrorErrorCode, status: number, message: string) => {
         const r = row({
           playerId,
+          master,
           rt,
           coin: req.coin,
           kind: 'order',
@@ -517,6 +541,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const levRow: MirrorOrderRow = {
         ...row({
           playerId,
+          master,
           rt,
           coin: req.coin,
           kind: 'leverage',
@@ -534,6 +559,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const orderRow: MirrorOrderRow = {
         ...row({
           playerId,
+          master,
           rt,
           coin: req.coin,
           kind: 'order',
@@ -572,8 +598,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       if (pre.status !== 'PREPARED' || !pre.action || !pre.eip712 || pre.nonce === null) {
         return err(409, 'BAD_STATE', `step is ${pre.status.toLowerCase()}`);
       }
-      const agent = d.repos.agentKeys.get(playerId);
-      if (!agent) return err(409, 'NO_AGENT', 'approve a Whale Street agent key first');
+      const agent = boundAgent(playerId);
+      if ('ok' in agent) return agent;
 
       // The signature must recover (over the EIP-712 payload stored at prepare) to the approved agent.
       let wire: Signature;
@@ -599,8 +625,12 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const step = d.repos.mirrorOrders.get(stepId);
       if (step?.status !== 'PREPARED' || !step.action || step.nonce === null)
         return err(409, 'BAD_STATE', `step is ${(step?.status ?? 'gone').toLowerCase()}`);
-      if (d.repos.agentKeys.get(playerId)?.agentAddress !== agent.agentAddress)
+      const bound = boundAgent(playerId);
+      if ('ok' in bound) return bound;
+      if (bound.agentAddress !== agent.agentAddress || bound.masterAddress !== agent.masterAddress)
         return err(401, 'BAD_SIGNATURE', 'agent key changed; sign again');
+      if (step.masterAddress !== bound.masterAddress)
+        return err(403, 'NO_WALLET', 'this step was prepared for another wallet');
       const now = d.clock.now();
       if (now - step.createdAt > STEP_TTL_MS) {
         d.repos.mirrorOrders.update(step.id, {
@@ -628,7 +658,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
             leverage: req.leverage,
             stopLossPct: req.stopLossPct,
           },
-          context(rt, step.coin, playerId, true),
+          context(rt, step.coin, bound.masterAddress, true),
           params,
         );
         if (!again.allow) {
@@ -732,17 +762,22 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
 
     async reconcile(playerId) {
       if (!info) return;
+      // Never read (or trade on the evidence of) a wallet the player no longer has linked.
+      const agent = boundAgent(playerId);
+      if ('ok' in agent) return;
+      const master = agent.masterAddress;
       const now = d.clock.now();
-      const recent = d.repos.mirrorOrders.ordersSince(playerId, now - DAY_MS);
+      const recent = d.repos.mirrorOrders.ordersByMaster(master, now - DAY_MS);
       const candidates = recent.filter(
-        (o) => RECONCILABLE.has(o.status) && now - o.updatedAt >= RECONCILE_MIN_AGE_MS,
+        (o) =>
+          o.playerId === playerId &&
+          RECONCILABLE.has(o.status) &&
+          now - o.updatedAt >= RECONCILE_MIN_AGE_MS,
       );
       if (candidates.length === 0) return;
       if (now - (lastReconcile.get(playerId) ?? Number.NEGATIVE_INFINITY) < RECONCILE_INTERVAL_MS)
         return;
       lastReconcile.set(playerId, now);
-      const master = d.repos.agentKeys.get(playerId)?.masterAddress;
-      if (!master) return;
       const st = await info.clearinghouse(master as Address);
       if (!st.ok) {
         d.log.warn('mirror reconcile: hyperliquid read failed', { error: st.error });

@@ -49,6 +49,29 @@ describe('players', () => {
     });
   });
 
+  it('drops the mirror agent key when a different wallet is linked (re-linking the same keeps it)', async () => {
+    const { repos, players, clock } = setup();
+    const { player } = players.create('human');
+    const a = privateKeyToAccount(generatePrivateKey());
+    const b = privateKeyToAccount(generatePrivateKey());
+    const link = async (account: typeof a) => {
+      const nonce = players.nonce(player.id);
+      const sig = await account.signMessage({ message: linkMessage(account.address, nonce) });
+      return players.link(player.id, account.address, sig);
+    };
+    expect(await link(a)).toMatchObject({ ok: true });
+    repos.agentKeys.upsert({
+      playerId: player.id,
+      masterAddress: a.address.toLowerCase(),
+      agentAddress: '0x00000000000000000000000000000000000000ee',
+      registeredAt: clock.now(),
+    });
+    expect(await link(a)).toMatchObject({ ok: true });
+    expect(repos.agentKeys.get(player.id)).toBeDefined();
+    expect(await link(b)).toMatchObject({ ok: true });
+    expect(repos.agentKeys.get(player.id)).toBeUndefined();
+  });
+
   it('rejects signatures from another key, expired nonces and bad addresses', async () => {
     const { players, clock } = setup();
     const { player } = players.create('human');

@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+
 /** Hand-written schema, executed at every boot (idempotent). Money columns are REAL (play-USD). */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS companies (
@@ -147,7 +149,8 @@ CREATE TABLE IF NOT EXISTS mirror_orders (
   avg_px REAL,
   error TEXT,
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  master_address TEXT
 );
 CREATE TABLE IF NOT EXISTS agent_keys (
   player_id TEXT PRIMARY KEY,
@@ -160,3 +163,21 @@ CREATE TABLE IF NOT EXISTS kv (
   value TEXT NOT NULL
 );
 `;
+
+/** Adds `column` to `table` (as `ALTER TABLE … ADD COLUMN column ddl`) unless it already exists. */
+export function ensureColumn(
+  sqlite: Database.Database,
+  table: string,
+  column: string,
+  ddl: string,
+): void {
+  const columns = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === column))
+    sqlite.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+}
+
+/** Creates missing tables, then adds columns introduced after a table was first created. */
+export function migrate(sqlite: Database.Database): void {
+  sqlite.exec(SCHEMA_SQL);
+  ensureColumn(sqlite, 'mirror_orders', 'master_address', 'TEXT');
+}

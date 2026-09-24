@@ -1,8 +1,9 @@
+import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { describe, expect, it } from 'vitest';
 import { openDb } from '../src/db/index';
 import { companies, kv } from '../src/db/schema';
-import { SCHEMA_SQL } from '../src/db/sql';
+import { ensureColumn, migrate, SCHEMA_SQL } from '../src/db/sql';
 
 const TABLES = [
   'agent_keys',
@@ -76,6 +77,41 @@ describe('openDb', () => {
     expect(row?.navState.state.nav).toBe(100);
     expect(row?.navState.firstSnapshot.provenance).toEqual(['c1']);
     expect(row?.prospectus).toBeNull();
+    close();
+  });
+
+  it('upgrades an existing mirror_orders table with master_address (idempotent)', () => {
+    const sqlite = new Database(':memory:');
+    // A pre-upgrade table: everything the old schema had, but no master_address column.
+    sqlite.exec(
+      'CREATE TABLE mirror_orders (id TEXT PRIMARY KEY, player_id TEXT NOT NULL, status TEXT NOT NULL)',
+    );
+    sqlite
+      .prepare("INSERT INTO mirror_orders (id, player_id, status) VALUES ('m1', 'p1', 'FILLED')")
+      .run();
+    const columns = () =>
+      (sqlite.prepare('PRAGMA table_info(mirror_orders)').all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      );
+    expect(columns()).not.toContain('master_address');
+    migrate(sqlite);
+    migrate(sqlite);
+    expect(columns()).toContain('master_address');
+    expect(
+      sqlite.prepare("SELECT master_address FROM mirror_orders WHERE id = 'm1'").get(),
+    ).toEqual({
+      master_address: null,
+    });
+    expect(() => ensureColumn(sqlite, 'mirror_orders', 'master_address', 'TEXT')).not.toThrow();
+    sqlite.close();
+  });
+
+  it('creates mirror_orders with master_address on a fresh database', () => {
+    const { sqlite, close } = openDb(':memory:');
+    const cols = (
+      sqlite.prepare('PRAGMA table_info(mirror_orders)').all() as Array<{ name: string }>
+    ).map((c) => c.name);
+    expect(cols).toContain('master_address');
     close();
   });
 });

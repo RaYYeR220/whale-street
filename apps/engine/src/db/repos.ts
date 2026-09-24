@@ -116,10 +116,14 @@ export interface Repos {
     byGroup(groupId: string): MirrorOrderRow[];
     byPlayer(playerId: string, limit: number): MirrorOrderRow[];
     ordersSince(playerId: string, since: number): MirrorOrderRow[];
+    /** Order-kind rows placed for a master wallet (any player) since `since`. */
+    ordersByMaster(masterAddress: string, since: number): MirrorOrderRow[];
   };
   agentKeys: {
     upsert(row: AgentKeyRow): void;
     get(playerId: string): AgentKeyRow | undefined;
+    byMaster(masterAddress: string): AgentKeyRow[];
+    remove(playerId: string): void;
   };
   kv: {
     get(key: string): string | undefined;
@@ -468,6 +472,18 @@ export function createRepos({ sqlite, db }: Db): Repos {
             ),
           )
           .all(),
+      ordersByMaster: (masterAddress, since) =>
+        db
+          .select()
+          .from(mirrorOrders)
+          .where(
+            and(
+              eq(mirrorOrders.masterAddress, masterAddress),
+              eq(mirrorOrders.kind, 'order'),
+              gte(mirrorOrders.createdAt, since),
+            ),
+          )
+          .all(),
     },
 
     agentKeys: {
@@ -478,6 +494,11 @@ export function createRepos({ sqlite, db }: Db): Repos {
           .run();
       },
       get: (playerId) => db.select().from(agentKeys).where(eq(agentKeys.playerId, playerId)).get(),
+      byMaster: (masterAddress) =>
+        db.select().from(agentKeys).where(eq(agentKeys.masterAddress, masterAddress)).all(),
+      remove: (playerId) => {
+        db.delete(agentKeys).where(eq(agentKeys.playerId, playerId)).run();
+      },
     },
 
     kv: {

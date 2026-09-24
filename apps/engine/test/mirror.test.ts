@@ -4,6 +4,7 @@ import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Engine } from '../src/engine';
 import { validateLeverageAction, validateOrderAction } from '../src/services/mirror';
+import { linkMessage } from '../src/services/players';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { FakeTrading, NANSEN_BUILDER } from './helpers/fake-trading';
 import { addCompany, pos } from './helpers/world';
@@ -430,6 +431,107 @@ describe('mirror', () => {
     const byId = new Map(e.mirror.orders(player.id).map((o) => [o.id, o.status]));
     expect(byId.get(first.ord.stepId)).toBe('UNKNOWN');
     expect(byId.get(retry.ord.stepId)).toBe('FILLED');
+  });
+
+  it('refuses prepare with NO_WALLET once the linked wallet no longer matches the agent master', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const other = privateKeyToAccount(generatePrivateKey());
+    e.repos.players.setWallet(player.id, other.address.toLowerCase());
+    expect(
+      await e.mirror.prepare(player.id, {
+        ticker: 'HYP',
+        coin: 'HYPE',
+        notionalUsd: 50,
+        leverage: 3,
+      }),
+    ).toMatchObject({ ok: false, code: 'NO_WALLET', status: 403 });
+    expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+  });
+
+  it('re-checks the linked wallet inside the execute critical section', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const { lev } = await prepareSteps(e, player.id);
+    const sig = await sign(agent, lev.eip712);
+    const other = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
+    // The wallet changes while the signature is being verified (after the early checks ran).
+    const pending = e.mirror.execute(player.id, lev.stepId, sig);
+    e.repos.players.setWallet(player.id, other);
+    expect(await pending).toMatchObject({ ok: false, code: 'NO_WALLET', status: 403 });
+    expect(await e.mirror.execute(player.id, lev.stepId, sig)).toMatchObject({ code: 'NO_WALLET' });
+    expect(trading.calls.filter((c) => c.method === 'execute')).toEqual([]);
+  });
+
+  it('does not reconcile against a master wallet the player no longer has linked', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const { lev, ord } = await prepareSteps(e, player.id);
+    await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
+    trading.executeFail = { status: null, error: 'timeout' };
+    await e.mirror.execute(player.id, ord.stepId, await sign(agent, ord.eip712));
+    trading.executeFail = null;
+    const wallet = master.address.toLowerCase();
+    t.info.states.set(wallet, {
+      positions: [pos('HYPE', 1.22, 41.05, null, 3)],
+      accountValue: 500,
+      time: null,
+    });
+    e.repos.players.setWallet(player.id, privateKeyToAccount(generatePrivateKey()).address);
+    const before = t.info.calls.length;
+    t.clock.advance(31_000);
+    await e.mirror.reconcile(player.id);
+    expect(t.info.calls.slice(before)).not.toContain(`clearinghouse:${wallet}`);
+    expect(e.repos.mirrorOrders.get(ord.stepId)?.status).toBe('UNKNOWN');
+  });
+
+  it('refuses an agent for a master wallet another player already registered (WALLET_IN_USE)', async () => {
+    const { e, master, agent, player } = await setup();
+    expect(e.mirror.registerAgent(player.id, master.address, agent.address)).toEqual({ ok: true });
+    const b = e.players.create('human');
+    e.repos.players.setWallet(b.player.id, master.address.toLowerCase());
+    const agentB = privateKeyToAccount(generatePrivateKey());
+    expect(e.mirror.registerAgent(b.player.id, master.address, agentB.address)).toMatchObject({
+      ok: false,
+      status: 409,
+      code: 'WALLET_IN_USE',
+    });
+    // The owner may still rotate its own agent key.
+    expect(e.mirror.registerAgent(player.id, master.address, agentB.address)).toEqual({ ok: true });
+  });
+
+  it('counts the open and daily caps per master wallet, across players', async () => {
+    const { e, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const wallet = master.address.toLowerCase();
+    for (let i = 0; i < 3; i++) {
+      const { lev, ord } = await prepareSteps(e, player.id, 100);
+      await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
+      expect(
+        await e.mirror.execute(player.id, ord.stepId, await sign(agent, ord.eip712)),
+      ).toMatchObject({ ok: true, receipt: { status: 'FILLED' } });
+      expect(e.repos.mirrorOrders.get(ord.stepId)?.masterAddress).toBe(wallet);
+      expect(e.repos.mirrorOrders.get(lev.stepId)?.masterAddress).toBe(wallet);
+    }
+    // Player A moves to another wallet (its agent key is dropped); player B takes over the wallet.
+    const next = privateKeyToAccount(generatePrivateKey());
+    const nonce = e.players.nonce(player.id);
+    const linkSig = await next.signMessage({ message: linkMessage(next.address, nonce) });
+    expect(await e.players.link(player.id, next.address, linkSig)).toMatchObject({ ok: true });
+    const b = e.players.create('human');
+    e.repos.players.setWallet(b.player.id, wallet);
+    const agentB = privateKeyToAccount(generatePrivateKey());
+    expect(e.mirror.registerAgent(b.player.id, master.address, agentB.address)).toEqual({
+      ok: true,
+    });
+    const r = await e.mirror.prepare(b.player.id, {
+      ticker: 'HYP',
+      coin: 'HYPE',
+      notionalUsd: 50,
+      leverage: 3,
+    });
+    const codes = r.ok && 'refusals' in r ? r.refusals.map((x) => x.code) : [];
+    expect(codes).toEqual(expect.arrayContaining(['TOO_MANY_OPEN', 'DAILY_CAP']));
   });
 
   it('never leaks the Nansen API key into responses or the database', async () => {
