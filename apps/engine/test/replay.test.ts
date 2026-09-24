@@ -25,14 +25,8 @@ import { FakeFeed, hlTrade } from './helpers/fake-hl';
 import { NANSEN_BUILDER } from './helpers/fake-trading';
 import { inbox, send } from './helpers/ws';
 
-const COHORT = {
-  smartLongs: 3,
-  smartShorts: 1,
-  whaleLongs: 20,
-  whaleShorts: 10,
-  publicLongs: 0,
-  publicShorts: 2,
-};
+/** Street mood as derived from smart 3 vs 1 and whale 20 vs 10 (USD totals). */
+const MOOD = { smartSkew: 0.5, whaleSkew: 1 / 3 };
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -69,12 +63,14 @@ describe('session recorder', () => {
       anchorDate: '2026-09-21',
       listedAt: 2_000,
     });
-    rec.mood('BTC', COHORT);
+    // A served reading carries its asOf; the line keeps only the skews (t is the recording time).
+    const reading = { ...MOOD, asOf: 1_500 };
+    rec.mood('BTC', reading);
 
     const text = readFileSync(rec.path, 'utf8');
     expect(text).not.toContain('secret-key-123');
     const s = parseSession(text);
-    expect(s.moods).toEqual([{ t: 2_000, k: 'mood', coin: 'BTC', positioning: COHORT }]);
+    expect(s.moods).toEqual([{ t: 2_000, k: 'mood', coin: 'BTC', ...MOOD }]);
     expect(s.nansen).toHaveLength(1);
     expect(s.nansen[0]?.path).toBe('/api/v1/profiler/perp-positions');
     expect(s.hl.map((r) => r.channel)).toEqual(['mids', 'trades']);
@@ -167,37 +163,47 @@ describe('session loading and filtering', () => {
         .map((m) => m.coin)
         .sort(),
     ).toEqual(['BTC', 'ETH', 'SOL']);
-    expect(Object.keys(s.moods[0]?.positioning ?? {}).sort()).toEqual(Object.keys(COHORT).sort());
+    expect(Object.keys(s.moods[0] ?? {}).sort()).toEqual([
+      'coin',
+      'k',
+      'smartSkew',
+      't',
+      'whaleSkew',
+    ]);
+    for (const m of s.moods)
+      for (const v of [m.smartSkew, m.whaleSkew]) expect(v === null || Math.abs(v) <= 1).toBe(true);
   });
 
   it('rejects malformed street-mood lines with a line number', () => {
-    const mood = (positioning: unknown, coin: unknown = 'BTC') =>
-      JSON.stringify({ t: 1, k: 'mood', coin, positioning });
-    expect(parseSession(mood(COHORT)).moods).toHaveLength(1);
-    expect(() => parseSession(mood({ ...COHORT, smartLongs: 'lots' }))).toThrow('session line 1');
-    expect(() => parseSession(mood({ smartLongs: 1 }))).toThrow('session line 1');
-    expect(() => parseSession(mood(COHORT, ''))).toThrow('session line 1');
+    const mood = (skews: Record<string, unknown>, coin: unknown = 'BTC') =>
+      JSON.stringify({ t: 1, k: 'mood', coin, ...skews });
+    expect(parseSession(mood(MOOD)).moods).toHaveLength(1);
+    expect(parseSession(mood({ smartSkew: null, whaleSkew: -1 })).moods).toHaveLength(1);
+    expect(() => parseSession(mood({ ...MOOD, smartSkew: 'lots' }))).toThrow('session line 1');
+    expect(() => parseSession(mood({ ...MOOD, smartSkew: 1.5 }))).toThrow('session line 1');
+    expect(() => parseSession(mood({ smartSkew: 0.1 }))).toThrow('session line 1');
+    expect(() => parseSession(mood(MOOD, ''))).toThrow('session line 1');
   });
 
   it('carries the latest street mood per coin into a trimmed window', () => {
-    const mood = (t: number, coin: string, smartLongs: number) =>
-      JSON.stringify({ t, k: 'mood', coin, positioning: { ...COHORT, smartLongs } });
+    const mood = (t: number, coin: string, smartSkew: number) =>
+      JSON.stringify({ t, k: 'mood', coin, smartSkew, whaleSkew: null });
     const lines = [
-      mood(1, 'BTC', 1),
-      mood(10, 'BTC', 2),
-      mood(10, 'ETH', 5),
+      mood(1, 'BTC', 0.1),
+      mood(10, 'BTC', 0.2),
+      mood(10, 'ETH', 0.5),
       JSON.stringify({ t: 50, k: 'hl', channel: 'mids', data: { BTC: 1 } }),
-      mood(55, 'BTC', 3),
-      mood(90, 'BTC', 4),
+      mood(55, 'BTC', 0.3),
+      mood(90, 'BTC', 0.4),
     ];
     const out = filterSessionLines(lines, [40, 60]).map(
-      (l) => JSON.parse(l) as { t: number; k: string; coin?: string; positioning?: typeof COHORT },
+      (l) => JSON.parse(l) as { t: number; k: string; coin?: string; smartSkew?: number },
     );
-    expect(out.map((r) => [r.k, r.t, r.coin ?? null, r.positioning?.smartLongs ?? null])).toEqual([
-      ['mood', 40, 'BTC', 2],
-      ['mood', 40, 'ETH', 5],
+    expect(out.map((r) => [r.k, r.t, r.coin ?? null, r.smartSkew ?? null])).toEqual([
+      ['mood', 40, 'BTC', 0.2],
+      ['mood', 40, 'ETH', 0.5],
       ['hl', 50, null, null],
-      ['mood', 55, 'BTC', 3],
+      ['mood', 55, 'BTC', 0.3],
     ]);
   });
 
@@ -442,7 +448,7 @@ describe('LIVE recording privacy', () => {
     // The first tick runs the street-mood job: its derived cohort positioning is recorded.
     engine.tick();
     await engine.settle();
-    expect(engine.state.mood.get('BTC')).toEqual(COHORT);
+    expect(engine.state.mood.get('BTC')).toEqual({ ...MOOD, asOf: expect.any(Number) });
 
     // A mirror attempt: trading calls and the player's own wallet read must stay off the record.
     engine.state.setMarks({ BTC: 60_000 }, engine.clock.now());
@@ -466,12 +472,15 @@ describe('LIVE recording privacy', () => {
     );
     expect(s.nansen.some((r) => r.key.includes(SYNTHETIC_B))).toBe(true);
     expect(s.seeds.map((x) => x.address)).toEqual([SYNTHETIC_A]);
-    expect(s.moods.map((m) => [m.coin, m.positioning])).toEqual([['BTC', COHORT]]);
+    expect(s.moods.map((m) => [m.coin, m.smartSkew, m.whaleSkew])).toEqual([
+      ['BTC', MOOD.smartSkew, MOOD.whaleSkew],
+    ]);
     // Once decided (not listed), the applicant's trades are no longer recorded.
     const tape = s.hl.flatMap((r) => (r.channel === 'trades' ? r.data : []));
     expect(tape.map((t) => t.time)).toEqual([12, 13]);
-    // The raw cohort body (and the scout's / credit check's calls) never reach the disk.
+    // The raw cohort body and totals (and the scout's / credit check's calls) never reach the disk.
     expect(text).not.toContain('smart_trader_longs_usd');
+    expect(text).not.toContain('smartLongs');
     expect(s.nansen.filter((r) => !REPLAY_ALLOWED_PATHS.has(r.path))).toEqual([]);
     expect(text).not.toContain('/api/v1/perp/');
     expect(text.toLowerCase()).not.toContain(MASTER);
@@ -580,8 +589,12 @@ describe('REPLAY street mood', () => {
     const box = inbox(ws);
     send(ws, { op: 'sub', channels: ['market'] });
     const frame = await box.waitFor((m) => m.t === 'market');
-    const coins = (frame.mood as Array<{ coin: string }>).map((m) => m.coin);
-    expect(coins.sort()).toEqual(['BTC', 'ETH', 'SOL']);
+    const entries = frame.mood as Array<Record<string, unknown>>;
+    expect(entries.map((m) => m.coin).sort()).toEqual(['BTC', 'ETH', 'SOL']);
+    // Derived skews with their recording time only: no raw cohort totals are served.
+    for (const m of entries)
+      expect(Object.keys(m).sort()).toEqual(['asOf', 'coin', 'smartSkew', 'whaleSkew']);
+    expect(entries.every((m) => m.asOf === SYNTHETIC_T0)).toBe(true);
 
     // Mid-recording update, then back to the opening positioning after the wrap.
     for (let s = 0; s < 400; s++) await r.step();

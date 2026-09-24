@@ -332,6 +332,22 @@ describe('NansenClient', () => {
       ok: false,
       error: 'schema: no cohort data',
     });
+    // Missing or null cohort figures stay unknown (null), never zero.
+    const partial = await clientWith({
+      data: [{ smart_trader_longs_usd: '10', smart_trader_shorts_usd: null, whale_longs_usd: 0 }],
+    }).positionIntelligence('BTC');
+    expect(partial).toEqual({
+      ok: true,
+      callId: expect.any(String),
+      value: {
+        smartLongs: 10,
+        smartShorts: null,
+        whaleLongs: 0,
+        whaleShorts: null,
+        publicLongs: null,
+        publicShorts: null,
+      },
+    });
 
     const rw = await clientWith({
       data: [{ address: A, relation: 'First Funder', chain: 'arbitrum' }],

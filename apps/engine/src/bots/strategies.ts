@@ -1,5 +1,5 @@
 import type { CompanyStatus, Holding, Marks, Position } from '@whale-street/core';
-import type { CohortPositioning } from '@whale-street/nansen';
+import type { MoodSkew } from '../ingest/mood';
 
 export type BotKind = 'value' | 'vulture' | 'cohort' | 'momentum' | 'tape';
 
@@ -25,7 +25,7 @@ export interface BotView {
   cash: number;
   holdings: Readonly<Record<string, Holding>>;
   companies: readonly BotCompany[];
-  mood: ReadonlyMap<string, CohortPositioning>;
+  mood: ReadonlyMap<string, MoodSkew>;
   marks: Marks;
   /** Seeded PRNG in [0, 1). */
   rand: () => number;
@@ -90,20 +90,21 @@ function vulture(v: BotView): BotOrder | null {
 
 /**
  * Alignment of a company's open positions with the smart-trader cohort:
- * Σ notional·sign(size)·sign(smartLongs − smartShorts) / Σ notional, over coins with mood data.
+ * Σ notional·sign(size)·sign(smartSkew) / Σ notional, over coins with a known smart skew (an
+ * unknown skew is no signal).
  */
 export function cohortAlignment(
   c: BotCompany,
-  mood: ReadonlyMap<string, CohortPositioning>,
+  mood: ReadonlyMap<string, MoodSkew>,
   marks: Marks,
 ): number | null {
   let num = 0;
   let den = 0;
   for (const p of c.positions) {
-    const m = mood.get(p.coin);
-    if (!m || p.size === 0) continue;
+    const smartSkew = mood.get(p.coin)?.smartSkew ?? null;
+    if (smartSkew === null || p.size === 0) continue;
     const notional = Math.abs(p.size) * (marks[p.coin] ?? p.entryPx);
-    num += notional * Math.sign(p.size) * Math.sign(m.smartLongs - m.smartShorts);
+    num += notional * Math.sign(p.size) * Math.sign(smartSkew);
     den += notional;
   }
   return den > 0 ? num / den : null;

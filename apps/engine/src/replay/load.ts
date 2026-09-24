@@ -1,12 +1,13 @@
 import type { HlRecord } from '@whale-street/hl';
 import type { NansenRecord } from '@whale-street/nansen';
+import { isSkew } from '../ingest/mood';
 import { type MoodRecord, redistributable, type SeedCompany, type SessionLine } from './session';
 
 export interface LoadedSession {
   nansen: NansenRecord[];
   hl: HlRecord[];
   seeds: SeedCompany[];
-  /** Street mood (derived cohort positioning per coin), in file order. */
+  /** Street mood (derived cohort skews per coin), in file order. */
   moods: MoodRecord[];
   startT: number;
   endT: number;
@@ -17,24 +18,13 @@ export interface LoadedSession {
   dropped: number;
 }
 
-const POSITIONING_KEYS = [
-  'smartLongs',
-  'smartShorts',
-  'whaleLongs',
-  'whaleShorts',
-  'publicLongs',
-  'publicShorts',
-] as const;
-
-/** A mood line goes straight into what clients are served: every cohort figure must be a number. */
-function isMoodRecord(r: { coin?: unknown; positioning?: unknown }): boolean {
-  const p = r.positioning as Record<string, unknown> | null | undefined;
+/**
+ * A mood line goes straight into what clients are served: both skews must be present, each null
+ * or a number in [−1, 1].
+ */
+function isMoodRecord(r: { coin?: unknown; smartSkew?: unknown; whaleSkew?: unknown }): boolean {
   return (
-    typeof r.coin === 'string' &&
-    r.coin.length > 0 &&
-    typeof p === 'object' &&
-    p !== null &&
-    POSITIONING_KEYS.every((k) => typeof p[k] === 'number' && Number.isFinite(p[k]))
+    typeof r.coin === 'string' && r.coin.length > 0 && isSkew(r.smartSkew) && isSkew(r.whaleSkew)
   );
 }
 
@@ -55,7 +45,7 @@ export function parseSessionLine(line: string, lineNo: number): SessionLine {
   ) {
     throw new Error(`session line ${lineNo}: not a session record`);
   }
-  if (r.k === 'mood' && !isMoodRecord(v as { coin?: unknown; positioning?: unknown })) {
+  if (r.k === 'mood' && !isMoodRecord(v as Record<string, unknown>)) {
     throw new Error(`session line ${lineNo}: malformed street-mood record`);
   }
   return v as SessionLine;

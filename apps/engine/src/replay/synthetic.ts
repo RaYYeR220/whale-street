@@ -2,6 +2,7 @@ import { type Address, companyIdentity } from '@whale-street/core';
 import type { HlRecord, HlTrade } from '@whale-street/hl';
 import { type CohortPositioning, type NansenRecord, requestKey } from '@whale-street/nansen';
 import { utcDate } from '../dates';
+import { skewsOf } from '../ingest/mood';
 import type { MoodRecord, SeedRecord, SessionLine } from './session';
 
 export const SYNTHETIC_T0 = 1_790_000_000_000;
@@ -83,11 +84,12 @@ const cohort = (
   publicShorts,
 });
 
+/** A mood line holds only the skews derived from the (made-up) cohort totals. */
 const mood = (t: number, coin: string, positioning: CohortPositioning): MoodRecord => ({
   t,
   k: 'mood',
   coin,
-  positioning,
+  ...skewsOf(positioning),
 });
 
 const trade = (coin: string, px: number, time: number, users: [string, string]): HlTrade => ({
@@ -104,8 +106,8 @@ const trade = (coin: string, px: number, time: number, users: [string, string]):
  * A deterministic 10-minute session for tests and keyless demos (clearly labelled "synthetic"):
  * company A closes a BTC long at 4:55 (CLOSE) and opens a SOL long at 6:55 (OPEN) into a rally;
  * company B's 10x ETH long is liquidated at 8:05 with equity collapsing from $30,000 to $1,000
- * (LIQUIDATION → BANKRUPTCY). Street mood (made-up cohort positioning in the derived shape):
- * smart traders net long BTC, net short ETH and SOL.
+ * (LIQUIDATION → BANKRUPTCY). Street mood (skews derived from made-up cohort totals): smart
+ * traders net long BTC, net short ETH and SOL.
  */
 export function syntheticSession(t0: number = SYNTHETIC_T0): string[] {
   const at = (s: number) => t0 + s * 1_000;

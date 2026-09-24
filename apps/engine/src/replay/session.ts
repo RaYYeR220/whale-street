@@ -1,5 +1,6 @@
 import type { HlRecord } from '@whale-street/hl';
-import type { CohortPositioning, NansenRecord } from '@whale-street/nansen';
+import type { NansenRecord } from '@whale-street/nansen';
+import type { MoodSkew } from '../ingest/mood';
 
 /** A company that was listed while the session was recorded. */
 export interface SeedCompany {
@@ -17,14 +18,14 @@ export interface SeedRecord {
 }
 
 /**
- * Street mood for one coin as the engine derived and served it (never the raw Nansen
- * position-intelligence body, which is not redistributable).
+ * Street mood for one coin as the engine derived and served it: the smart and whale skews only
+ * (never the raw Nansen position-intelligence body or its USD totals, which are not
+ * redistributable). A skew is null when it was unknown.
  */
-export interface MoodRecord {
+export interface MoodRecord extends MoodSkew {
   t: number;
   k: 'mood';
   coin: string;
-  positioning: CohortPositioning;
 }
 
 /** One NDJSON line of a session file. */

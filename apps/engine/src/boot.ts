@@ -14,8 +14,8 @@ export async function boot(runtime: Runtime): Promise<{ engine: Engine; app: Fas
   if (replay) {
     const listed = await seedReplayCompanies(engine, runtime.seeds);
     engine.log.info('replay seeded', { companies: listed });
-    replay.mood.onMood((coin, positioning, at) => {
-      engine.state.mood.set(coin, positioning);
+    replay.mood.onMood((coin, mood, at) => {
+      engine.state.mood.set(coin, { ...mood, asOf: at });
       engine.state.moodAt = at;
     });
     replay.clock.onWrap(() => restartReplay(engine, replay));
@@ -36,9 +36,11 @@ export async function boot(runtime: Runtime): Promise<{ engine: Engine; app: Fas
     for (const rt of engine.state.listed()) seedOf(rt.id);
     engine.bus.on((ev) => {
       if (ev.t === 'filing' && ev.filing.kind === 'IPO') seedOf(ev.filing.companyId);
-      // The derived cohort positioning the engine serves; the raw Nansen body is never recorded.
+      // The derived skews the engine serves (only coins read in this run; a coin whose fetch
+      // failed keeps an older reading); the raw Nansen body is never recorded.
       if (ev.t === 'mood')
-        for (const [coin, positioning] of engine.state.mood) recorder.mood(coin, positioning);
+        for (const [coin, mood] of engine.state.mood)
+          if (mood.asOf >= engine.state.moodAt) recorder.mood(coin, mood);
     });
     recorder.attachFeed(
       runtime.deps.hl.feed,

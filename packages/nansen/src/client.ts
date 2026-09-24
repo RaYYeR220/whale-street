@@ -51,13 +51,14 @@ export interface SmPerpTrade {
   valueUsd: number | null;
   at: number;
 }
+/** Cohort positioning totals in USD; a figure Nansen did not report is null (never 0). */
 export interface CohortPositioning {
-  smartLongs: number;
-  smartShorts: number;
-  whaleLongs: number;
-  whaleShorts: number;
-  publicLongs: number;
-  publicShorts: number;
+  smartLongs: number | null;
+  smartShorts: number | null;
+  whaleLongs: number | null;
+  whaleShorts: number | null;
+  publicLongs: number | null;
+  publicShorts: number | null;
 }
 export interface RelatedWallet {
   address: Address;
@@ -245,12 +246,12 @@ export class NansenClient {
         const row = PositionIntelligenceResponse.parse(j).data[0];
         if (!row) throw new Error('no cohort data');
         return {
-          smartLongs: row.smart_trader_longs_usd ?? 0,
-          smartShorts: row.smart_trader_shorts_usd ?? 0,
-          whaleLongs: row.whale_longs_usd ?? 0,
-          whaleShorts: row.whale_shorts_usd ?? 0,
-          publicLongs: row.public_figure_longs_usd ?? 0,
-          publicShorts: row.public_figure_shorts_usd ?? 0,
+          smartLongs: row.smart_trader_longs_usd,
+          smartShorts: row.smart_trader_shorts_usd,
+          whaleLongs: row.whale_longs_usd,
+          whaleShorts: row.whale_shorts_usd,
+          publicLongs: row.public_figure_longs_usd,
+          publicShorts: row.public_figure_shorts_usd,
         };
       },
     );

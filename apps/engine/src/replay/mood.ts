@@ -1,7 +1,7 @@
-import type { CohortPositioning } from '@whale-street/nansen';
+import type { MoodSkew } from '../ingest/mood';
 import type { MoodRecord } from './session';
 
-export type MoodListener = (coin: string, positioning: CohortPositioning, at: number) => void;
+export type MoodListener = (coin: string, mood: MoodSkew, at: number) => void;
 
 /** Replays recorded street-mood lines on the REPLAY clock, like the replay feed does HL records. */
 export interface ReplayMood {
@@ -27,7 +27,8 @@ export function createReplayMood(records: readonly MoodRecord[], now: () => numb
       const t = now();
       for (let r = sorted[cursor]; r !== undefined && r.t <= t; r = sorted[cursor]) {
         cursor++;
-        for (const cb of listeners) cb(r.coin, r.positioning, r.t);
+        const mood: MoodSkew = { smartSkew: r.smartSkew, whaleSkew: r.whaleSkew };
+        for (const cb of listeners) cb(r.coin, mood, r.t);
       }
     },
     rewind() {

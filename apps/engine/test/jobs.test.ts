@@ -8,7 +8,13 @@ import {
   isCreditError,
 } from '../src/ingest/credits';
 import { IDLE_AFTER_MS } from '../src/ingest/idle';
-import { MOOD_LAST_KEY, refreshMood, topCoinsByNotional } from '../src/ingest/mood';
+import {
+  MOOD_LAST_KEY,
+  MOOD_SNAPSHOT_KEY,
+  refreshMood,
+  skew,
+  topCoinsByNotional,
+} from '../src/ingest/mood';
 import { MOOD_EVERY_MS } from '../src/ingest/scheduler';
 import { runScout, SCOUT_LAST_KEY, SCOUT_MAX_EVALUATIONS } from '../src/ingest/scout';
 import { silentLogger } from '../src/log';
@@ -20,6 +26,7 @@ import { FakeInfo } from './helpers/fake-hl';
 import { FakeNansen, fail } from './helpers/fake-nansen';
 import { programCleanTrader, programHedgedTrader } from './helpers/traders';
 import { addCompany, makeWorld, pos } from './helpers/world';
+import { inbox, send } from './helpers/ws';
 
 const addr = (n: number) => `0x${n.toString(16).padStart(40, '0')}` as `0x${string}`;
 
@@ -136,7 +143,7 @@ describe('credit monitor', () => {
 });
 
 describe('street mood', () => {
-  it('fetches cohort positioning for the top coins by listed notional', async () => {
+  it('derives smart and whale skews for the top coins by listed notional (never raw totals)', async () => {
     const w = makeWorld();
     const nansen = new FakeNansen();
     addCompany(w, {
@@ -154,10 +161,84 @@ describe('street mood', () => {
       publicLongs: 0,
       publicShorts: 0,
     });
+    // A side Nansen did not report stays unknown: no skew, never a made-up zero.
+    nansen.cohorts.set('ETH', {
+      smartLongs: null,
+      smartShorts: 5,
+      whaleLongs: 30,
+      whaleShorts: 10,
+      publicLongs: null,
+      publicShorts: null,
+    });
     await refreshMood({ ...w, nansen, log: silentLogger });
-    expect([...w.state.mood.keys()]).toEqual(['BTC']);
+    const now = w.clock.now();
+    expect(Object.fromEntries(w.state.mood)).toEqual({
+      BTC: { smartSkew: 8 / 12, whaleSkew: null, asOf: now },
+      ETH: { smartSkew: null, whaleSkew: 0.5, asOf: now },
+    });
     expect(nansen.count('positionIntelligence')).toBe(3);
-    expect(w.state.moodAt).toBe(w.clock.now());
+    expect(w.state.moodAt).toBe(now);
+  });
+
+  it('skew = (long − short) / (long + short) in [−1, 1]; null for an unknown side or an empty book', () => {
+    expect(skew(3, 1)).toBe(0.5);
+    expect(skew(0, 5)).toBe(-1);
+    expect(skew(7, 0)).toBe(1);
+    expect(skew(null, 5)).toBeNull();
+    expect(skew(5, null)).toBeNull();
+    expect(skew(0, 0)).toBeNull();
+    // A short total reported as a negative figure counts by its size.
+    expect(skew(3, -1)).toBe(0.5);
+  });
+
+  it('stamps each coin when it is read; moodAt is when the run started (every reading is at or after it)', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    addCompany(w, {
+      id: addr(1),
+      ticker: 'AAA',
+      positions: [pos('BTC', 1, 60_000), pos('ETH', 10, 3_000)],
+    });
+    const book = {
+      smartLongs: 1,
+      smartShorts: 1,
+      whaleLongs: 1,
+      whaleShorts: 1,
+      publicLongs: null,
+      publicShorts: null,
+    };
+    nansen.cohorts.set('BTC', book);
+    nansen.cohorts.set('ETH', book);
+    const read = nansen.positionIntelligence.bind(nansen);
+    nansen.positionIntelligence = (coin: string) => {
+      w.clock.advance(300);
+      return read(coin);
+    };
+    const start = w.clock.now();
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    expect(w.state.moodAt).toBe(start);
+    expect([...w.state.mood.values()].map((m) => m.asOf)).toEqual([start + 300, start + 600]);
+  });
+
+  it('keeps a coin whose refresh failed with the age of its last good reading', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    addCompany(w, { id: addr(1), ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
+    const btc = {
+      smartLongs: 1,
+      smartShorts: 3,
+      whaleLongs: 2,
+      whaleShorts: 2,
+      publicLongs: null,
+      publicShorts: null,
+    };
+    nansen.cohorts.set('BTC', btc);
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    const first = w.clock.now();
+    w.clock.advance(MOOD_EVERY_MS);
+    nansen.cohorts.set('BTC', fail('HTTP 500: upstream error'));
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    expect(w.state.mood.get('BTC')).toEqual({ smartSkew: -0.5, whaleSkew: 0, asOf: first });
   });
 });
 
@@ -282,6 +363,56 @@ describe('boot-time job seeding', () => {
     expect(restart.nansen.count('smartMoneyPerpTrades')).toBe(0);
     expect(restart.nansen.count('positionIntelligence')).toBe(0);
     await restart.app.close();
+  });
+});
+
+describe('street mood across a restart', () => {
+  it('restores the last derived mood with its asOf, so the panel is not empty until the next run', async () => {
+    const db = openDb(':memory:');
+    const first = await testEngine({ mode: 'live', db });
+    addCompany(first.engine, { id: addr(1), ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
+    first.nansen.cohorts.set('BTC', {
+      smartLongs: 3,
+      smartShorts: 1,
+      whaleLongs: 1,
+      whaleShorts: 3,
+      publicLongs: null,
+      publicShorts: null,
+    });
+    first.engine.tick();
+    await first.engine.settle();
+    const asOf = first.clock.now();
+    expect(first.engine.state.mood.get('BTC')).toEqual({ smartSkew: 0.5, whaleSkew: -0.5, asOf });
+    await first.app.close();
+
+    // A restart 5 minutes later: the mood is not due yet, the restored one is served meanwhile.
+    const restart = await testEngine({ mode: 'live', db });
+    restart.clock.advance(5 * MINUTE_MS);
+    restart.engine.tick();
+    await restart.engine.settle();
+    expect(restart.nansen.count('positionIntelligence')).toBe(0);
+    const ws = await restart.app.injectWS('/ws');
+    const box = inbox(ws);
+    send(ws, { op: 'sub', channels: ['market'] });
+    const frame = await box.waitFor((m) => m.t === 'market');
+    expect(frame.mood).toEqual([{ coin: 'BTC', smartSkew: 0.5, whaleSkew: -0.5, asOf }]);
+    ws.terminate();
+    await restart.app.close();
+  });
+
+  it('ignores a malformed saved mood (nothing made up at boot)', async () => {
+    const db = openDb(':memory:');
+    createRepos(db).kv.setJson(MOOD_SNAPSHOT_KEY, [
+      { coin: 'BTC', smartSkew: 2, whaleSkew: null, asOf: T0 },
+      { coin: 'ETH', smartSkew: 'high', whaleSkew: null, asOf: T0 },
+      { coin: '', smartSkew: 0.1, whaleSkew: 0.1, asOf: T0 },
+      { coin: 'SOL', smartSkew: -0.25, whaleSkew: null, asOf: T0 - MINUTE_MS },
+    ]);
+    const t = await testEngine({ mode: 'live', db });
+    expect(Object.fromEntries(t.engine.state.mood)).toEqual({
+      SOL: { smartSkew: -0.25, whaleSkew: null, asOf: T0 - MINUTE_MS },
+    });
+    await t.app.close();
   });
 });
 

@@ -12,8 +12,8 @@ import {
   type Snapshot,
   sharePrice,
 } from '@whale-street/core';
-import type { CohortPositioning } from '@whale-street/nansen';
 import type { CompanyRow } from '../db/repos';
+import type { StreetMood } from '../ingest/mood';
 import type { CompanySource, HaltKind } from '../types';
 
 export interface CompanyRuntime {
@@ -97,7 +97,9 @@ export class MarketState {
   readonly companies = new Map<string, CompanyRuntime>();
   marks: Record<string, number> = {};
   marksAt = 0;
-  readonly mood = new Map<string, CohortPositioning>();
+  /** Street mood per coin: derived cohort skews with their fetch time (see ingest/mood). */
+  readonly mood = new Map<string, StreetMood>();
+  /** Engine-clock time the last street-mood run started (REPLAY: of the last mood line). */
   moodAt = 0;
   /**
    * Set on a wake from IDLE, cleared by the next market-loop tick that moves NAV on fresh marks:

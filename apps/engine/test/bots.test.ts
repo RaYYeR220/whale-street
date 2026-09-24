@@ -1,9 +1,9 @@
 import type { Holding } from '@whale-street/core';
-import type { CohortPositioning } from '@whale-street/nansen';
 import { describe, expect, it } from 'vitest';
 import { BOTS, createBotRunner, momentumLookbackMs, TAPE_WINDOW_MS } from '../src/bots/runner';
 import { type BotCompany, type BotView, cohortAlignment, decide } from '../src/bots/strategies';
 import { HOUR_MS } from '../src/dates';
+import type { MoodSkew } from '../src/ingest/mood';
 import { silentLogger } from '../src/log';
 import { createExchange } from '../src/services/exchange';
 import { createPlayersService } from '../src/services/players';
@@ -34,14 +34,7 @@ const short = (qty: number): Holding => ({
   shortQty: qty,
   shortCollateral: qty * 200,
 });
-const cohortOf = (smartLongs: number, smartShorts: number): CohortPositioning => ({
-  smartLongs,
-  smartShorts,
-  whaleLongs: 0,
-  whaleShorts: 0,
-  publicLongs: 0,
-  publicShorts: 0,
-});
+const cohortOf = (smartSkew: number | null): MoodSkew => ({ smartSkew, whaleSkew: null });
 const view = (over: Partial<BotView>): BotView => ({
   cash: 10_000,
   holdings: {},
@@ -123,14 +116,18 @@ describe('bot strategies', () => {
 
   it('cohort alignment follows smart-trader positioning per coin', () => {
     const mood = new Map([
-      ['BTC', cohortOf(10, 1)],
-      ['ETH', cohortOf(1, 10)],
+      ['BTC', cohortOf(0.8)],
+      ['ETH', cohortOf(-0.8)],
+      ['SOL', cohortOf(null)],
     ]);
     const aligned = co({ id: 'a', positions: [pos('BTC', 1, 100), pos('ETH', -1, 100)] });
     const against = co({ id: 'b', positions: [pos('BTC', -1, 100)] });
     expect(cohortAlignment(aligned, mood, {})).toBe(1);
     expect(cohortAlignment(against, mood, {})).toBe(-1);
     expect(cohortAlignment(co({ id: 'c', positions: [pos('SOL', 1, 1)] }), mood, {})).toBeNull();
+    // An unknown skew is no signal: the coin is left out, whatever its size.
+    const mixed = co({ id: 'd', positions: [pos('BTC', 1, 100), pos('SOL', 100, 100)] });
+    expect(cohortAlignment(mixed, mood, {})).toBe(1);
     expect(decide('cohort', view({ companies: [against, aligned], mood }))).toEqual({
       ticker: 'A',
       side: 'BUY',

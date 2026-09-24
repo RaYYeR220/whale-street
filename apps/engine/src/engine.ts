@@ -8,7 +8,7 @@ import { createRepos, type Repos } from './db/repos';
 import { EventBus } from './events';
 import { createCreditMonitor, withCreditAlarm } from './ingest/credits';
 import { createIdleGate, type IdleGate } from './ingest/idle';
-import { MOOD_LAST_KEY, refreshMood } from './ingest/mood';
+import { MOOD_LAST_KEY, refreshMood, restoreMood, saveMood } from './ingest/mood';
 import { createRefresher, type Refresher } from './ingest/refresh';
 import { createScheduler, type Scheduler } from './ingest/scheduler';
 import { runScout, SCOUT_LAST_KEY } from './ingest/scout';
@@ -142,6 +142,8 @@ export function createEngine(deps: EngineDeps): Engine {
   };
 
   const live = config.mode === 'live';
+  // The last street mood, so the panel is not empty until the next refresh (REPLAY replays its own).
+  if (live) restoreMood(repos, state);
   const credits = live
     ? createCreditMonitor({ nansen: deps.nansen, state, repos, bus, clock, log, track })
     : null;
@@ -217,6 +219,7 @@ export function createEngine(deps: EngineDeps): Engine {
       ? async () => {
           await refreshMood({ nansen, state, clock, log });
           repos.kv.set(MOOD_LAST_KEY, String(state.moodAt));
+          saveMood(repos, state);
           bus.emit({ t: 'mood', at: clock.now() });
         }
       : null,

@@ -1,7 +1,8 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type HlFeed, recordFeed } from '@whale-street/hl';
-import { type CohortPositioning, recordingFetch } from '@whale-street/nansen';
+import { recordingFetch } from '@whale-street/nansen';
+import type { MoodSkew } from '../ingest/mood';
 import { redistributable, type SeedCompany, type SessionLine } from './session';
 
 export interface SessionRecorder {
@@ -22,8 +23,8 @@ export interface SessionRecorder {
     addresses: () => ReadonlySet<string>,
   ): () => void;
   seed(company: SeedCompany): void;
-  /** Records the street mood the engine derived for one coin (never the raw Nansen body). */
-  mood(coin: string, positioning: CohortPositioning): void;
+  /** Records the street mood the engine derived for one coin: its skews only (never raw totals). */
+  mood(coin: string, mood: MoodSkew): void;
 }
 
 /**
@@ -55,6 +56,7 @@ export function createSessionRecorder(path: string, now: () => number = Date.now
         { coins, now },
       ),
     seed: (company) => write({ t: now(), k: 'seed', company }),
-    mood: (coin, positioning) => write({ t: now(), k: 'mood', coin, positioning }),
+    mood: (coin, m) =>
+      write({ t: now(), k: 'mood', coin, smartSkew: m.smartSkew, whaleSkew: m.whaleSkew }),
   };
 }

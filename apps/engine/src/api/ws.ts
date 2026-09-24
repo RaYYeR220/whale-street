@@ -48,7 +48,13 @@ export function registerWs(app: FastifyInstance, e: Engine): void {
   };
   const subscribed = (channel: Channel) => [...clients].some((c) => c.channels.has(channel));
 
-  const mood = (): MoodEntry[] => [...e.state.mood.entries()].map(([coin, m]) => ({ coin, ...m }));
+  const mood = (): MoodEntry[] =>
+    [...e.state.mood].map(([coin, m]) => ({
+      coin,
+      smartSkew: m.smartSkew,
+      whaleSkew: m.whaleSkew,
+      asOf: m.asOf,
+    }));
   const market = (at: number): ServerMessage => ({
     t: 'market',
     at,

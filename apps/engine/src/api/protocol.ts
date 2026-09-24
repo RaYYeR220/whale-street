@@ -1,4 +1,3 @@
-import type { CohortPositioning } from '@whale-street/nansen';
 import { z } from 'zod';
 import type { StatusView } from '../engine';
 import type { FilingView, IpoUpdate, TapeView } from '../events';
@@ -24,8 +23,16 @@ export const ClientMessage = z.discriminatedUnion('op', [
 ]);
 export type ClientMessage = z.infer<typeof ClientMessage>;
 
-export interface MoodEntry extends CohortPositioning {
+/**
+ * Street mood of one coin: how smart traders and whales lean, each as
+ * (long − short) / (long + short) ∈ [−1, 1], or null when unknown. `asOf` is when the cohort data
+ * was fetched (engine clock, like every engine timestamp; REPLAY: recording time).
+ */
+export interface MoodEntry {
   coin: string;
+  smartSkew: number | null;
+  whaleSkew: number | null;
+  asOf: number;
 }
 
 export type ServerMessage =
