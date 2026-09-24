@@ -169,7 +169,7 @@ export function createEngine(deps: EngineDeps): Engine {
     params,
     wallNow,
   });
-  const players = createPlayersService({ repos, clock, wallNow });
+  const players = createPlayersService({ repos, clock, origins: config.corsOrigins, wallNow });
   const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays });
   seasons.ensure(now);
   const exchange = createExchange({ state, repos, bus, clock, seasons, params });

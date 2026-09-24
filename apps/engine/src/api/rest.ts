@@ -5,7 +5,7 @@ import { TRADING_PATH_PREFIX } from '../db/repos';
 import type { Engine } from '../engine';
 import { type ExchangeErrorCode, MARKET_PAUSED_RETRY_MS } from '../services/exchange';
 import type { ApplyErrorCode } from '../services/ipo';
-import { playerView } from '../services/players';
+import { LINK_STATEMENT, playerView } from '../services/players';
 import { AUTH_PER_MINUTE, rateLimited, requirePlayer, sendError } from './auth';
 import { type Gates, RateGate } from './rate';
 
@@ -40,8 +40,9 @@ const IdParams = z.object({ id: z.string().min(1).max(64) });
 const HandleParams = z.object({ handle: z.string().min(1).max(64) });
 const IpoBody = z.object({ address: z.string().min(1).max(64) });
 const LinkBody = z.object({
-  address: z.string().min(1).max(64),
-  signature: z.string().regex(/^0x[0-9a-fA-F]+$/),
+  /** EIP-4361 message built by the web client with viem createSiweMessage. */
+  message: z.string().min(1).max(4_096),
+  signature: z.string().regex(/^0x[0-9a-fA-F]{1,1024}$/),
 });
 const AgentBody = z.object({ name: z.string().min(1).max(40) });
 
@@ -261,7 +262,8 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     const player = requirePlayer(e, req, reply);
     if (!player) return reply;
     const nonce = e.players.nonce(player.id);
-    return { nonce, message: 'Whale Street: link wallet <address> nonce <nonce>' };
+    // `message`: the suggested SIWE statement; the client renders the full EIP-4361 message.
+    return { nonce, message: LINK_STATEMENT };
   });
 
   app.post('/api/auth/link', async (req, reply) => {
@@ -270,9 +272,9 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     if (!player) return reply;
     const body = parse(LinkBody, req.body, reply);
     if (!body) return reply;
-    const r = await e.players.link(player.id, body.address, body.signature);
+    const r = await e.players.link(player.id, body.message, body.signature);
     return r.ok
       ? { player: r.player }
-      : sendError(reply, r.code === 'INVALID_ADDRESS' ? 400 : 401, r.code, r.message);
+      : sendError(reply, r.code === 'INVALID_MESSAGE' ? 400 : 401, r.code, r.message);
   });
 }

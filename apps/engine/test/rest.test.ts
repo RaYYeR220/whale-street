@@ -1,8 +1,9 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { IDLE_AFTER_MS } from '../src/ingest/idle';
-import { linkMessage } from '../src/services/players';
+import { LINK_STATEMENT } from '../src/services/players';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
+import { siweMessage } from './helpers/siwe';
 import { programCleanTrader } from './helpers/traders';
 import { addCompany } from './helpers/world';
 
@@ -238,17 +239,64 @@ describe('REST', () => {
 
     const { token } = await signup();
     const account = privateKeyToAccount(generatePrivateKey());
-    const { nonce } = (
-      await t.app.inject({ url: '/api/auth/nonce', headers: bearer(token) })
-    ).json();
-    const signature = await account.signMessage({ message: linkMessage(account.address, nonce) });
+    const issued = (await t.app.inject({ url: '/api/auth/nonce', headers: bearer(token) })).json();
+    expect(issued).toEqual({
+      nonce: expect.stringMatching(/^[0-9a-f]{32}$/),
+      message: LINK_STATEMENT,
+    });
+    const message = siweMessage(account.address, issued.nonce, t.clock.now());
+    const signature = await account.signMessage({ message });
     const linked = await t.app.inject({
       method: 'POST',
       url: '/api/auth/link',
       headers: bearer(token),
-      payload: { address: account.address, signature },
+      payload: { message, signature },
     });
+    expect(linked.statusCode).toBe(200);
     expect(linked.json().player.walletAddress).toBe(account.address.toLowerCase());
+  });
+
+  it('wallet link refusals: wrong domain, reused nonce, expired, wrong signer → 401; malformed → 400', async () => {
+    t = await testEngine();
+    const { token } = await signup();
+    const wallet = privateKeyToAccount(generatePrivateKey());
+    const attacker = privateKeyToAccount(generatePrivateKey());
+    const link = async (
+      over: Parameters<typeof siweMessage>[3] = {},
+      signer = wallet,
+      given?: { message: string; signature: string },
+    ) => {
+      let payload = given;
+      if (!payload) {
+        const { nonce } = (
+          await t.app.inject({ url: '/api/auth/nonce', headers: bearer(token) })
+        ).json();
+        const message = siweMessage(wallet.address, nonce, t.clock.now(), over);
+        payload = { message, signature: await signer.signMessage({ message }) };
+      }
+      const r = await t.app.inject({
+        method: 'POST',
+        url: '/api/auth/link',
+        headers: bearer(token),
+        payload,
+      });
+      return { status: r.statusCode, error: r.json().error as string | undefined, payload };
+    };
+    expect(await link({ domain: 'evil.example' })).toMatchObject({
+      status: 401,
+      error: 'DOMAIN_MISMATCH',
+    });
+    expect(await link({ issuedAt: new Date(t.clock.now() - 11 * 60_000) })).toMatchObject({
+      status: 401,
+      error: 'MESSAGE_EXPIRED',
+    });
+    expect(await link({}, attacker)).toMatchObject({ status: 401, error: 'BAD_SIGNATURE' });
+    const ok = await link();
+    expect(ok.status).toBe(200);
+    expect(await link({}, wallet, ok.payload)).toMatchObject({ status: 401, error: 'NO_NONCE' });
+    expect(
+      await link({}, wallet, { message: 'link my wallet please', signature: '0x00' }),
+    ).toMatchObject({ status: 400, error: 'INVALID_MESSAGE' });
   });
 
   it('refuses orders while IDLE with 503 MARKET_PAUSED, wakes the engine, and fills once NAV is live', async () => {

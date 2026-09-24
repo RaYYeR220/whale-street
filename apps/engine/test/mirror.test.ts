@@ -4,9 +4,9 @@ import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Engine } from '../src/engine';
 import { validateLeverageAction, validateOrderAction } from '../src/services/mirror';
-import { linkMessage } from '../src/services/players';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { FakeTrading, NANSEN_BUILDER } from './helpers/fake-trading';
+import { siweMessage } from './helpers/siwe';
 import { addCompany, pos } from './helpers/world';
 
 const TRADER = '0x00000000000000000000000000000000000000a1' as const;
@@ -581,8 +581,9 @@ describe('mirror', () => {
     // Player A moves to another wallet (its agent key is dropped); player B takes over the wallet.
     const next = privateKeyToAccount(generatePrivateKey());
     const nonce = e.players.nonce(player.id);
-    const linkSig = await next.signMessage({ message: linkMessage(next.address, nonce) });
-    expect(await e.players.link(player.id, next.address, linkSig)).toMatchObject({ ok: true });
+    const linkText = siweMessage(next.address, nonce, t.clock.now());
+    const linkSig = await next.signMessage({ message: linkText });
+    expect(await e.players.link(player.id, linkText, linkSig)).toMatchObject({ ok: true });
     const b = e.players.create('human');
     e.repos.players.setWallet(b.player.id, wallet);
     const agentB = privateKeyToAccount(generatePrivateKey());
