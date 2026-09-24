@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS ipo_apps (
   reason TEXT,
   ticker TEXT,
   created_at INTEGER NOT NULL,
-  decided_at INTEGER
+  decided_at INTEGER,
+  applied_wall_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS nansen_calls (
   id TEXT PRIMARY KEY,
@@ -180,4 +181,7 @@ export function ensureColumn(
 export function migrate(sqlite: Database.Database): void {
   sqlite.exec(SCHEMA_SQL);
   ensureColumn(sqlite, 'mirror_orders', 'master_address', 'TEXT');
+  ensureColumn(sqlite, 'ipo_apps', 'applied_wall_at', 'INTEGER');
+  // Rows written before the column existed were LIVE rows, whose created_at is wall time.
+  sqlite.exec('UPDATE ipo_apps SET applied_wall_at = created_at WHERE applied_wall_at IS NULL');
 }

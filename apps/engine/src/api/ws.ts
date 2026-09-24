@@ -47,13 +47,17 @@ export function registerWs(app: FastifyInstance, e: Engine): void {
   let lastLeaderboard = Number.NEGATIVE_INFINITY;
   const off = e.bus.on((ev) => {
     switch (ev.t) {
-      case 'market':
+      case 'market': {
         broadcast('market', market(ev.at));
-        if (ev.at - lastLeaderboard >= LEADERBOARD_EVERY_MS && subscribed('leaderboard')) {
-          lastLeaderboard = ev.at;
+        // Throttled on wall time: the REPLAY clock jumps back at a loop wrap, which would stall
+        // an engine-clock throttle for a whole loop.
+        const wall = e.wallNow();
+        if (wall - lastLeaderboard >= LEADERBOARD_EVERY_MS && subscribed('leaderboard')) {
+          lastLeaderboard = wall;
           broadcast('leaderboard', leaderboard());
         }
         break;
+      }
       case 'filing':
         broadcast('filings', { t: 'filing', filing: ev.filing });
         break;

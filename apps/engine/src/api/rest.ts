@@ -59,7 +59,8 @@ const statusFor = (code: ExchangeErrorCode): number =>
 
 export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): void {
   const now = () => e.clock.now();
-  const signups = new RateGate(20, HOUR_MS, now);
+  // Wall time: in REPLAY the engine clock loops, which would make this hourly cap a lifetime one.
+  const signups = new RateGate(20, HOUR_MS, () => e.wallNow());
 
   app.get('/healthz', async () => ({ ok: true }));
 

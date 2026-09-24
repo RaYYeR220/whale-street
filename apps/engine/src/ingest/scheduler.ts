@@ -37,6 +37,12 @@ export interface Scheduler {
   onTick(now: number): void;
   /** First viewer after IDLE: staggered catch-up refresh of every listed company. */
   wake(now: number): void;
+  /**
+   * Forgets every due time (triggers, wake-ups, heartbeats, periodic jobs) and restarts the
+   * schedule from `now`. REPLAY calls it on a loop wrap: the virtual clock jumps back, so due
+   * times from the previous loop would otherwise lie beyond the loop's end and never fire.
+   */
+  reset(now: number): void;
 }
 
 export function createScheduler(d: SchedulerDeps): Scheduler {
@@ -90,6 +96,15 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
         wakeDue.set(rt.id, now + i * WAKE_STAGGER_MS);
       });
       next.mood = now;
+    },
+    reset(now) {
+      triggerDue.clear();
+      wakeDue.clear();
+      nextBeat.clear();
+      next.coins = now;
+      next.credits = now;
+      next.mood = now;
+      next.scout = now;
     },
     onTick(now) {
       const idle = d.state.flags.idle;

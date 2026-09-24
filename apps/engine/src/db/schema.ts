@@ -138,6 +138,8 @@ export const ipoApps = sqliteTable('ipo_apps', {
   ticker: text('ticker'),
   createdAt: integer('created_at').notNull(),
   decidedAt: integer('decided_at'),
+  /** Wall-clock time of the application (the per-hour cap window; never the looping REPLAY clock). */
+  appliedWallAt: integer('applied_wall_at'),
 });
 
 export const nansenCalls = sqliteTable('nansen_calls', {

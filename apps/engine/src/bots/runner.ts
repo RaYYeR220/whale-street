@@ -19,6 +19,8 @@ export const BOT_JITTER_MS = 20_000;
 
 export interface BotRunner {
   onTick(now: number): void;
+  /** Forgets every bot's next decision time (REPLAY loop wrap: the virtual clock jumped back). */
+  reset(): void;
 }
 
 export function createBotRunner(d: {
@@ -81,6 +83,9 @@ export function createBotRunner(d: {
         if (!r.ok)
           d.log.info('bot order rejected', { bot: bot.id, ticker: order.ticker, code: r.code });
       }
+    },
+    reset() {
+      nextAt.clear();
     },
   };
 }

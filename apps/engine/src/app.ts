@@ -14,7 +14,8 @@ export async function buildApp(e: Engine): Promise<FastifyInstance> {
   await app.register(cors, { origin: e.config.corsOrigins });
   await app.register(websocket, { options: { maxPayload: 64 * 1024, perMessageDeflate: false } });
   // Shared across REST and MCP so an agent can't bypass the per-player order limit via /mcp.
-  const gates: Gates = { orders: new RateGate(10, 1_000, () => e.clock.now()) };
+  // Wall time: a REPLAY loop wrap must neither reset nor freeze a rate window.
+  const gates: Gates = { orders: new RateGate(10, 1_000, () => e.wallNow()) };
   registerRest(app, e, gates);
   registerWs(app, e);
   registerMirrorRoutes(app, e);

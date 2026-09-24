@@ -8,10 +8,20 @@ import { openDb } from './db/index';
 import { createRepos } from './db/repos';
 import type { EngineDeps } from './engine';
 import type { Logger } from './log';
-import { parseSession } from './replay/load';
+import { loadReplaySession } from './replay/load';
 import { createSessionRecorder, type SessionRecorder } from './replay/record';
 import type { SeedCompany } from './replay/session';
 import { syntheticSession } from './replay/synthetic';
+
+/** Request limits of one Nansen API key. */
+export const NANSEN_KEY_LIMITS = { perSecond: 15, perMinute: 300 } as const;
+/** LIVE trading client's slice of the key budget (human-triggered, meta/builder-fee cached 1 h). */
+export const NANSEN_TRADING_BUDGET = { perSecond: 2, perMinute: 20 } as const;
+/** LIVE data client's slice: the rest of the key budget, so both clients together stay within it. */
+export const NANSEN_DATA_BUDGET = {
+  perSecond: NANSEN_KEY_LIMITS.perSecond - NANSEN_TRADING_BUDGET.perSecond,
+  perMinute: NANSEN_KEY_LIMITS.perMinute - NANSEN_TRADING_BUDGET.perMinute,
+} as const;
 
 export interface Runtime {
   deps: EngineDeps;
@@ -25,7 +35,7 @@ export interface RuntimeOptions {
   log: Logger;
   /** Overrides the SQLite path (tests pass ':memory:'). */
   dbPath?: string;
-  /** Wall clock driving the REPLAY loop (tests control it). */
+  /** Wall clock driving the REPLAY loop and every rate gate / cap window (tests control it). */
   wallNow?: () => number;
   /** LIVE network fetch for Nansen and Hyperliquid info (tests pass a fake). */
   fetch?: typeof fetch;
@@ -53,10 +63,16 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
     const readFetch = recorder ? recorder.wrapFetch(rawFetch) : rawFetch;
     const onCall = (c: Parameters<typeof repos.nansenCalls.insert>[0]) =>
       repos.nansenCalls.insert(c);
-    const http = new NansenHttp({ apiKey: key, fetch: readFetch, onCall });
+    const http = new NansenHttp({ apiKey: key, fetch: readFetch, onCall, ...NANSEN_DATA_BUDGET });
     // Trading (wallets, EIP-712 payloads, signatures, builder fee) has its own client over the
-    // raw fetch: it never lands in a session recording. Same key, same provenance log.
-    const tradingHttp = new NansenHttp({ apiKey: key, fetch: rawFetch, onCall });
+    // raw fetch: it never lands in a session recording. Same key and provenance log; the key's
+    // rate budget is split between the two clients so together they stay within it.
+    const tradingHttp = new NansenHttp({
+      apiKey: key,
+      fetch: rawFetch,
+      onCall,
+      ...NANSEN_TRADING_BUDGET,
+    });
     const info = createHlInfo({ fetch: readFetch });
     // The Mirror reads the player's own wallet: never recorded.
     const mirrorInfo = recorder ? createHlInfo({ fetch: rawFetch }) : info;
@@ -68,6 +84,7 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
         trading: new NansenTrading(tradingHttp),
         hl: { feed: createHlFeed(), info, mirrorInfo },
         clock: realClock,
+        wallNow,
         log: o.log,
         replay: null,
       },
@@ -83,7 +100,11 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
       replayFile: config.replayFile,
     });
   const text = synthetic ? syntheticSession().join('\n') : readFileSync(config.replayFile, 'utf8');
-  const session = parseSession(text);
+  const session = loadReplaySession(text);
+  if (session.dropped > 0)
+    o.log.warn('replay session: ignored records that are not redistributable', {
+      dropped: session.dropped,
+    });
   const clock = createReplayClock(session.startT, session.endT, wallNow(), wallNow);
   const db = openDb(o.dbPath ?? join(config.dataDir, 'whale-street-replay.db'));
   const repos = createRepos(db);
@@ -104,6 +125,7 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
       trading: null,
       hl: { feed, info: createHlInfo({ fetch: recorded }) },
       clock,
+      wallNow,
       log: o.log,
       replay: {
         recordedAt: session.recordedAt,

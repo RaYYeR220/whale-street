@@ -112,7 +112,13 @@ export const playerView = (p: PlayerRow): PlayerView => ({
 
 const pick = <T>(xs: readonly T[]): T => xs[randomInt(xs.length)] as T;
 
-export function createPlayersService(d: { repos: Repos; clock: Clock }): PlayersService {
+/** `wallNow` (default `clock.now`) times the wallet-link nonce: a TTL must not loop with REPLAY. */
+export function createPlayersService(d: {
+  repos: Repos;
+  clock: Clock;
+  wallNow?: () => number;
+}): PlayersService {
+  const wallNow = d.wallNow ?? (() => d.clock.now());
   const uniqueHandle = (base: () => string): string => {
     for (let i = 0; i < 50; i++) {
       const h = `${base()} #${randomInt(100, 1_000)}`;
@@ -168,14 +174,14 @@ export function createPlayersService(d: { repos: Repos; clock: Clock }): Players
     },
     nonce(playerId) {
       const nonce = randomBytes(16).toString('hex');
-      d.repos.kv.setJson(`nonce:${playerId}`, { nonce, exp: d.clock.now() + NONCE_TTL_MS });
+      d.repos.kv.setJson(`nonce:${playerId}`, { nonce, exp: wallNow() + NONCE_TTL_MS });
       return nonce;
     },
     async link(playerId, address, signature) {
       if (!isAddress(address))
         return { ok: false, code: 'INVALID_ADDRESS', message: 'invalid wallet address' };
       const stored = d.repos.kv.getJson<{ nonce: string; exp: number }>(`nonce:${playerId}`);
-      if (!stored || stored.exp < d.clock.now()) {
+      if (!stored || stored.exp < wallNow()) {
         return { ok: false, code: 'NO_NONCE', message: 'request a fresh nonce first' };
       }
       d.repos.kv.delete(`nonce:${playerId}`);

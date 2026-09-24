@@ -67,13 +67,15 @@ export async function seedReplayCompanies(
 }
 
 /**
- * REPLAY loop wrap: rewind the feed (and replay its first records so marks are the recording's
- * opening marks, not the previous loop's closing ones), then reset every company to its first
- * snapshot. Players keep their portfolios.
+ * REPLAY loop wrap: re-base every engine-clock timer on the rewound clock (due times from the
+ * previous loop would lie beyond the loop's end and never fire), rewind the feed and replay its
+ * first records (so marks are the recording's opening marks, not the previous loop's closing
+ * ones), then reset every company to its first snapshot. Players keep their portfolios.
  */
 export function restartReplay(e: Engine, feed: ReplayFeed): void {
+  const now = e.clock.now();
+  e.resetTimers(now);
   feed.rewind();
   feed.advance();
-  const now = e.clock.now();
   for (const rt of e.state.list()) reinitialize(e, rt, now, 'replay restarted');
 }

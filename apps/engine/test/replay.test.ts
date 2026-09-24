@@ -1,15 +1,21 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { requestKey } from '@whale-street/nansen';
 import { afterEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/boot';
 import { loadConfig } from '../src/config';
-import { buildRuntime } from '../src/deps';
+import {
+  buildRuntime,
+  NANSEN_DATA_BUDGET,
+  NANSEN_KEY_LIMITS,
+  NANSEN_TRADING_BUDGET,
+} from '../src/deps';
 import { fetchPositions } from '../src/ingest/positions';
 import { silentLogger } from '../src/log';
 import { filterSessionLines } from '../src/replay/filter';
-import { parseSession } from '../src/replay/load';
+import { loadReplaySession, parseSession } from '../src/replay/load';
 import { createSessionRecorder } from '../src/replay/record';
 import { SYNTHETIC_A, SYNTHETIC_B, SYNTHETIC_T0, syntheticSession } from '../src/replay/synthetic';
 import { FakeFeed, hlTrade } from './helpers/fake-hl';
@@ -104,9 +110,35 @@ describe('session loading and filtering', () => {
     ];
     const kept = filterSessionLines(lines).map((l) => JSON.parse(l) as { t: number });
     expect(kept.map((r) => r.t)).toEqual([1, 6, 7, 8]);
-    expect(
-      filterSessionLines(lines, [5, 7]).map((l) => (JSON.parse(l) as { t: number }).t),
-    ).toEqual([6, 7]);
+    // Seed lines survive any window (re-timed into it) so a trimmed bundle keeps its companies.
+    const trimmed = filterSessionLines(lines, [5, 7]).map(
+      (l) => JSON.parse(l) as { t: number; k: string },
+    );
+    expect(trimmed.map((r) => `${r.k}@${r.t}`)).toEqual(['nansen@6', 'hl@7', 'seed@7']);
+  });
+
+  it('keeps seed lines regardless of the window, clamped to its bounds', () => {
+    const seed = (t: number, address: string) =>
+      JSON.stringify({
+        t,
+        k: 'seed',
+        company: { address, ticker: 'A', name: 'A Co', anchorDate: 'x', listedAt: t },
+      });
+    const lines = [
+      seed(1, SYNTHETIC_A),
+      JSON.stringify({ t: 50, k: 'hl', channel: 'mids', data: { BTC: 1 } }),
+      seed(90, SYNTHETIC_B),
+    ];
+    const out = filterSessionLines(lines, [40, 60]).map(
+      (l) => JSON.parse(l) as { t: number; k: string; company?: { address: string } },
+    );
+    expect(out.map((r) => [r.k, r.t, r.company?.address ?? null])).toEqual([
+      ['seed', 40, SYNTHETIC_A],
+      ['hl', 50, null],
+      ['seed', 60, SYNTHETIC_B],
+    ]);
+    const s = parseSession(out.map((r) => JSON.stringify(r)).join('\n'));
+    expect([s.startT, s.endT]).toEqual([40, 60]);
   });
 
   it('scrubs Nansen label/name fields from bundled bodies, recursively, keeping everything else', () => {
@@ -295,5 +327,211 @@ describe('LIVE recording privacy', () => {
     await app.close();
     await engine.stop();
     runtime.deps.db.close();
+  });
+});
+
+const COUNTERPARTY = '0x00000000000000000000000000000000000000ff';
+
+/** Boots the real REPLAY runtime from session lines, with a test-controlled wall clock. */
+async function bootReplay(lines: readonly string[]) {
+  const dir = join(tmpdir(), `ws-replay-${randomUUID()}`);
+  dirs.push(dir);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'session.ndjson');
+  writeFileSync(file, `${lines.join('\n')}\n`);
+  const config = loadConfig({ MODE: 'replay', REPLAY_FILE: file, DATA_DIR: dir }, () => {
+    throw new Error('unused');
+  });
+  const wall = { t: 5_000_000 };
+  const runtime = buildRuntime(config, {
+    log: silentLogger,
+    dbPath: ':memory:',
+    wallNow: () => wall.t,
+  });
+  const { engine, app } = await boot(runtime);
+  await app.ready();
+  const step = async (ms = 1_000) => {
+    wall.t += ms;
+    engine.tick();
+    await engine.settle();
+  };
+  const close = async () => {
+    await app.close();
+    await engine.stop();
+    runtime.deps.db.close();
+  };
+  return { engine, app, runtime, wall, step, close };
+}
+
+describe('REPLAY loader', () => {
+  it('serves only allowlisted, label-scrubbed records even from a raw session file', async () => {
+    const nansenLine = (path: string, requestBody: unknown, body: unknown) =>
+      JSON.stringify({
+        t: SYNTHETIC_T0 + 1_000,
+        k: 'nansen',
+        key: requestKey('POST', `https://api.nansen.ai${path}`, JSON.stringify(requestBody)),
+        path,
+        status: 200,
+        body,
+      });
+    const leaderboard = nansenLine(
+      '/api/v1/perp-leaderboard',
+      {
+        date: { from: 'x', to: 'y' },
+        pagination: { page: 1, per_page: 100 },
+        order_by: [{ field: 'total_pnl', direction: 'DESC' }],
+      },
+      {
+        data: [
+          { trader_address: SYNTHETIC_A, total_pnl: 1, roi: 1, account_value: 1, total_trades: 1 },
+        ],
+      },
+    );
+    const funder = nansenLine(
+      '/api/v1/profiler/address/first-funder',
+      { address: SYNTHETIC_A, chain: 'all' },
+      { data: [{ first_funder_address: SYNTHETIC_B, first_funder_name: 'Secret Fund' }] },
+    );
+    const raw = [...syntheticSession(), leaderboard, funder];
+    const loaded = loadReplaySession(raw.join('\n'));
+    expect(loaded.dropped).toBe(1);
+    expect(loaded.nansen.map((x) => x.path)).not.toContain('/api/v1/perp-leaderboard');
+    expect(JSON.stringify(loaded.nansen)).not.toContain('Secret Fund');
+    expect(parseSession(raw.join('\n')).dropped).toBe(0);
+
+    const r = await bootReplay(raw);
+    const lb = await r.runtime.deps.nansen.perpLeaderboard('2026-01-01', '2026-01-02');
+    expect(lb).toMatchObject({ ok: false, status: 503 });
+    const ff = await r.runtime.deps.nansen.firstFunder(SYNTHETIC_A);
+    expect(ff).toMatchObject({ ok: true, value: { funder: SYNTHETIC_B, funderName: null } });
+    await r.close();
+  });
+});
+
+describe('LIVE Nansen budget', () => {
+  it('splits the key budget between the data and trading clients', async () => {
+    expect(NANSEN_TRADING_BUDGET).toEqual({ perSecond: 2, perMinute: 20 });
+    expect(NANSEN_DATA_BUDGET).toEqual({ perSecond: 13, perMinute: 280 });
+    expect(NANSEN_DATA_BUDGET.perSecond + NANSEN_TRADING_BUDGET.perSecond).toBeLessThanOrEqual(
+      NANSEN_KEY_LIMITS.perSecond,
+    );
+    expect(NANSEN_DATA_BUDGET.perMinute + NANSEN_TRADING_BUDGET.perMinute).toBeLessThanOrEqual(
+      NANSEN_KEY_LIMITS.perMinute,
+    );
+    const dir = join(tmpdir(), `ws-budget-${randomUUID()}`);
+    dirs.push(dir);
+    const fakeFetch = (async () =>
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+    const config = loadConfig({ MODE: 'live', NANSEN_API_KEY: 'k', DATA_DIR: dir }, () => {
+      throw new Error('unused');
+    });
+    const runtime = buildRuntime(config, {
+      log: silentLogger,
+      dbPath: ':memory:',
+      fetch: fakeFetch,
+    });
+    const trading = runtime.deps.trading;
+    if (!trading) throw new Error('LIVE must have a trading port');
+    const t0 = Date.now();
+    const data: number[] = [];
+    const trades: number[] = [];
+    await Promise.all([
+      ...Array.from({ length: 14 }, () =>
+        runtime.deps.nansen.perpPositions(SYNTHETIC_A).then(() => data.push(Date.now() - t0)),
+      ),
+      ...Array.from({ length: 3 }, () => trading.meta().then(() => trades.push(Date.now() - t0))),
+    ]);
+    // Lower bounds only: the 14th data call (13/s) and the 3rd trading call (2/s) had to wait.
+    expect(Math.max(...data)).toBeGreaterThanOrEqual(900);
+    expect(Math.max(...trades)).toBeGreaterThanOrEqual(900);
+    runtime.deps.db.close();
+  });
+});
+
+describe('REPLAY loop wrap', () => {
+  it('keeps bots, heartbeats and triggers alive in every loop; a late trade does not halt', async () => {
+    // Company A also trades 5 s before the end of the recording: its trigger would come due
+    // after endT, which the looping clock never reaches.
+    const late = JSON.stringify({
+      t: SYNTHETIC_T0 + 595_000,
+      k: 'hl',
+      channel: 'trades',
+      data: [
+        {
+          coin: 'SOL',
+          side: 'B',
+          px: 151,
+          sz: 1,
+          time: SYNTHETIC_T0 + 595_000,
+          hash: '0x595',
+          users: [SYNTHETIC_A, COUNTERPARTY],
+        },
+      ],
+    });
+    const r = await bootReplay([...syntheticSession(), late]);
+    const { engine } = r;
+    engine.idle.clientConnected(engine.clock.now());
+    const beats = [0, 0, 0];
+    let loop = 0;
+    const refresh = engine.refresher.refresh.bind(engine.refresher);
+    engine.refresher.refresh = (id, reason) => {
+      if (reason === 'heartbeat') beats[loop] = (beats[loop] ?? 0) + 1;
+      return refresh(id, reason);
+    };
+    const lastTradeId = () => engine.repos.trades.recent(1)[0]?.id ?? 0;
+    const lastFilingId = () => engine.repos.filings.recent(1)[0]?.id ?? 0;
+    const bounds: Array<{ trade: number; filing: number }> = [];
+    for (loop = 0; loop < 3; loop++) {
+      bounds.push({ trade: lastTradeId(), filing: lastFilingId() });
+      for (let s = 0; s < 600; s++) await r.step();
+    }
+    bounds.push({ trade: lastTradeId(), filing: lastFilingId() });
+
+    const inLoop = <T extends { id: number }>(rows: T[], l: number, key: 'trade' | 'filing') =>
+      rows.filter((x) => x.id > (bounds[l]?.[key] ?? 0) && x.id <= (bounds[l + 1]?.[key] ?? 0));
+    const trades = engine.repos.trades.recent(100_000);
+    const filings = engine.repos.filings.recent(100_000);
+    for (const l of [1, 2]) {
+      expect(beats[l], `heartbeats in loop ${l}`).toBeGreaterThan(0);
+      const bot = inLoop(trades, l, 'trade').filter((t) => t.playerId.startsWith('bot-'));
+      expect(bot.length, `bot trades in loop ${l}`).toBeGreaterThan(0);
+      expect(bot.some((t) => t.playerId === 'bot-vulture' && t.side === 'SHORT')).toBe(true);
+      const kinds = inLoop(filings, l, 'filing').map(
+        (f) => `${f.companyId === SYNTHETIC_A ? 'A' : 'B'}:${f.kind}`,
+      );
+      expect(kinds, `filings in loop ${l}`).toEqual(
+        expect.arrayContaining(['A:CLOSE', 'A:OPEN', 'B:LIQUIDATION', 'B:BANKRUPTCY']),
+      );
+      expect(kinds, `no halt for A in loop ${l}`).not.toContain('A:HALT');
+    }
+    expect(engine.state.get(SYNTHETIC_A)?.status).toBe('ACTIVE');
+    await r.close();
+  }, 60_000);
+
+  it('runs anti-abuse caps on wall time: a wrap neither resets them nor makes them lifetime', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    const { player } = engine.players.create('human');
+    const addr = (i: number) => `0x${(0xc00 + i).toString(16).padStart(40, '0')}`;
+    for (let i = 0; i < 3; i++) expect(engine.ipo.apply(player.id, addr(i)).ok).toBe(true);
+    expect(engine.ipo.apply(player.id, addr(3))).toMatchObject({ ok: false, code: 'RATE_LIMITED' });
+    const signup = async () =>
+      (await app.inject({ method: 'POST', url: '/api/players' })).statusCode;
+    for (let i = 0; i < 20; i++) expect(await signup()).toBe(201);
+    expect(await signup()).toBe(429);
+
+    // 30 minutes later: three loop wraps, but still inside the hour.
+    await r.step(30 * 60_000);
+    expect(engine.ipo.apply(player.id, addr(4))).toMatchObject({ ok: false, code: 'RATE_LIMITED' });
+    expect(await signup()).toBe(429);
+
+    // Past the hour on the wall clock: the caps have room again.
+    await r.step(31 * 60_000);
+    expect(engine.ipo.apply(player.id, addr(5)).ok).toBe(true);
+    expect(await signup()).toBe(201);
+    await r.close();
   });
 });

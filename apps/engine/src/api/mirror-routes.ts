@@ -29,7 +29,7 @@ const fail = (reply: FastifyReply, e: MirrorError) =>
     .send({ error: e.code, message: e.message, ...(e.refusals ? { refusals: e.refusals } : {}) });
 
 export function registerMirrorRoutes(app: FastifyInstance, e: Engine): void {
-  const prepares = new RateGate(10, MINUTE_MS, () => e.clock.now());
+  const prepares = new RateGate(10, MINUTE_MS, () => e.wallNow());
 
   app.get('/api/mirror/status', async () => ({
     available: e.mirror.available(),

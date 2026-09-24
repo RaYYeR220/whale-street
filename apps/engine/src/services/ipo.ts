@@ -48,6 +48,11 @@ export interface IpoDeps {
   /** REPLAY only: addresses present in the recording; anything else is DEFERRED without a call. */
   knownAddresses?: ReadonlySet<string> | null;
   params?: Params;
+  /**
+   * Wall clock for the per-player hourly cap (default `clock.now`). In REPLAY the engine clock
+   * loops, which would turn a clock-time window into a lifetime cap.
+   */
+  wallNow?: () => number;
 }
 
 export interface IpoService {
@@ -80,6 +85,7 @@ function reasonOf(v: ListingVerdict): string | null {
 
 export function createIpoService(d: IpoDeps): IpoService {
   const params = d.params ?? PARAMS;
+  const wallNow = d.wallNow ?? (() => d.clock.now());
   const queue: string[] = [];
   let running: Promise<void> | null = null;
 
@@ -164,9 +170,11 @@ export function createIpoService(d: IpoDeps): IpoService {
         };
       const address = raw.toLowerCase();
       const now = d.clock.now();
+      const wall = wallNow();
       if (
         playerId &&
-        d.repos.ipoApps.countByPlayerSince(playerId, now - HOUR_MS) >= IPO_PER_PLAYER_PER_HOUR
+        d.repos.ipoApps.countByPlayerAppliedSince(playerId, wall - HOUR_MS) >=
+          IPO_PER_PLAYER_PER_HOUR
       ) {
         return {
           ok: false,
@@ -185,6 +193,7 @@ export function createIpoService(d: IpoDeps): IpoService {
         ticker: null,
         createdAt: now,
         decidedAt: null,
+        appliedWallAt: wall,
       });
       if (d.state.flags.creditFloor) {
         decide(

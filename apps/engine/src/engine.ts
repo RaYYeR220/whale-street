@@ -46,6 +46,12 @@ export interface EngineDeps {
   log: Logger;
   replay: ReplayRuntime | null;
   params?: Params;
+  /**
+   * Monotonic wall clock for anti-abuse windows (rate gates, per-hour caps, nonce TTLs) and
+   * presentation throttles: it never loops, unlike the REPLAY clock. Defaults to `clock.now`
+   * (identical in LIVE); REPLAY passes the real wall clock.
+   */
+  wallNow?: () => number;
 }
 
 export interface StatusView {
@@ -65,6 +71,8 @@ export interface StatusView {
 export interface Engine {
   readonly config: Config;
   readonly clock: Clock;
+  /** Wall time for rate gates and caps (see EngineDeps.wallNow); never the looping REPLAY clock. */
+  wallNow(): number;
   readonly log: Logger;
   readonly params: Params;
   readonly repos: Repos;
@@ -88,6 +96,11 @@ export interface Engine {
   readonly scheduler: Scheduler;
   /** One 1 Hz step: replay advance → idle gate → scheduler → market loop → bots → season rollover. */
   tick(): void;
+  /**
+   * REPLAY loop wrap: re-bases every timer kept in engine-clock time (scheduler due times,
+   * heartbeats, bot decision times, the idle gate, the marks timestamp) on the rewound clock.
+   */
+  resetTimers(now: number): void;
   /** Starts the HL feed and the 1 Hz interval. */
   start(): void;
   stop(): Promise<void>;
@@ -100,6 +113,7 @@ export interface Engine {
 export function createEngine(deps: EngineDeps): Engine {
   const { config, clock, log, nansen, hl } = deps;
   const params = deps.params ?? PARAMS;
+  const wallNow = deps.wallNow ?? (() => clock.now());
   const now = clock.now();
   const repos = createRepos(deps.db);
   const bus = new EventBus(log);
@@ -141,8 +155,9 @@ export function createEngine(deps: EngineDeps): Engine {
     listing,
     knownAddresses: deps.replay?.knownAddresses ?? null,
     params,
+    wallNow,
   });
-  const players = createPlayersService({ repos, clock });
+  const players = createPlayersService({ repos, clock, wallNow });
   const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays });
   seasons.ensure(now);
   const exchange = createExchange({ state, repos, bus, clock, seasons, params });
@@ -202,6 +217,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const engine: Engine = {
     config,
     clock,
+    wallNow,
     log,
     params,
     repos,
@@ -235,6 +251,14 @@ export function createEngine(deps: EngineDeps): Engine {
       } catch (err) {
         log.error('tick failed', { error: String(err) });
       }
+    },
+    resetTimers(t) {
+      scheduler.reset(t);
+      bots.reset();
+      idle.reset(t);
+      // Marks stamped in the previous loop's future would look fresh for a whole loop; mark them
+      // stale instead (the replay feed's opening mids re-stamp them right away).
+      if (state.marksAt > t) state.marksAt = 0;
     },
     start() {
       hl.feed.start();

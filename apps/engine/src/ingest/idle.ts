@@ -9,6 +9,8 @@ export interface IdleGate {
   clientDisconnected(now: number): void;
   clients(): number;
   tick(now: number): void;
+  /** REPLAY loop wrap: re-bases the idle timer (and the wake time) on the rewound clock. */
+  reset(now: number): void;
 }
 
 export function createIdleGate(
@@ -40,6 +42,10 @@ export function createIdleGate(
         state.flags.idle = true;
         bus.emit({ t: 'status' });
       }
+    },
+    reset(now) {
+      lastSeen = now;
+      state.flags.wokeAt = Math.min(state.flags.wokeAt, now);
     },
   };
 }

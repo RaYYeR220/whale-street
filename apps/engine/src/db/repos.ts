@@ -103,7 +103,8 @@ export interface Repos {
     get(id: string): IpoAppRow | undefined;
     update(id: string, patch: Partial<Omit<IpoAppRow, 'id'>>): void;
     recent(limit: number): IpoAppRow[];
-    countByPlayerSince(playerId: string, since: number): number;
+    /** Applications by a player whose wall-clock `appliedWallAt` is at or after `wallSince`. */
+    countByPlayerAppliedSince(playerId: string, wallSince: number): number;
   };
   nansenCalls: {
     insert(r: CallRecord): void;
@@ -408,11 +409,11 @@ export function createRepos({ sqlite, db }: Db): Repos {
       },
       recent: (limit) =>
         db.select().from(ipoApps).orderBy(desc(ipoApps.createdAt)).limit(limit).all(),
-      countByPlayerSince: (playerId, since) =>
+      countByPlayerAppliedSince: (playerId, wallSince) =>
         db
           .select({ id: ipoApps.id })
           .from(ipoApps)
-          .where(and(eq(ipoApps.playerId, playerId), gte(ipoApps.createdAt, since)))
+          .where(and(eq(ipoApps.playerId, playerId), gte(ipoApps.appliedWallAt, wallSince)))
           .all().length,
     },
 
