@@ -1,0 +1,191 @@
+/* ==========================================================================
+   Whale Street — embeddable stock widget (/embed/[ticker]), 320 x 120.
+   ========================================================================== */
+:root:has(.em-body) body.ws {
+  background-image: none;
+}
+.em-body {
+  min-height: 100vh;
+  margin: 0;
+  display: grid;
+  place-items: center;
+}
+.em {
+  position: relative;
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas: "art head" "art kv" "art spark" "art foot";
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 320px;
+  height: 120px;
+  padding: 8px 12px 7px 6px;
+  overflow: hidden;
+  background: var(--ws-panel);
+  color: var(--ws-text);
+  text-decoration: none;
+  isolation: isolate;
+}
+.em::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2.5px solid var(--ws-ink);
+  filter: url(#ws-rough-sm);
+  pointer-events: none;
+  z-index: 3;
+}
+.em:focus-visible {
+  outline: 3px solid var(--ws-blue);
+  outline-offset: -3px;
+}
+.em.is-hype {
+  background:
+    radial-gradient(circle at 16% 60%, rgba(255, 72, 176, 0.22), transparent 42%), var(--ws-panel);
+}
+.em__art {
+  grid-area: art;
+  position: relative;
+  align-self: end;
+  margin: 0 0 -9px -4px;
+  line-height: 0;
+}
+.em__art svg {
+  width: 100px;
+  height: auto;
+  overflow: visible;
+}
+.em__head {
+  grid-area: head;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+.em__id {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.em__tk {
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-18);
+  line-height: 1.1;
+}
+.em__name {
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.em .ws-price {
+  font-size: var(--ws-fs-21);
+  line-height: 1.05;
+}
+.em__kv {
+  grid-area: kv;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--ws-fs-13);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.em__kv b {
+  font-weight: 900;
+}
+.em__chg {
+  margin-left: auto;
+  font-weight: 700;
+}
+.em__spark {
+  grid-area: spark;
+  min-height: 0;
+  padding-top: 3px;
+}
+.em__spark .ws-spark {
+  --spark-h: 100%;
+  height: 100%;
+}
+.em__foot {
+  grid-area: foot;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--ws-fs-13);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.em__on {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 700;
+}
+.em__on i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2.5px solid var(--ws-pink);
+  box-shadow: 1px 1px 0 var(--ws-blue);
+}
+.em__on b {
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+}
+.em__mode {
+  padding: 0 5px;
+  border: 1.5px solid var(--ws-blue-text);
+  border-radius: 3px;
+  color: var(--ws-blue-text);
+  font-weight: 900;
+}
+.em__hp {
+  color: var(--ws-text-2);
+  font-variant-numeric: tabular-nums;
+}
+.em__hp.is-hot {
+  color: var(--ws-red-text);
+  font-weight: 900;
+}
+.em:hover .em__on b {
+  text-decoration: underline;
+  text-decoration-color: var(--ws-pink);
+  text-underline-offset: 2px;
+}
+.em.is-halted .ws-price,
+.em.is-halted .em__kv b {
+  color: var(--ws-text-2);
+}
+.em.is-bankrupt,
+.em.is-delisted {
+  background: #d6d0c5;
+}
+.em.is-bankrupt .em__art,
+.em.is-bankrupt .em__spark,
+.em.is-delisted .em__art,
+.em.is-delisted .em__spark {
+  filter: grayscale(1);
+}
+.em.is-bankrupt .ws-price,
+.em.is-delisted .ws-price {
+  text-decoration: line-through;
+  text-decoration-color: var(--ws-red);
+  text-decoration-thickness: 2px;
+}
+.em.is-offline {
+  place-items: center;
+  grid-template-columns: 1fr;
+  grid-template-areas: "head";
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .em .ws-price {
+    animation: none !important;
+  }
+}

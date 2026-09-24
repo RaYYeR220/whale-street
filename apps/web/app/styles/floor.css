@@ -1,0 +1,281 @@
+/* ==========================================================================
+   Whale Street — Floor (/floor). Components come from ws.css; this file only
+   lays out the roster (a manga page), the market strip and the right rail.
+   ========================================================================== */
+
+.floor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 384px);
+  gap: 32px;
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: 24px 24px calc(var(--ws-breaking-h) + 32px);
+}
+.floor__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  gap: 12px 16px;
+  align-items: center;
+  margin-bottom: 32px;
+}
+.floor__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.floor__meta {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 24px;
+}
+.floor__hint {
+  margin: 0;
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.floor__hint b {
+  color: var(--ws-text);
+}
+
+.roster {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: minmax(216px, auto);
+  grid-auto-flow: dense;
+  gap: 16px;
+  transition: opacity 0.18s ease;
+}
+.roster.is-sorting {
+  opacity: 0;
+}
+.roster__none {
+  grid-column: 1 / -1;
+}
+.ws-co.is-pinged {
+  outline: 4px solid var(--ws-pink);
+  outline-offset: 6px;
+}
+.ws-co:has(.ws-co__tk:focus-visible),
+.ws-co:has(.ws-co__actions :focus-visible) {
+  outline: 3px solid var(--ws-blue);
+  outline-offset: 6px;
+}
+.ws-co__tk:focus-visible {
+  outline: none;
+}
+
+.floor__rail {
+  display: grid;
+  align-content: start;
+  gap: 40px;
+  padding-top: 14px;
+}
+.rail-news:not(.is-all) .ws-news__item:nth-child(n + 8) {
+  display: none;
+}
+
+.floor__foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding-top: 16px;
+  border-top: 2px solid var(--ws-ink);
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.floor__foot p {
+  margin: 0;
+  max-width: 72ch;
+}
+.floor__foot b {
+  color: var(--ws-mint-text);
+}
+
+.strip-nansen {
+  margin-left: auto;
+}
+.strip-nansen .ws-stat__v {
+  font-size: var(--ws-fs-16);
+}
+.strip-bk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.strip-bk__face {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-paper);
+  display: grid;
+  place-items: center;
+}
+.strip-bk__face svg {
+  width: 40px;
+  height: 40px;
+  margin-top: 7px;
+}
+
+/* ---------------- tablet: rail drops under the roster ---------------- */
+@media (max-width: 1279px) {
+  .floor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .floor__rail {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 40px 24px;
+    padding-top: 24px;
+  }
+}
+@media (max-width: 1080px) {
+  .floor__rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rail-tape {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ---------------- mobile ---------------- */
+@media (max-width: 760px) {
+  .ws-strip {
+    margin: 12px 0 0;
+    padding: 0 16px;
+  }
+  .ws-strip .ws-stat {
+    padding: 2px 16px 2px 12px;
+  }
+  .ws-strip .ws-stat:first-child {
+    padding-left: 0;
+  }
+  .ws-strip .ws-stat__v {
+    font-size: var(--ws-fs-18);
+  }
+  .strip-nansen {
+    margin-left: 0;
+  }
+
+  .floor {
+    padding: 20px 16px calc(64px + var(--ws-breaking-h) + 32px);
+    gap: 24px;
+  }
+  .floor__controls {
+    grid-template-columns: minmax(0, 1fr);
+    margin-bottom: 24px;
+  }
+  .floor__chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 0 -16px;
+    padding: 4px 16px 6px;
+    scrollbar-width: none;
+  }
+  .floor__chips::-webkit-scrollbar {
+    display: none;
+  }
+  .floor__meta .ws-legend {
+    display: none;
+  }
+
+  .roster {
+    grid-template-columns: minmax(0, 1fr);
+    grid-auto-rows: auto;
+    gap: 24px;
+  }
+  .roster > .ws-co {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+  .roster .ws-co--xl,
+  .roster .ws-co--l,
+  .roster .ws-co--m,
+  .roster .ws-co--s {
+    --art: 104px;
+    --spark-h: 40px;
+    grid-template-columns: var(--art) minmax(0, 1fr) auto;
+    grid-template-areas: "art head head" "art px px" "art kv kv" "spark spark spark" "hp hp hp" "pos pos act" "desk desk desk";
+    grid-template-rows: auto auto 1fr auto auto auto auto;
+    padding-top: 20px;
+    min-height: 0;
+  }
+  .roster .ws-co--xl {
+    --art: 132px;
+    --spark-h: 64px;
+  }
+  .roster .ws-co--xl .ws-co__tk {
+    font-size: var(--ws-fs-30);
+  }
+  .roster .ws-co--xl .ws-price,
+  .roster .ws-co--l .ws-price {
+    font-size: var(--ws-fs-30);
+  }
+  .roster .ws-co--xl .ws-co__art {
+    margin-top: 0;
+  }
+  .roster .ws-co--l .ws-co__px {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 2px 8px;
+  }
+  .roster .ws-co__desk {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .roster .ws-co__desk .ws-paper-slip:nth-child(n + 3) {
+    display: none;
+  }
+  .roster .ws-co__actions {
+    grid-area: act;
+    position: static;
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+    padding: 0;
+    background: none;
+    justify-content: flex-end;
+    align-self: center;
+  }
+  .roster .ws-co--xl .ws-co__actions {
+    grid-area: pos;
+    justify-content: flex-start;
+    padding-top: 4px;
+  }
+  .roster .ws-co__pos,
+  .roster .ws-co__halt-note,
+  .roster .ws-co__rip {
+    align-self: center;
+  }
+  .roster .ws-co__liq,
+  .roster .ws-co__more {
+    display: none;
+  }
+  .roster .ws-co__say {
+    display: none;
+  }
+  .roster .ws-co.is-bankrupt .ws-hanko {
+    width: 96px;
+    height: 96px;
+    margin-top: -48px;
+  }
+  .roster .ws-co.is-bankrupt .ws-hanko__kanji {
+    font-size: var(--ws-fs-24);
+  }
+
+  .floor__rail {
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 16px;
+  }
+  .rail-news:not(.is-all) .ws-news__item:nth-child(n + 6) {
+    display: none;
+  }
+  .floor__foot {
+    padding-bottom: 8px;
+  }
+}

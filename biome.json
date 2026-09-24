@@ -1,9 +1,31 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/.next", "!**/dist", "!**/coverage", "!**/*.db"]
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/.next",
+      "!**/dist",
+      "!**/coverage",
+      "!**/*.db",
+      "!**/next-env.d.ts",
+      "!**/test-results",
+      "!**/playwright-report"
+    ]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
   "linter": { "enabled": true, "rules": { "preset": "recommended" } },
-  "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "always" } }
+  "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "always" } },
+  "overrides": [
+    {
+      "includes": ["apps/web/app/styles/**"],
+      "linter": {
+        "rules": {
+          "style": { "noDescendingSpecificity": "off" },
+          "complexity": { "noImportantStyles": "off" },
+          "correctness": { "noInvalidGridAreas": "off" }
+        }
+      }
+    }
+  ]
 }

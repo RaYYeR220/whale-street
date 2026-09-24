@@ -1,0 +1,1191 @@
+/* ==========================================================================
+   Whale Street — IPO desk (ipo.html). Components from ws.css; this file adds
+   the committee room, verdict sheets and the wall of recent verdicts.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- page */
+.ipo {
+  display: grid;
+  gap: 40px;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 28px 24px calc(var(--ws-breaking-h) + 40px);
+}
+.ipo-h1 {
+  margin: 0 0 8px;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-48);
+  line-height: 1;
+}
+.ipo-h2 {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-30);
+  line-height: 1.15;
+}
+
+/* ---- intake ---- */
+.ipo-intake {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 24px 56px;
+  align-items: end;
+}
+.ipo-intake__t p {
+  margin: 0;
+  max-width: 54ch;
+  font-size: var(--ws-fs-16);
+  line-height: 1.55;
+  color: var(--ws-text);
+}
+.ipo-form__l {
+  display: block;
+  margin-bottom: 6px;
+  font-size: var(--ws-fs-14);
+  font-weight: 900;
+}
+.ipo-form__row {
+  display: flex;
+  gap: 12px;
+}
+.ipo-form__field {
+  flex: 1;
+  min-height: 52px;
+  background: var(--ws-paper);
+}
+.ipo-form__field input {
+  font-size: var(--ws-fs-16);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.ipo-form__go {
+  min-height: 52px;
+  padding: 0 24px;
+  font-size: var(--ws-fs-16);
+}
+.ipo-form__err {
+  margin: 8px 0 0;
+  color: var(--ws-red-text);
+  font-weight: 700;
+  font-size: var(--ws-fs-14);
+}
+.ipo-form__help {
+  margin: 10px 0 0;
+  font-size: var(--ws-fs-14);
+  color: var(--ws-text-2);
+}
+.ipo-form__help .ws-link {
+  font-size: var(--ws-fs-14);
+}
+.ipo-form.is-bad .ipo-form__field {
+  border-color: var(--ws-red);
+  box-shadow: inset 0 0 0 1px var(--ws-red);
+}
+
+/* ---- the committee room ---- */
+.ipo-room {
+  padding: 40px 24px 28px;
+  scroll-margin-top: 80px;
+}
+.ipo-room:focus {
+  outline: none;
+}
+.ipo-room .ws-cap small {
+  font-variant-numeric: tabular-nums;
+}
+.ipo-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin: 0 0 4px;
+  min-height: 28px;
+}
+.ipo-progress__t {
+  font-size: var(--ws-fs-14);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ipo-progress__bar {
+  display: grid;
+  grid-template-columns: repeat(6, 26px);
+  gap: 3px;
+}
+.ipo-progress__bar i {
+  height: 12px;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-paper);
+}
+.ipo-progress__bar i.is-reading {
+  background: var(--ws-pink-wash);
+  animation: ipo-blink 0.9s ease-in-out infinite;
+}
+.ipo-progress__bar i.is-PASS {
+  background: var(--ws-blue);
+}
+.ipo-progress__bar i.is-FAIL {
+  background:
+    repeating-linear-gradient(45deg, rgba(26, 23, 20, 0.4) 0 1.5px, transparent 1.5px 4px),
+    var(--ws-red);
+}
+.ipo-progress__bar i.is-FLAG {
+  background:
+    repeating-linear-gradient(45deg, rgba(26, 23, 20, 0.3) 0 1.5px, transparent 1.5px 5px),
+    var(--ws-pink);
+}
+.ipo-progress__bar i.is-UNKNOWN {
+  background: repeating-linear-gradient(90deg, var(--ws-blue-wash) 0 3px, var(--ws-paper) 3px 6px);
+  border-style: dashed;
+  border-color: var(--ws-blue-text);
+}
+@keyframes ipo-blink {
+  50% {
+    background: var(--ws-pink);
+  }
+}
+.ipo-replay {
+  margin-left: auto;
+  font-size: var(--ws-fs-14);
+}
+
+.ipo-table {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  column-gap: 0;
+  row-gap: 28px;
+}
+.ipo-member {
+  position: relative;
+  display: grid;
+  grid-template-rows: 64px auto auto auto;
+  justify-items: center;
+  min-width: 0;
+}
+.ipo-member__bubble {
+  position: relative;
+  z-index: 8;
+  align-self: end;
+  display: grid;
+  justify-items: center;
+  min-height: 0;
+  margin-bottom: 4px;
+}
+.ipo-member__face {
+  position: relative;
+  z-index: 1;
+  width: 168px;
+  margin-bottom: -34px;
+  line-height: 0;
+}
+.ipo-member__face svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+/* the long table: every member owns one segment, segments touch so it reads as one table */
+.ipo-desk {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 112px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(var(--ws-panel) 0 20px, transparent 20px),
+    radial-gradient(rgba(26, 23, 20, 0.28) 1px, transparent 1.3px) 0 0 / 5px 5px,
+    var(--ws-panel-2);
+  border-top: 3px solid var(--ws-ink);
+  border-bottom: 3px solid var(--ws-ink);
+}
+.ipo-desk::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 20px;
+  border-top: 2px solid var(--ws-ink);
+}
+.ipo-member:first-child .ipo-desk {
+  border-left: 3px solid var(--ws-ink);
+}
+.ipo-member:last-child .ipo-desk {
+  border-right: 3px solid var(--ws-ink);
+}
+.ipo-paper {
+  position: relative;
+  z-index: 1;
+  width: 128px;
+  height: 88px;
+  margin-top: -8px;
+  background:
+    var(--ws-paper) repeating-linear-gradient(transparent 0 13px, rgba(26, 23, 20, 0.16) 13px 14px)
+    0 10px / 100% calc(100% - 20px) no-repeat;
+  border: 1.5px solid var(--ws-ink);
+  box-shadow: 2px 3px 0 rgba(26, 23, 20, 0.25);
+  transform: rotate(var(--pr, -2deg));
+  display: grid;
+  place-items: center;
+}
+.ipo-member:nth-child(even) .ipo-paper {
+  --pr: 1.6deg;
+}
+.ipo-plate {
+  position: relative;
+  z-index: 3;
+  margin-top: -14px;
+  padding: 4px 12px 5px;
+  background: var(--ws-ink);
+  color: var(--ws-paper);
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-14);
+  line-height: 1.2;
+  white-space: nowrap;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 100%, 0 100%);
+}
+.ipo-member__detail {
+  margin: 10px 0 0;
+  padding: 0 8px;
+  max-width: 24ch;
+  text-align: center;
+  font-size: var(--ws-fs-13);
+  line-height: 1.4;
+}
+.ipo-member__detail b {
+  display: block;
+  font-weight: 900;
+  font-size: var(--ws-fs-14);
+}
+.ipo-member__src {
+  display: block;
+  margin-top: 4px;
+  color: var(--ws-text-2);
+}
+.ipo-member[data-s="FAIL"] .ipo-member__detail b {
+  color: var(--ws-red-text);
+}
+.ipo-member[data-s="UNKNOWN"] .ipo-member__detail b {
+  color: var(--ws-blue-text);
+}
+.ipo-member[data-s="pending"] .ipo-member__detail,
+.ipo-member[data-s="thinking"] .ipo-member__detail {
+  color: var(--ws-text-2);
+}
+
+/* thinking cloud: "…" while the member reads the evidence */
+.ipo-think {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 66px;
+  height: 44px;
+  padding: 0 14px 8px;
+  background: var(--ws-paper);
+  border: 2.5px dashed var(--ws-blue-text);
+  border-radius: 50%;
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-21);
+  color: var(--ws-blue-text);
+  line-height: 1;
+}
+.ipo-think::before,
+.ipo-think::after {
+  content: "";
+  position: absolute;
+  border: 2px solid var(--ws-blue-text);
+  border-radius: 50%;
+  background: var(--ws-paper);
+}
+.ipo-think::before {
+  width: 10px;
+  height: 10px;
+  bottom: -15px;
+  left: 44%;
+}
+.ipo-think::after {
+  width: 6px;
+  height: 6px;
+  bottom: -24px;
+  left: 40%;
+}
+.ipo-think span {
+  display: inline-block;
+  animation: ipo-dot 1s ease-in-out infinite;
+}
+.ipo-think span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.ipo-think span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes ipo-dot {
+  0%,
+  100% {
+    transform: none;
+    opacity: 0.55;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+.ipo-think--q {
+  font-size: var(--ws-fs-24);
+}
+.ipo-shout {
+  width: max-content;
+  max-width: 240px;
+  font-size: var(--ws-fs-14);
+  font-weight: 900;
+  line-height: 1.3;
+  text-align: center;
+  animation: ipo-shout-in 0.35s var(--ws-ease-stamp) both;
+}
+@keyframes ipo-shout-in {
+  from {
+    transform: scale(0.4) rotate(-6deg);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* per-check stamp on the paper */
+.ipo-mark {
+  --c: var(--ws-blue);
+  --ct: var(--ws-blue-text);
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  width: 74px;
+  height: 74px;
+  color: var(--ct);
+  text-align: center;
+  line-height: 1;
+  transform: rotate(-12deg);
+}
+.ipo-mark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3.5px solid var(--c);
+  box-shadow:
+    inset 0 0 0 3px transparent,
+    inset 0 0 0 5px var(--c);
+  filter: url(#ws-rough-stamp);
+}
+.ipo-mark b {
+  position: relative;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-21);
+}
+.ipo-mark small {
+  position: relative;
+  margin-top: 3px;
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-12);
+  letter-spacing: 0.03em;
+}
+.ipo-mark[data-s="FAIL"] {
+  --c: var(--ws-red);
+  --ct: var(--ws-red-text);
+}
+.ipo-mark[data-s="FLAG"] {
+  --c: var(--ws-pink);
+  --ct: var(--ws-pink-text);
+}
+.ipo-mark[data-s="UNKNOWN"] {
+  --c: var(--ws-blue-text);
+}
+.ipo-mark[data-s="UNKNOWN"]::before {
+  border-style: dashed;
+  box-shadow: none;
+  filter: none;
+}
+.ipo-mark.is-stamping {
+  animation: ipo-mark-in 0.34s var(--ws-ease-stamp) both;
+}
+@keyframes ipo-mark-in {
+  0% {
+    transform: rotate(-4deg) scale(2);
+    opacity: 0;
+  }
+  60% {
+    transform: rotate(-13deg) scale(0.92);
+    opacity: 1;
+  }
+  100% {
+    transform: rotate(-12deg) scale(1);
+  }
+}
+.ipo-member.is-thud .ipo-paper {
+  animation: ipo-thud 0.3s ease-out;
+}
+@keyframes ipo-thud {
+  30% {
+    transform: rotate(var(--pr, -2deg)) translateY(3px) scale(0.97);
+  }
+}
+
+/* the giant verdict stamp over the table */
+.ipo-stamp-slot {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  z-index: 20;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+.ipo-stamp-slot .ws-hanko {
+  width: 250px;
+  height: 250px;
+  background: rgba(243, 238, 226, 0.58);
+  border-radius: 50%;
+}
+.ipo-stamp-slot .ws-hanko::before {
+  border-width: 8px;
+  box-shadow:
+    inset 0 0 0 6px transparent,
+    inset 0 0 0 11px var(--c);
+}
+.ipo-stamp-slot .ws-hanko__kanji {
+  font-size: 4.5rem;
+}
+.ipo-stamp-slot .ws-hanko__word {
+  font-size: var(--ws-fs-30);
+  letter-spacing: 0.02em;
+}
+.ipo-hanko--ink {
+  --c: var(--ws-ink);
+}
+.ipo-room.is-decided .ipo-table {
+  filter: saturate(0.75);
+}
+.ipo-room.is-shake {
+  animation: ipo-shake 0.38s ease-out;
+}
+@keyframes ipo-shake {
+  20% {
+    transform: translate(-3px, 2px) rotate(var(--rot));
+  }
+  45% {
+    transform: translate(3px, -2px) rotate(var(--rot));
+  }
+  70% {
+    transform: translate(-1px, 1px) rotate(var(--rot));
+  }
+}
+.ipo-bell {
+  position: absolute;
+  left: calc(50% + 120px);
+  top: calc(52% - 170px);
+  z-index: 21;
+}
+
+/* ---- verdict sheet ---- */
+.ipo-verdict {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 32px 48px;
+  padding: 44px 32px 32px;
+  scroll-margin-top: 80px;
+}
+.ipo-verdict:focus {
+  outline: none;
+}
+.ipo-verdict.is-in {
+  animation: ipo-sheet 0.45s var(--ws-ease-out) both;
+}
+@keyframes ipo-sheet {
+  from {
+    transform: translateY(14px) rotate(var(--rot));
+    opacity: 0;
+  }
+  to {
+    transform: rotate(var(--rot));
+    opacity: 1;
+  }
+}
+.ipo-v__main {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+.ipo-v__kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.ipo-verdict h2 {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-36);
+  line-height: 1.12;
+}
+.ipo-verdict[data-d="DENIED"] h2 {
+  color: var(--ws-red-text);
+}
+.ipo-verdict[data-d="APPROVED"] h2 {
+  color: var(--ws-blue-text);
+}
+.ipo-v__reason {
+  margin: 0;
+  font-size: var(--ws-fs-16);
+  line-height: 1.6;
+  max-width: 56ch;
+}
+.ipo-v__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin: 0;
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-v__meta dt {
+  display: inline;
+}
+.ipo-v__meta dd {
+  display: inline;
+  margin: 0 0 0 4px;
+  color: var(--ws-text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ipo-v__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 20px;
+  margin-top: 4px;
+}
+.ipo-v__fig {
+  margin: 0;
+  min-width: 0;
+}
+
+/* denied: the hedge graph */
+.ipo-hedge {
+  position: relative;
+  padding: 28px 24px 20px;
+  background: var(--ws-paper);
+  border: 2px solid var(--ws-ink);
+}
+.ipo-hedge__title {
+  position: absolute;
+  top: -13px;
+  left: 16px;
+  padding: 1px 10px;
+  background: var(--ws-paper);
+  border: 2px solid var(--ws-ink);
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-14);
+  transform: rotate(-1deg);
+}
+.ipo-graph {
+  display: grid;
+  grid-template-columns: 1fr minmax(120px, 1.1fr) 1fr;
+  align-items: start;
+  gap: 0 8px;
+}
+.ipo-node {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+.ipo-node .ws-face {
+  width: 112px;
+  height: 112px;
+  border-width: 3px;
+  background: var(--ws-panel);
+}
+.ipo-node__who {
+  font-size: var(--ws-fs-13);
+  font-weight: 700;
+  color: var(--ws-text-2);
+}
+.ipo-node__addr {
+  font-weight: 900;
+  font-size: var(--ws-fs-14);
+  font-variant-numeric: tabular-nums;
+}
+.ipo-slip {
+  display: inline-block;
+  padding: 4px 10px 4px 14px;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-paper);
+  font-weight: 900;
+  font-size: var(--ws-fs-16);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ipo-slip--long {
+  box-shadow: inset 5px 0 0 var(--ws-pink);
+}
+.ipo-slip--short {
+  box-shadow: inset 5px 0 0 var(--ws-blue);
+}
+.ipo-edge {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-top: 46px;
+  text-align: center;
+  font-size: var(--ws-fs-13);
+  line-height: 1.35;
+}
+.ipo-edge svg {
+  width: 100%;
+  height: 24px;
+  overflow: visible;
+}
+.ipo-edge b {
+  font-weight: 900;
+}
+.ipo-offset {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+  font-size: var(--ws-fs-14);
+}
+.ipo-offset__bar {
+  position: relative;
+  height: 18px;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-red-wash);
+}
+.ipo-offset__bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background:
+    repeating-linear-gradient(45deg, rgba(26, 23, 20, 0.35) 0 1.5px, transparent 1.5px 5px),
+    var(--ws-red);
+}
+.ipo-offset__bar u {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: 50%;
+  border-left: 2px dashed var(--ws-ink);
+}
+.ipo-offset__bar u span {
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: -34px;
+  width: 68px;
+  text-align: center;
+  font-size: var(--ws-fs-13);
+  font-weight: 900;
+  text-decoration: none;
+}
+.ipo-offset b {
+  font-size: var(--ws-fs-18);
+  font-weight: 900;
+}
+.ipo-evid {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 16px 0 0;
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-evid .ws-n {
+  margin: 0;
+}
+
+/* approved: the prospectus */
+.ipo-pro {
+  position: relative;
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 8px 24px;
+  padding: 28px 24px 22px;
+  background: var(--ws-paper);
+  border: 2px solid var(--ws-ink);
+}
+.ipo-pro__art {
+  position: relative;
+  line-height: 0;
+  align-self: start;
+}
+.ipo-pro__art svg.ws-portrait {
+  width: 100%;
+  height: auto;
+}
+.ipo-pro__art .ws-stamp {
+  position: absolute;
+  right: -6px;
+  bottom: 0;
+  background: rgba(243, 238, 226, 0.9);
+  border-radius: 7px;
+  min-width: 52px;
+  height: 40px;
+  font-size: var(--ws-fs-18);
+}
+.ipo-pro__art .ws-stamp::before {
+  box-shadow:
+    inset 0 0 0 2px var(--ws-paper),
+    inset 0 0 0 3.5px var(--c);
+}
+.ipo-pro__tk {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-36);
+  line-height: 1;
+}
+.ipo-pro__name {
+  margin: 4px 0 12px;
+  font-size: var(--ws-fs-14);
+  color: var(--ws-text-2);
+}
+.ipo-pro dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+.ipo-pro dl div {
+  display: grid;
+  gap: 1px;
+  border-bottom: 1px solid rgba(26, 23, 20, 0.18);
+  padding-bottom: 6px;
+}
+.ipo-pro dt {
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-pro dd {
+  margin: 0;
+  font-weight: 900;
+  font-size: var(--ws-fs-16);
+  font-variant-numeric: tabular-nums;
+}
+.ipo-alloc {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-pink-wash);
+}
+.ipo-alloc__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--ws-fs-14);
+  font-variant-numeric: tabular-nums;
+}
+.ipo-alloc__row b {
+  font-weight: 900;
+}
+.ipo-alloc__clock {
+  font-family: var(--ws-font-display);
+  font-size: var(--ws-fs-24);
+  line-height: 1;
+}
+.ipo-alloc__bar {
+  height: 12px;
+  border: 2px solid var(--ws-ink);
+  background: var(--ws-paper);
+  position: relative;
+}
+.ipo-alloc__bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ws-pink);
+}
+
+/* deferred: the evidence log */
+.ipo-log {
+  position: relative;
+  padding: 28px 20px 18px;
+  background: var(--ws-paper);
+  border: 2px dashed var(--ws-blue-text);
+}
+.ipo-log ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+.ipo-log li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(26, 23, 20, 0.16);
+  font-size: var(--ws-fs-14);
+}
+.ipo-log li span:first-child {
+  font-weight: 700;
+}
+.ipo-log li small {
+  grid-column: 1 / -1;
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-log li.is-bad span:last-child {
+  color: var(--ws-blue-text);
+  font-weight: 900;
+}
+.ipo-log li:not(.is-bad) span:last-child {
+  color: var(--ws-mint-text);
+  font-weight: 700;
+}
+.ipo-retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+.ipo-retry__t {
+  font-size: var(--ws-fs-14);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- wall of recent verdicts ---- */
+.ipo-wall {
+  display: grid;
+  gap: 28px;
+}
+.ipo-wall__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 24px;
+}
+.ipo-wall__head p {
+  margin: 0;
+  font-size: var(--ws-fs-14);
+  color: var(--ws-text-2);
+}
+.ipo-wall__grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 32px 24px;
+}
+.ipo-card {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 10px;
+  padding: 18px 18px 14px;
+  background: var(--ws-paper);
+  transform: rotate(var(--r, 0deg));
+}
+.ipo-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--ws-ink);
+  filter: url(#ws-rough-sm);
+  pointer-events: none;
+}
+.ipo-card::after {
+  /* a strip of tape holding the card to the wall */ content: "";
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  width: 64px;
+  height: 18px;
+  margin-left: -32px;
+  background: rgba(228, 220, 203, 0.85);
+  border: 1px solid rgba(26, 23, 20, 0.18);
+  transform: rotate(-3deg);
+}
+.ipo-card.is-current {
+  box-shadow: 0 0 0 4px var(--ws-pink);
+}
+.ipo-card__top {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding-right: 64px;
+}
+.ipo-card__top .ws-face {
+  width: 52px;
+  height: 52px;
+}
+.ipo-card__addr {
+  font-weight: 900;
+  font-size: var(--ws-fs-14);
+  font-variant-numeric: tabular-nums;
+}
+.ipo-card__ago {
+  display: block;
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-card__check {
+  margin: 0;
+  font-size: var(--ws-fs-14);
+  font-weight: 700;
+}
+.ipo-card__line {
+  margin: 0;
+  font-size: var(--ws-fs-13);
+  line-height: 1.45;
+  color: var(--ws-text);
+}
+.ipo-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(26, 23, 20, 0.4);
+}
+.ipo-card__foot .ws-link {
+  font-size: var(--ws-fs-13);
+}
+.ipo-card .ws-hanko {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: 64px;
+  height: 64px;
+}
+.ipo-card .ws-hanko::before {
+  border-width: 3px;
+  box-shadow:
+    inset 0 0 0 3px transparent,
+    inset 0 0 0 5px var(--c);
+}
+.ipo-card .ws-hanko__kanji {
+  font-size: var(--ws-fs-21);
+}
+
+.ipo-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding-top: 16px;
+  border-top: 2px solid var(--ws-ink);
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.ipo-foot p {
+  margin: 0;
+  max-width: 80ch;
+}
+.ipo-foot b {
+  color: var(--ws-mint-text);
+}
+
+/* ---------------------------------------------------------------- tablet */
+@media (max-width: 1280px) {
+  .ipo-member__face {
+    width: 140px;
+    margin-bottom: -30px;
+  }
+  .ipo-paper {
+    width: 112px;
+  }
+  .ipo-plate {
+    font-size: var(--ws-fs-13);
+  }
+  .ipo-wall__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1080px) {
+  .ipo-intake {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ipo-table {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ipo-member:nth-child(3n + 1) .ipo-desk {
+    border-left: 3px solid var(--ws-ink);
+  }
+  .ipo-member:nth-child(3n) .ipo-desk {
+    border-right: 3px solid var(--ws-ink);
+  }
+  .ipo-verdict {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ipo-wall__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------- mobile */
+@media (max-width: 760px) {
+  .ipo {
+    gap: 32px;
+    padding: 20px 16px calc(64px + var(--ws-breaking-h) + 32px);
+  }
+  .ipo-h1 {
+    font-size: var(--ws-fs-36);
+  }
+  .ipo-intake__t p {
+    font-size: var(--ws-fs-14);
+  }
+  .ipo-form__row {
+    flex-direction: column;
+  }
+  .ipo-form__go {
+    width: 100%;
+  }
+  .ipo-room {
+    padding: 36px 8px 20px;
+  }
+  .ipo-progress {
+    padding: 0 8px;
+  }
+  .ipo-table {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 20px;
+  }
+  .ipo-member .ipo-desk {
+    border-left: 0;
+    border-right: 0;
+  }
+  .ipo-member:nth-child(odd) .ipo-desk {
+    border-left: 3px solid var(--ws-ink);
+  }
+  .ipo-member:nth-child(even) .ipo-desk {
+    border-right: 3px solid var(--ws-ink);
+  }
+  .ipo-member {
+    grid-template-rows: 60px auto auto auto;
+  }
+  .ipo-member__face {
+    width: 120px;
+    margin-bottom: -26px;
+  }
+  .ipo-desk {
+    height: 96px;
+  }
+  .ipo-paper {
+    width: 100px;
+    height: 74px;
+  }
+  .ipo-mark {
+    width: 62px;
+    height: 62px;
+  }
+  .ipo-mark b {
+    font-size: var(--ws-fs-18);
+  }
+  .ipo-shout {
+    max-width: 170px;
+    font-size: var(--ws-fs-13);
+  }
+  .ipo-member__detail {
+    padding: 0 4px;
+  }
+  .ipo-member__src {
+    display: none;
+  }
+  .ipo-stamp-slot .ws-hanko {
+    width: 200px;
+    height: 200px;
+  }
+  .ipo-stamp-slot .ws-hanko__kanji {
+    font-size: 3.5rem;
+  }
+  .ipo-stamp-slot .ws-hanko__word {
+    font-size: var(--ws-fs-21);
+  }
+  .ipo-bell {
+    left: calc(50% + 50px);
+    top: calc(44% - 140px);
+  }
+  .ipo-verdict {
+    padding: 36px 16px 20px;
+    gap: 24px;
+  }
+  .ipo-verdict h2 {
+    font-size: var(--ws-fs-30);
+  }
+  .ipo-hedge {
+    padding: 26px 12px 16px;
+  }
+  .ipo-graph {
+    grid-template-columns: 1fr 1fr;
+    gap: 14px 8px;
+  }
+  .ipo-edge {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-top: 0;
+    padding: 6px 10px;
+    border: 2px dashed var(--ws-ink);
+  }
+  .ipo-edge svg {
+    display: none;
+  }
+  .ipo-node .ws-face {
+    width: 92px;
+    height: 92px;
+  }
+  .ipo-slip {
+    font-size: var(--ws-fs-14);
+    padding: 3px 8px 3px 12px;
+  }
+  .ipo-offset {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .ipo-offset > span:first-child {
+    grid-column: 1 / -1;
+    margin-bottom: 14px;
+  }
+  .ipo-pro {
+    grid-template-columns: 110px minmax(0, 1fr);
+    padding: 24px 14px 16px;
+  }
+  .ipo-pro dl {
+    grid-column: 1 / -1;
+  }
+  .ipo-pro__tk {
+    font-size: var(--ws-fs-30);
+  }
+  .ipo-wall__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+  .ipo-foot {
+    padding-bottom: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ipo-think span,
+  .ipo-progress__bar i.is-reading,
+  .ipo-mark.is-stamping,
+  .ipo-member.is-thud .ipo-paper,
+  .ipo-shout,
+  .ipo-room.is-shake,
+  .ipo-verdict.is-in {
+    animation: none !important;
+  }
+}
+.ipo-mark[data-s="UNKNOWN"] small {
+  font-size: 10px;
+  letter-spacing: 0;
+}

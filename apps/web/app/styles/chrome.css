@@ -1,0 +1,275 @@
+/* ==========================================================================
+   Whale Street — app chrome shared by every page: skip link, face crops,
+   data-health banners, responsive top bar, breaking tape, phone tab bar.
+   ========================================================================== */
+
+/* a whole-page empty state (not found) uses the same heading as in-page empty states */
+.ws-empty h1 {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-30);
+  line-height: 1.2;
+  max-width: 20ch;
+}
+
+/* native elements used for their semantics only: drop the browser chrome */
+fieldset {
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+figure {
+  margin: 0;
+}
+ol.ws-tape {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ws-skip {
+  position: absolute;
+  left: 16px;
+  top: -60px;
+  z-index: 100;
+  padding: 8px 16px;
+  background: var(--ws-ink);
+  color: var(--ws-paper);
+  font-weight: 900;
+}
+.ws-skip:focus {
+  top: 8px;
+}
+a.ws-player {
+  text-decoration: none;
+}
+a.ws-breaking__item {
+  text-decoration: none;
+}
+.ws-breaking__one {
+  display: none;
+}
+
+/* portraits cropped into circles: head and shoulders, whatever the circle size */
+.ws-face {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--ws-paper);
+  border: 2px solid var(--ws-ink);
+}
+.ws-face > svg {
+  position: absolute;
+  left: 50%;
+  top: 6%;
+  width: 124%;
+  height: auto;
+  transform: translateX(-50%);
+}
+
+/* data-health banners stack under the sticky top bar */
+.ws-banners {
+  position: sticky;
+  top: var(--ws-topbar-h);
+  z-index: 48;
+  display: grid;
+}
+.ws-banner + .ws-banner {
+  border-top: 1px solid rgba(243, 238, 226, 0.35);
+}
+.ws-topbar .ws-badge {
+  flex-shrink: 0;
+}
+
+/* an engine that cannot be reached, or data that is not there yet */
+.ws-offline {
+  display: grid;
+  justify-items: start;
+  gap: var(--ws-2);
+  padding: var(--ws-4) var(--ws-3);
+}
+.ws-offline h1,
+.ws-offline h2 {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-24);
+}
+.ws-offline p {
+  margin: 0;
+  max-width: 60ch;
+  color: var(--ws-text-2);
+}
+
+.ws-tabbar a,
+.ws-tabbar button {
+  font: inherit;
+}
+
+@media (max-width: 1080px) {
+  .ws-nav a {
+    padding: 8px;
+  }
+  .ws-clock {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  :root {
+    --ws-topbar-h: 56px;
+    --ws-breaking-h: 40px;
+  }
+  .ws-topbar {
+    gap: 8px;
+    padding: 0 16px;
+  }
+  .ws-nav,
+  .ws-clock,
+  .ws-player__t b {
+    display: none;
+  }
+  .ws-brand {
+    font-size: var(--ws-fs-16);
+  }
+  .ws-topbar__right {
+    gap: 8px;
+  }
+  .ws-player {
+    padding: 3px 10px 3px 3px;
+    gap: 8px;
+  }
+  .ws-player__face {
+    width: 34px;
+    height: 34px;
+  }
+  .ws-player__face svg {
+    width: 42px;
+    height: 42px;
+    margin-top: 7px;
+  }
+  .ws-player__t span {
+    color: var(--ws-text);
+    font-weight: 900;
+    font-size: var(--ws-fs-14);
+  }
+  .ws-player__rank {
+    display: none;
+  }
+  .ws-topbar .ws-badge--live {
+    font-size: 0;
+    gap: 0;
+    padding: 5px;
+    border-radius: 50%;
+  }
+  .ws-topbar .ws-badge[data-short] {
+    font-size: 0;
+  }
+  .ws-topbar .ws-badge[data-short]::after {
+    content: attr(data-short);
+    font-size: var(--ws-fs-13);
+  }
+  .ws-breaking {
+    bottom: 64px;
+  }
+  .ws-breaking__label {
+    font-size: var(--ws-fs-13);
+    padding: 0 20px 0 16px;
+  }
+  .ws-breaking__viewport {
+    display: none;
+  }
+  .ws-breaking__one {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+    align-items: center;
+    overflow: hidden;
+  }
+  .ws-breaking__one .ws-breaking__item {
+    min-width: 0;
+    padding-right: 12px;
+    transition: opacity 0.3s ease;
+  }
+  .ws-breaking__one .ws-breaking__item::after {
+    display: none;
+  }
+  .ws-breaking__one .ws-breaking__txt {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ws-breaking__one .ws-breaking__face {
+    width: 28px;
+    height: 28px;
+  }
+  .ws-breaking__one .ws-breaking__face svg {
+    width: 34px;
+    height: 34px;
+    margin-top: 5px;
+  }
+  .ws-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 46;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    height: 64px;
+    background: var(--ws-paper);
+    border-top: 3px solid var(--ws-ink);
+  }
+  .ws-tabbar a,
+  .ws-tabbar button {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 2px;
+    border: 0;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    font-size: var(--ws-fs-13);
+    font-weight: 700;
+    text-decoration: none;
+    color: var(--ws-text-2);
+  }
+  .ws-tabbar [aria-current="page"] {
+    color: var(--ws-ink);
+    font-weight: 900;
+  }
+  .ws-tabbar [aria-current="page"] svg {
+    background: var(--ws-pink);
+    border-radius: 6px;
+  }
+  .ws-tabbar svg {
+    width: 28px;
+    height: 24px;
+    padding: 1px 3px;
+  }
+  .ws-toast {
+    bottom: calc(64px + var(--ws-breaking-h) + 12px);
+    right: 16px;
+  }
+}
+
+/* IPO desk: the giant verdict stamp lands over two members that passed (one row of six) */
+@media (min-width: 1081px) {
+  .ipo-stamp-slot {
+    left: var(--stamp-x, 50%);
+  }
+}
+
+/* narrow phones: the mode badge must stay visible, so the player chip drops to the face alone */
+@media (max-width: 420px) {
+  .ws-topbar:has(.ws-badge--replay, .ws-badge--saver) .ws-player__t {
+    display: none;
+  }
+  .ws-topbar:has(.ws-badge--replay, .ws-badge--saver) .ws-player {
+    padding-right: 3px;
+  }
+}

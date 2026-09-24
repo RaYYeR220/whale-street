@@ -1,0 +1,102 @@
+/* ==========================================================================
+   Whale Street — player profile (/u/[handle]). Reuses the desk drawer pieces
+   (me-*) from company.css on a page-sized grid.
+   ========================================================================== */
+.pf {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(300px, 5fr);
+  gap: 40px 32px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 28px 24px calc(var(--ws-breaking-h) + 40px);
+}
+.pf-head {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 8px 24px;
+  align-items: center;
+  padding: 28px 24px 22px;
+  background:
+    radial-gradient(circle at 10% 50%, rgba(255, 72, 176, 0.16), transparent 40%), var(--ws-panel);
+}
+.pf-head .ws-face {
+  width: 132px;
+  height: 132px;
+  border-width: 3px;
+}
+.pf-head h1 {
+  margin: 0;
+  font-family: var(--ws-font-display);
+  font-weight: 400;
+  font-size: var(--ws-fs-36);
+  line-height: 1.1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.pf-head p {
+  margin: 6px 0 0;
+  color: var(--ws-text-2);
+}
+.pf-col {
+  display: grid;
+  gap: 32px;
+  align-content: start;
+  min-width: 0;
+}
+.pf-sec {
+  padding: 30px 20px 20px;
+}
+.pf-seasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.pf-seasons li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(26, 23, 20, 0.18);
+  font-variant-numeric: tabular-nums;
+}
+.pf-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding-top: 16px;
+  border-top: 2px solid var(--ws-ink);
+  font-size: var(--ws-fs-13);
+  color: var(--ws-text-2);
+}
+.pf-foot b {
+  color: var(--ws-mint-text);
+}
+@media (max-width: 1080px) {
+  .pf {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  .pf {
+    padding: 20px 16px calc(64px + var(--ws-breaking-h) + 32px);
+    gap: 28px;
+  }
+  .pf-head {
+    grid-template-columns: 88px minmax(0, 1fr);
+    padding: 22px 14px 16px;
+  }
+  .pf-head .ws-face {
+    width: 88px;
+    height: 88px;
+  }
+  .pf-head h1 {
+    font-size: var(--ws-fs-24);
+  }
+}
