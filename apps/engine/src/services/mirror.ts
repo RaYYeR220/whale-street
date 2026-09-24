@@ -556,17 +556,24 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         return err(400, 'INVALID_ADDRESS', 'invalid address');
       const player = d.repos.players.get(playerId);
       const master = masterAddress.toLowerCase();
+      const others = d.repos.agentKeys.byMaster(master).filter((k) => k.playerId !== playerId);
       if (player?.walletAddress?.toLowerCase() !== master) {
-        return err(403, 'NO_WALLET', 'link this wallet to your player first');
+        return others.length > 0
+          ? err(409, 'WALLET_IN_USE', 'this wallet trades through another player; link it first')
+          : err(403, 'NO_WALLET', 'link this wallet to your player first');
       }
-      // One agent key per master wallet: otherwise players sharing a wallet multiply its caps.
-      if (d.repos.agentKeys.byMaster(master).some((k) => k.playerId !== playerId))
-        return err(409, 'WALLET_IN_USE', 'this wallet already trades through another player');
-      d.repos.agentKeys.upsert({
-        playerId,
-        masterAddress: master,
-        agentAddress: agentAddress.toLowerCase(),
-        registeredAt: d.clock.now(),
+      // One agent key per master wallet. A linked wallet was proven by a SIWE signature
+      // (players.link is its only writer), so this player owns it: the registration moves here
+      // and the previous player's key is dropped (its orders stay). Caps count per master wallet,
+      // so moving the key multiplies nothing.
+      d.repos.tx(() => {
+        for (const k of others) d.repos.agentKeys.remove(k.playerId);
+        d.repos.agentKeys.upsert({
+          playerId,
+          masterAddress: master,
+          agentAddress: agentAddress.toLowerCase(),
+          registeredAt: d.clock.now(),
+        });
       });
       return { ok: true };
     },

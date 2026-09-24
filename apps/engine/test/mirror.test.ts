@@ -558,16 +558,52 @@ describe('mirror', () => {
     expect(e.repos.mirrorOrders.get(ord.stepId)?.status).toBe('UNKNOWN');
   });
 
-  it('refuses an agent for a master wallet another player already registered (WALLET_IN_USE)', async () => {
+  it('moves the agent to a player who proves the wallet by SIWE; the old player keeps its orders', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    expect(e.mirror.registerAgent(player.id, master.address, agent.address)).toEqual({ ok: true });
+    for (let i = 0; i < 3; i++) await placeOrder(e, trading, player.id, agent, 100);
+    // A fresh browser: a new anonymous player links the same wallet with a signature.
+    const b = e.players.create('human');
+    const nonce = e.players.nonce(b.player.id);
+    const text = siweMessage(master.address, nonce, t.clock.now());
+    const sig = await master.signMessage({ message: text });
+    expect(await e.players.link(b.player.id, text, sig)).toMatchObject({ ok: true });
+    const agentB = privateKeyToAccount(generatePrivateKey());
+    expect(e.mirror.registerAgent(b.player.id, master.address, agentB.address)).toEqual({
+      ok: true,
+    });
+    const wallet = master.address.toLowerCase();
+    expect(e.repos.agentKeys.get(player.id)).toBeUndefined();
+    expect(e.repos.agentKeys.byMaster(wallet).map((k) => [k.playerId, k.agentAddress])).toEqual([
+      [b.player.id, agentB.address.toLowerCase()],
+    ]);
+    // The previous player's orders stay, and the wallet's caps still count them.
+    expect(e.repos.mirrorOrders.byPlayer(player.id, 50)).toHaveLength(6);
+    expect(
+      e.repos.mirrorOrders.ordersByMaster(wallet, 0).filter((o) => o.playerId === player.id),
+    ).toHaveLength(3);
+    expect(refusalCodes(await e.mirror.prepare(b.player.id, HYP_50))).toEqual(
+      expect.arrayContaining(['TOO_MANY_OPEN', 'DAILY_CAP']),
+    );
+    expect(await e.mirror.prepare(player.id, HYP_50)).toMatchObject({ code: 'NO_AGENT' });
+  });
+
+  it('keeps WALLET_IN_USE for a player who has not linked the wallet', async () => {
     const { e, master, agent, player } = await setup();
     expect(e.mirror.registerAgent(player.id, master.address, agent.address)).toEqual({ ok: true });
     const b = e.players.create('human');
-    e.repos.players.setWallet(b.player.id, master.address.toLowerCase());
     const agentB = privateKeyToAccount(generatePrivateKey());
     expect(e.mirror.registerAgent(b.player.id, master.address, agentB.address)).toMatchObject({
       ok: false,
       status: 409,
       code: 'WALLET_IN_USE',
+    });
+    expect(e.repos.agentKeys.get(player.id)?.agentAddress).toBe(agent.address.toLowerCase());
+    // A wallet nobody registered is simply not linked.
+    const free = privateKeyToAccount(generatePrivateKey());
+    expect(e.mirror.registerAgent(b.player.id, free.address, agentB.address)).toMatchObject({
+      status: 403,
+      code: 'NO_WALLET',
     });
     // The owner may still rotate its own agent key.
     expect(e.mirror.registerAgent(player.id, master.address, agentB.address)).toEqual({ ok: true });

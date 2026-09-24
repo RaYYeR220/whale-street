@@ -602,20 +602,17 @@ describe('Mirror ticket: the engine’s answers', () => {
     expect(await screen.findByRole('button', { name: 'Sign to link' })).toBeTruthy();
   });
 
-  it('says the wallet already mirrors through another player when registration is refused', async () => {
+  it('tells the player to link the wallet when it mirrors through another player', async () => {
     stubHyperliquid();
     const engine = fakeEngine({
       agent: () =>
-        json(
-          { error: 'WALLET_IN_USE', message: 'this wallet already trades through another player' },
-          409,
-        ),
+        json({ error: 'WALLET_IN_USE', message: 'this wallet trades through another player' }, 409),
     });
     const store = createMemoryKeyStore();
     mount(engine, store);
     fireEvent.click(await screen.findByRole('button', { name: 'Approve agent key' }));
     expect((await screen.findByRole('alert')).textContent).toMatch(
-      /already mirrors through another Whale Street player/,
+      /mirrors through another Whale Street player. Link it to this player first/,
     );
     expect((await store.load(MASTER))?.approvedAt).toBeNull();
   });

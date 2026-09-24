@@ -82,7 +82,7 @@ const MIRROR: Record<Exclude<MirrorErrorCode, 'REJECTED'>, string> = {
   REGION_BLOCKED: 'Real orders cannot be placed from the engine’s region right now.',
   NO_WALLET: 'Your player is linked to another wallet now. Link this wallet again first.',
   WALLET_IN_USE:
-    'This wallet already mirrors through another Whale Street player. Use another wallet, or mirror from that player.',
+    'This wallet mirrors through another Whale Street player. Link it to this player first (one free signature), then approve its agent key here; the other player loses its key.',
   NO_AGENT: 'The engine has no agent key on record for this wallet. Approve the agent key again.',
   UNKNOWN_TICKER: 'That company is no longer listed. Nothing was sent.',
   INVALID_ADDRESS: 'That wallet address is not valid.',
