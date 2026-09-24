@@ -27,6 +27,16 @@ export const PLACED_STATUSES = new Set<MirrorOrderView['status']>([...OPEN_STATU
 export const MIRROR = PARAMS.mirror;
 
 /**
+ * Engine constants the ticket relies on and quotes. They mirror apps/engine/src/services/mirror.ts
+ * (MARKET_SLIPPAGE, MAX_BUILDER_FEE, STEP_TTL_MS); test/mirror.test.ts pins them to the engine.
+ */
+export const MARKET_SLIPPAGE = 0.01;
+/** Highest builder fee we approve for Nansen, in tenths of a basis point (80 = 0.08%). */
+export const BUILDER_FEE_CEILING = 80;
+/** A prepared step can be executed only this long after prepare. */
+export const STEP_TTL_MS = 60_000;
+
+/**
  * Usage as far as this player's order log shows. Open mirrors count at any age, like the engine;
  * the engine also counts other players on the same wallet, so it has the final say.
  */

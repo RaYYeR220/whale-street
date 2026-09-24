@@ -1,12 +1,22 @@
 import type { IRequestTransport } from '@nktkas/hyperliquid';
 import { ApproveAgentTypes, ApproveBuilderFeeTypes } from '@nktkas/hyperliquid/api/exchange';
 import { PARAMS } from '@whale-street/core';
-import { type Hex, recoverTypedDataAddress, serializeSignature } from 'viem';
+import {
+  type Hex,
+  recoverTypedDataAddress,
+  serializeSignature,
+  UserRejectedRequestError,
+} from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  MARKET_SLIPPAGE as ENGINE_SLIPPAGE,
+  STEP_TTL_MS as ENGINE_STEP_TTL_MS,
+  MAX_BUILDER_FEE,
+} from '../../engine/src/services/mirror';
 import { linkMessage as engineLinkMessage } from '../../engine/src/services/players';
-import type { Api } from '../lib/api';
-import type { MirrorReceipt, PrepareView } from '../lib/api-types';
+import { type Api, createApi } from '../lib/api';
+import type { MirrorOrderView, MirrorReceipt, PrepareView } from '../lib/api-types';
 import {
   AGENT_BASE_NAME,
   agentName,
@@ -14,7 +24,14 @@ import {
   newAgent,
   RENEW_MARGIN_MS,
 } from '../lib/mirror/agent';
-import { runMirror } from '../lib/mirror/flow';
+import { approveAgentKey } from '../lib/mirror/approve';
+import {
+  agentProblem,
+  isDefinitiveRejection,
+  type MirrorOutcome,
+  resolveUnknown,
+  runMirror,
+} from '../lib/mirror/flow';
 import {
   approveAgentOnHl,
   approveBuilderFeeOnHl,
@@ -23,9 +40,17 @@ import {
 } from '../lib/mirror/hl';
 import { createIdbKeyStore, createMemoryKeyStore } from '../lib/mirror/keystore';
 import { linkMessage, linkWallet } from '../lib/mirror/link';
-import { checkRows, mirrorUsage, previewContext, previewMirror } from '../lib/mirror/policy';
+import {
+  BUILDER_FEE_CEILING,
+  checkRows,
+  MARKET_SLIPPAGE,
+  mirrorUsage,
+  previewContext,
+  previewMirror,
+  STEP_TTL_MS,
+} from '../lib/mirror/policy';
 import { signStep } from '../lib/mirror/sign';
-import { companyView, T0 } from './helpers';
+import { companyView, fakeFetch, json, T0 } from './helpers';
 
 // Well-known test keys (never used for anything real).
 const MASTER_KEY: Hex = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
@@ -163,6 +188,36 @@ describe('Hyperliquid approvals (user-signed by the master wallet)', () => {
     );
     expect(hlErrorText(new Error('Must deposit before performing actions'))).toMatch(
       /Deposit USDC/,
+    );
+  });
+
+  it('recognises a real wallet decline wrapped by the Hyperliquid library', async () => {
+    const { sent, transport } = capture();
+    const declining = {
+      address: master.address,
+      signTypedData: async (_a: unknown) => {
+        throw new UserRejectedRequestError(new Error('User denied message signature.'));
+      },
+    };
+    const err = await approveAgentOnHl(
+      { wallet: declining as never, transport, signatureChainId: ARBITRUM },
+      { agentAddress: agent.address, agentName: agentName(T0) },
+    ).catch((e: unknown) => e);
+    expect(sent).toEqual([]);
+    expect((err as Error).message).toBe('Failed to sign the typed data using the wallet');
+    expect(hlErrorText(err)).toBe('You declined the signature in your wallet.');
+    // An EIP-1193 provider error (code 4001) anywhere in the cause chain is a decline too.
+    const raw = { code: 4001, message: 'Request rejected' };
+    expect(hlErrorText(new Error('Failed to sign', { cause: raw }))).toBe(
+      'You declined the signature in your wallet.',
+    );
+    expect(
+      hlErrorText(
+        new Error('outer', { cause: new Error('Must deposit before performing actions') }),
+      ),
+    ).toMatch(/Deposit USDC/);
+    expect(hlErrorText(new Error('Failed to sign', { cause: new Error('device locked') }))).toBe(
+      'Failed to sign: device locked',
     );
   });
 });
@@ -467,4 +522,432 @@ describe('runMirror', () => {
       groupId: 'g1',
     });
   });
+
+  it.each([
+    ['a gateway error', { ok: false, status: 502, error: 'HTTP_502', message: 'Bad Gateway' }],
+    ['an engine crash', { ok: false, status: 500, error: 'INTERNAL', message: 'boom' }],
+    ['a request timeout', { ok: false, status: 408, error: 'HTTP_408', message: 'Timeout' }],
+    ['an unreadable 2xx', { ok: false, status: 200, error: 'BAD_RESPONSE', message: 'empty' }],
+    ['a network error', { ok: false, status: 0, error: 'NETWORK', message: 'fetch failed' }],
+  ] as const)('reports %s on the order step as unknown, never as not sent', async (_n, res) => {
+    const { api, executed } = fake([{ ok: true, data: receipt('s1', 'FILLED') }, res]);
+    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY, now: () => T0 });
+    expect(r).toMatchObject({
+      kind: 'unknown',
+      groupId: 'g1',
+      stepId: 's2',
+      since: T0,
+      detail: res.message,
+    });
+    expect(executed).toEqual(['s1', 's2']);
+  });
+
+  it('reports a definitive rejection of the order as not placed', async () => {
+    const { api } = fake([
+      { ok: true, data: receipt('s1', 'FILLED') },
+      { ok: false, status: 422, error: 'REJECTED', message: 'Insufficient margin' },
+    ]);
+    expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toMatchObject({
+      kind: 'error',
+      code: 'REJECTED',
+      message: 'Insufficient margin',
+    });
+  });
+
+  it('stops with an error when the leverage step fails, before any order is sent', async () => {
+    const { api, executed } = fake([
+      { ok: false, status: 502, error: 'HTTP_502', message: 'Bad Gateway' },
+    ]);
+    expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toMatchObject({
+      kind: 'error',
+      code: 'HTTP_502',
+    });
+    expect(executed).toEqual(['s1']);
+  });
+
+  it('treats only a 4xx other than 408 as definitive, like the engine', () => {
+    const statuses = [0, 200, 202, 400, 401, 404, 408, 409, 410, 422, 451, 499, 500, 502, 504];
+    expect(statuses.filter(isDefinitiveRejection)).toEqual([
+      400, 401, 404, 409, 410, 422, 451, 499,
+    ]);
+  });
 });
+
+describe('resolving an unknown order from the engine’s order log', () => {
+  const row = (o: Partial<MirrorOrderView> = {}): MirrorOrderView => ({
+    id: 's2',
+    groupId: 'g1',
+    kind: 'order',
+    ticker: 'OOH',
+    coin: 'BTC',
+    status: 'UNKNOWN',
+    notionalUsd: 50,
+    refusals: null,
+    hlOid: null,
+    avgPx: null,
+    error: null,
+    createdAt: T0,
+    explorerUrl: 'https://app.hyperliquid.xyz/explorer/address/0xabc',
+    ...o,
+  });
+  const later = T0 + 60 * 60_000;
+
+  it('keeps waiting while the engine has no definitive answer', () => {
+    expect(resolveUnknown(row(), T0, later)).toEqual({ kind: 'unknown', status: 'unknown' });
+    expect(resolveUnknown(row({ status: 'SUBMITTED' }), T0, later)).toEqual({
+      kind: 'unknown',
+      status: 'submitted',
+    });
+    expect(resolveUnknown(undefined, T0, later)).toEqual({
+      kind: 'unknown',
+      status: 'no record yet',
+    });
+    expect(resolveUnknown(row({ status: 'PREPARED' }), T0, T0 + 30_000).kind).toBe('unknown');
+  });
+
+  it('reports a fill found on Hyperliquid and keeps the reconcile note off the stop-loss line', () => {
+    const note = 'reconciled from the Hyperliquid position; fill price unknown';
+    expect(resolveUnknown(row({ status: 'FILLED', error: note }), T0, later)).toMatchObject({
+      kind: 'filled',
+      closed: false,
+      note,
+      warning: null,
+      receipt: { stepId: 's2', kind: 'order', status: 'FILLED', avgPx: null },
+    });
+    const warning = 'stop-loss not placed: bad trigger — set a stop on Hyperliquid';
+    expect(
+      resolveUnknown(row({ status: 'FILLED', hlOid: 7, avgPx: 1.5, error: warning }), T0, later),
+    ).toMatchObject({ kind: 'filled', warning, note: null, receipt: { hlOid: 7, avgPx: 1.5 } });
+    expect(resolveUnknown(row({ status: 'RESTING' }), T0, later).kind).toBe('filled');
+    expect(resolveUnknown(row({ status: 'CLOSED' }), T0, later)).toMatchObject({
+      kind: 'filled',
+      closed: true,
+    });
+  });
+
+  it('reports a definitive rejection', () => {
+    expect(
+      resolveUnknown(row({ status: 'REJECTED', error: 'Insufficient margin' }), T0, later),
+    ).toEqual({
+      kind: 'rejected',
+      message: 'Insufficient margin',
+    });
+  });
+
+  it('calls a prepared step not placed only once no request can still reach it', () => {
+    const prepared = row({ status: 'PREPARED' });
+    const at = T0 + STEP_TTL_MS + 3 * 60_000;
+    // Long expired on the engine, but our request failed moments ago: it may still be in flight.
+    expect(resolveUnknown(prepared, at - 5_000, at).kind).toBe('unknown');
+    expect(resolveUnknown(prepared, T0 + 10_000, at)).toMatchObject({ kind: 'rejected' });
+  });
+});
+
+describe('agent key problems', () => {
+  const err = (code: string, message: string): MirrorOutcome => ({
+    kind: 'error',
+    code,
+    message,
+    receipts: [],
+  });
+
+  it('asks for a new agent key when the engine or Hyperliquid no longer accepts this one', () => {
+    expect(agentProblem(err('BAD_SIGNATURE', 'not signed by your approved agent key'))).toBe(true);
+    expect(agentProblem(err('NO_AGENT', 'approve a Whale Street agent key first'))).toBe(true);
+    expect(agentProblem(err('NO_WALLET', 'your linked wallet changed'))).toBe(true);
+    expect(agentProblem(err('REJECTED', 'User or API Wallet 0xab12 does not exist.'))).toBe(true);
+    expect(agentProblem(err('REJECTED', 'Insufficient margin to place order.'))).toBe(false);
+    expect(agentProblem(err('HTTP_502', 'Bad Gateway'))).toBe(false);
+  });
+});
+
+describe('engine limits quoted by the ticket', () => {
+  it('match the engine’s own constants', () => {
+    expect(MARKET_SLIPPAGE).toBe(ENGINE_SLIPPAGE);
+    expect(BUILDER_FEE_CEILING).toBe(MAX_BUILDER_FEE);
+    expect(STEP_TTL_MS).toBe(ENGINE_STEP_TTL_MS);
+  });
+});
+
+describe('agent approval', () => {
+  const FEE = {
+    approved: false,
+    maxFeeRate: 0,
+    requiredFee: 80,
+    builderAddress: '0x00000000000000000000000000000000000b0b0b' as const,
+  };
+  function setup(
+    register: Awaited<ReturnType<Api['registerAgent']>> = { ok: true, data: { ok: true } },
+  ) {
+    const { sent, transport } = capture();
+    const registered: string[] = [];
+    const store = createMemoryKeyStore();
+    const api: Pick<Api, 'builderFee' | 'registerAgent'> = {
+      builderFee: async () => ({ ok: true, data: FEE }),
+      registerAgent: async (_t, _m, agentAddress) => {
+        registered.push(agentAddress);
+        return register;
+      },
+    };
+    const base = { api, token: 't', store, master: master.address.toLowerCase(), now: () => T0 };
+    return { sent, transport, registered, store, base };
+  }
+  /** Signs the first `n` typed-data requests, then declines like a wallet does. */
+  const declinesAfter = (n: number) => {
+    let left = n;
+    return {
+      address: master.address,
+      signTypedData: async (a: Parameters<typeof master.signTypedData>[0]) => {
+        if (left-- > 0) return master.signTypedData(a);
+        throw new UserRejectedRequestError(new Error('User denied message signature.'));
+      },
+    };
+  };
+
+  it('marks the key usable only after Hyperliquid, the builder fee and the engine accepted it', async () => {
+    const { sent, transport, registered, store, base } = setup();
+    const rec = await approveAgentKey({ ...base, signer: { wallet: master, transport } });
+    expect(sent.map((s) => (s.payload.action as { type: string }).type)).toEqual([
+      'approveAgent',
+      'approveBuilderFee',
+    ]);
+    expect(registered).toEqual([rec.agentAddress]);
+    expect(isUsable(await store.load(master.address), T0)).toBe(true);
+  });
+
+  it('keeps a key pending when the builder fee is declined, and reuses it on retry', async () => {
+    const { sent, transport, registered, store, base } = setup();
+    const wallet = declinesAfter(1);
+    const declined = await approveAgentKey({ ...base, signer: { wallet, transport } }).catch(
+      (e: unknown) => e,
+    );
+    expect(hlErrorText(declined)).toBe('You declined the signature in your wallet.');
+    const pending = await store.load(master.address);
+    expect(pending?.approvedAt).toBeNull();
+    expect(isUsable(pending, T0)).toBe(false);
+    expect(registered).toEqual([]);
+
+    const rec = await approveAgentKey({ ...base, signer: { wallet: master, transport } });
+    expect(rec.agentAddress).toBe(pending?.agentAddress);
+    // approveAgent was accepted the first time: the retry does not approve it again.
+    expect(sent.map((s) => (s.payload.action as { type: string }).type)).toEqual([
+      'approveAgent',
+      'approveBuilderFee',
+    ]);
+    expect(registered).toEqual([rec.agentAddress]);
+    expect(isUsable(await store.load(master.address), T0)).toBe(true);
+  });
+
+  it('keeps a key pending when the engine refuses to register it', async () => {
+    const { transport, store, base } = setup({
+      ok: false,
+      status: 409,
+      error: 'WALLET_IN_USE',
+      message: 'this wallet already trades through another player',
+    });
+    await expect(
+      approveAgentKey({ ...base, signer: { wallet: master, transport } }),
+    ).rejects.toThrow('this wallet already trades through another player');
+    expect(isUsable(await store.load(master.address), T0)).toBe(false);
+  });
+});
+
+describe('the agent key never leaves the browser', () => {
+  it('appears in no request body, header, URL or log line of a full approve and send', async () => {
+    const seen: string[] = [];
+    const logs = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) =>
+      vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
+        seen.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' '));
+      }),
+    );
+    const hl: IRequestTransport = {
+      isTestnet: false,
+      async request(endpoint, payload) {
+        seen.push(endpoint, JSON.stringify(payload));
+        return { status: 'ok', response: { type: 'default' } } as never;
+      },
+    };
+    const prepared: PrepareView = {
+      ok: true,
+      groupId: 'g1',
+      order: {
+        coin: 'BTC',
+        isBuy: true,
+        notionalUsd: 50,
+        size: 0.00044,
+        leverage: 2,
+        stopLossPx: 99_706,
+        markPx: 113_950,
+      },
+      steps: (['leverage', 'order'] as const).map((kind, i) => ({
+        stepId: `s${i + 1}`,
+        kind,
+        eip712: {
+          domain: { name: 'Exchange', version: '1', chainId: 1337 },
+          types: { Agent: [{ name: 'source', type: 'string' }] },
+          primaryType: 'Agent',
+          message: { source: `s${i + 1}` },
+        },
+      })),
+    };
+    const engine = fakeFetch({
+      'GET /api/mirror/builder-fee': () =>
+        json({
+          approved: false,
+          maxFeeRate: 0,
+          requiredFee: 80,
+          builderAddress: `0x${'b'.repeat(40)}`,
+        }),
+      'POST /api/mirror/agent': () => json({ ok: true }),
+      'POST /api/mirror/prepare': () => json(prepared),
+      'POST /api/mirror/execute': ({ init }) => {
+        const { stepId } = JSON.parse(String(init.body)) as { stepId: string };
+        return json({
+          stepId,
+          kind: stepId === 's1' ? 'leverage' : 'order',
+          status: 'FILLED',
+          hlOid: 1,
+          avgPx: 1,
+          error: null,
+          explorerUrl: '',
+        });
+      },
+    });
+    const api = createApi('http://engine.test', engine.impl);
+    const store = createMemoryKeyStore();
+    const rec = await approveAgentKey({
+      api,
+      token: 'tok',
+      store,
+      master: master.address.toLowerCase(),
+      signer: { wallet: master, transport: hl },
+    });
+    const out = await runMirror({
+      api,
+      token: 'tok',
+      body: { ticker: 'OOH', coin: 'BTC', notionalUsd: 50, leverage: 2, stopLossPct: 0.25 },
+      privateKey: rec.privateKey,
+    });
+    for (const l of logs) l.mockRestore();
+    expect(out.kind).toBe('filled');
+    for (const c of engine.calls)
+      seen.push(c.url.toString(), JSON.stringify(c.init.headers ?? {}), String(c.init.body ?? ''));
+    expect(engine.calls.length).toBeGreaterThanOrEqual(4);
+    const hex = rec.privateKey.slice(2).toLowerCase();
+    expect(seen.join('\n').toLowerCase()).toContain(rec.agentAddress.slice(2).toLowerCase());
+    expect(seen.join('\n').toLowerCase()).not.toContain(hex);
+  });
+});
+
+describe('IndexedDB key store', () => {
+  it('round-trips a record, removes it, and finds nothing in a cleared database', async () => {
+    const db = fakeIndexedDb();
+    const store = createIdbKeyStore(db.factory);
+    const r = newAgent(master.address, T0);
+    await store.save(r);
+    expect(await store.load(master.address.toUpperCase().replace('0X', '0x'))).toEqual(r);
+    await store.remove(master.address);
+    expect(await store.load(master.address)).toBeNull();
+    await store.save(r);
+    expect(await createIdbKeyStore(fakeIndexedDb().factory).load(master.address)).toBeNull();
+  });
+
+  it('reports a save only once the transaction committed', async () => {
+    const db = fakeIndexedDb();
+    await createIdbKeyStore(db.factory).save(newAgent(master.address, T0));
+    expect(db.committed.has(master.address.toLowerCase())).toBe(true);
+  });
+
+  it('rejects a failed write and closes the database', async () => {
+    const db = fakeIndexedDb({ failWrites: true });
+    await expect(createIdbKeyStore(db.factory).save(newAgent(master.address, T0))).rejects.toThrow(
+      'QuotaExceededError',
+    );
+    expect(db.committed.size).toBe(0);
+    expect(db.open).toBe(0);
+  });
+});
+
+/**
+ * Just enough of IndexedDB for the key store: requests succeed a tick before their transaction
+ * commits (as in browsers), and a failed write aborts the transaction.
+ */
+function fakeIndexedDb(o: { failWrites?: boolean } = {}) {
+  const committed = new Map<string, unknown>();
+  let hasStore = false;
+  const state = { committed, open: 0 };
+  const later = (fn: () => void) => setTimeout(fn, 0);
+  const factory = {
+    open() {
+      const req: Record<string, unknown> & {
+        onupgradeneeded?: () => void;
+        onsuccess?: () => void;
+      } = {};
+      later(() => {
+        state.open += 1;
+        const db = {
+          objectStoreNames: { contains: () => hasStore },
+          createObjectStore: () => {
+            hasStore = true;
+          },
+          close: () => {
+            state.open = Math.max(0, state.open - 1);
+          },
+          transaction: () => {
+            const tx: Record<string, unknown> & {
+              oncomplete?: () => void;
+              onerror?: () => void;
+              onabort?: () => void;
+            } = {};
+            const request = (op: () => unknown, write: (() => void) | null) => {
+              const r: Record<string, unknown> & { onsuccess?: () => void; onerror?: () => void } =
+                {};
+              later(() => {
+                if (write && o.failWrites) {
+                  r.error = new Error('QuotaExceededError');
+                  tx.error = r.error;
+                  r.onerror?.();
+                  tx.onerror?.();
+                  tx.onabort?.();
+                  return;
+                }
+                r.result = op();
+                r.onsuccess?.();
+                later(() => {
+                  write?.();
+                  tx.oncomplete?.();
+                });
+              });
+              return r;
+            };
+            tx.objectStore = () => ({
+              get: (k: string) => request(() => committed.get(k), null),
+              put: (v: { master: string }) =>
+                request(
+                  () => v.master,
+                  () => committed.set(v.master, structuredClone(v)),
+                ),
+              delete: (k: string) =>
+                request(
+                  () => undefined,
+                  () => committed.delete(k),
+                ),
+            });
+            return tx;
+          },
+        };
+        req.result = db;
+        if (!hasStore) req.onupgradeneeded?.();
+        req.onsuccess?.();
+      });
+      return req;
+    },
+  };
+  return {
+    factory: factory as unknown as IDBFactory,
+    committed,
+    get open() {
+      return state.open;
+    },
+  };
+}

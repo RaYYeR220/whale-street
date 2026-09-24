@@ -12,7 +12,15 @@ export interface AgentRecord {
   agentName: string;
   validUntil: number;
   createdAt: number;
-  /** When the approveAgent action was accepted by Hyperliquid (null until then). */
+  /**
+   * When Hyperliquid accepted approveAgent for this key (a retry after a failed builder-fee
+   * approval or engine registration then skips it). Absent on records from before it existed.
+   */
+  hlApprovedAt?: number | null;
+  /**
+   * When the key became usable: Hyperliquid's approveAgent, Nansen's builder fee and the engine's
+   * registration all succeeded. Null until then.
+   */
   approvedAt: number | null;
 }
 
@@ -52,6 +60,10 @@ function openDb(factory: IDBFactory): Promise<IDBDatabase> {
   });
 }
 
+/**
+ * One request in its own transaction. Resolves only once the transaction committed (a write that
+ * is later rolled back never "succeeded") and closes the database whichever way it ends.
+ */
 function run<T>(
   factory: IDBFactory,
   mode: IDBTransactionMode,
@@ -60,11 +72,25 @@ function run<T>(
   return openDb(factory).then(
     (db) =>
       new Promise<T>((resolve, reject) => {
-        const tx = db.transaction(STORE, mode);
-        const req = fn(tx.objectStore(STORE));
-        req.onsuccess = () => resolve(req.result as T);
-        req.onerror = () => reject(req.error ?? new Error('indexedDB request failed'));
-        tx.oncomplete = () => db.close();
+        let req: IDBRequest | null = null;
+        const fail = (tx: IDBTransaction | null) => () => {
+          db.close();
+          reject(req?.error ?? tx?.error ?? new Error('indexedDB request failed'));
+        };
+        try {
+          const tx = db.transaction(STORE, mode);
+          req = fn(tx.objectStore(STORE));
+          const r = req;
+          tx.oncomplete = () => {
+            db.close();
+            resolve(r.result as T);
+          };
+          tx.onerror = fail(tx);
+          tx.onabort = fail(tx);
+        } catch (err) {
+          db.close();
+          reject(err);
+        }
       }),
   );
 }

@@ -1,26 +1,35 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnect, useConnection, useConnectors, useSignMessage } from 'wagmi';
 import { getWalletClient } from 'wagmi/actions';
 import type { CompanyView, MirrorOrderView, MirrorReason } from '../../lib/api-types';
 import { side } from '../../lib/company';
 import { coinPx, pctAbs, shortAddress, usd } from '../../lib/format';
-import { isUsable, newAgent } from '../../lib/mirror/agent';
-import { type MirrorOutcome, type MirrorProgress, runMirror } from '../../lib/mirror/flow';
-import { approveAgentOnHl, approveBuilderFeeOnHl, hlErrorText } from '../../lib/mirror/hl';
+import { AGENT_VALID_DAYS, isUsable } from '../../lib/mirror/agent';
+import { approveAgentKey } from '../../lib/mirror/approve';
+import {
+  agentProblem,
+  type MirrorOutcome,
+  type MirrorProgress,
+  resolveUnknown,
+  runMirror,
+} from '../../lib/mirror/flow';
+import { builderFeeRate, hlErrorText } from '../../lib/mirror/hl';
 import { createIdbKeyStore, type KeyStore } from '../../lib/mirror/keystore';
 import { linkWallet } from '../../lib/mirror/link';
 import {
   ageText,
+  BUILDER_FEE_CEILING,
   type CheckState,
   checkRows,
+  MARKET_SLIPPAGE,
   MIRROR,
   mirrorUsage,
   previewContext,
   previewMirror,
 } from '../../lib/mirror/policy';
-import { BUILDER_FEE_CEILING, walletConfig } from '../../lib/mirror/wallet-config';
+import { walletConfig } from '../../lib/mirror/wallet-config';
 import { useDrawer } from '../chrome/Drawer';
 import { Hanko } from '../ink/Hanko';
 import { useReducedMotion } from '../ink/motion';
@@ -87,6 +96,12 @@ const SEAL: Record<CheckState, [string, string, string]> = {
 
 const browserStore = typeof window === 'undefined' ? null : createIdbKeyStore();
 
+/** Delays between automatic checks of an unknown outcome (the engine reconciles with Hyperliquid). */
+const RECHECK_MS = [3_000, 5_000, 10_000, 15_000, 30_000];
+const pctText = (f: number) => `${Number((f * 100).toFixed(2))}%`;
+
+type Availability = { available: boolean; mode: 'live' | 'replay' } | { error: string };
+
 function hint(r: MirrorReason, view: CompanyView, coin: string): string {
   const p = view.positions.find((x) => x.coin === coin);
   switch (r.code) {
@@ -148,7 +163,8 @@ export function MirrorTicket({
   const connectors = useConnectors();
   const connect = useConnect();
   const signMessage = useSignMessage();
-  const [available, setAvailable] = useState<boolean | null>(null);
+  const [availability, setAvailability] = useState<Availability | null>(null);
+  const [askAgain, setAskAgain] = useState(0);
   const [agentReady, setAgentReady] = useState<boolean | null>(null);
   const [orders, setOrders] = useState<MirrorOrderView[]>([]);
   const [coin, setCoin] = useState<string | null>(null);
@@ -160,19 +176,28 @@ export function MirrorTicket({
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<MirrorOutcome | null>(null);
   const [progress, setProgress] = useState<MirrorProgress | null>(null);
+  /** Result of the last check of an unknown outcome. */
+  const [checked, setChecked] = useState<string | null>(null);
+  /** Taken synchronously on click, before any await: a second click never starts a second action. */
+  const lock = useRef<string | null>(null);
+  const outcomeRef = useRef(outcome);
+  outcomeRef.current = outcome;
+  const checking = useRef(false);
 
   const address = conn.address?.toLowerCase() ?? null;
   const linked = !!address && player?.walletAddress === address;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `askAgain` re-asks after a failure
   useEffect(() => {
     let cancelled = false;
+    setAvailability(null);
     void api.mirrorStatus().then((r) => {
-      if (!cancelled) setAvailable(r.ok && r.data.available);
+      if (!cancelled) setAvailability(r.ok ? r.data : { error: r.message });
     });
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, askAgain]);
 
   const loadOrders = useCallback(async () => {
     if (!token) return;
@@ -189,9 +214,16 @@ export function MirrorTicket({
       return;
     }
     let cancelled = false;
-    void store.load(address).then((r) => {
-      if (!cancelled) setAgentReady(isUsable(r, Date.now()));
-    });
+    store.load(address).then(
+      (r) => {
+        if (!cancelled) setAgentReady(isUsable(r, Date.now()));
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setAgentReady(false);
+        setProblem(`This browser cannot keep a Mirror agent key: ${hlErrorText(err)}`);
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -239,94 +271,141 @@ export function MirrorTicket({
     }
   };
 
-  const doLink = async () => {
-    if (!token || !address) return;
-    setBusy('link');
-    setProblem(null);
-    const r = await linkWallet(api, token, address, (message) =>
-      signMessage.mutateAsync({ message }),
-    );
-    setBusy(null);
-    if (!r.ok) setProblem(r.message);
-    else await refresh();
-  };
-
-  const doApprove = async () => {
-    if (!token || !address || !store) return;
-    setBusy('approve');
+  /**
+   * Runs one wallet or engine action at a time. The lock is taken before the first await, so a
+   * double click or a second Enter never starts a second prepare; whatever throws is shown and
+   * always clears the busy state.
+   */
+  const guarded = async (name: string, fn: () => Promise<void>): Promise<void> => {
+    if (lock.current !== null) return;
+    lock.current = name;
+    setBusy(name);
     setProblem(null);
     try {
-      const wallet = await getWalletClient(walletConfig);
-      const now0 = Date.now();
-      const saved = await store.load(address);
-      const rec =
-        saved && saved.approvedAt === null && saved.validUntil > now0
-          ? saved
-          : newAgent(address, now0);
-      await store.save(rec);
-      await approveAgentOnHl({ wallet }, rec);
-      await store.save({ ...rec, approvedAt: Date.now() });
-      const fee = await api.builderFee(token);
-      if (!fee.ok) throw new Error(fee.message);
-      if (!fee.data.approved)
-        await approveBuilderFeeOnHl(
-          { wallet },
-          { builder: fee.data.builderAddress, tenthsBp: BUILDER_FEE_CEILING },
-        );
-      const reg = await api.registerAgent(token, address, rec.agentAddress);
-      if (!reg.ok) throw new Error(reg.message);
-      setAgentReady(true);
+      await fn();
     } catch (err) {
       setProblem(hlErrorText(err));
     } finally {
+      lock.current = null;
       setBusy(null);
+      setProgress(null);
     }
   };
 
-  const doSend = async () => {
-    if (!token || !address || !store || !coin || !preview.canSend) return;
-    const rec = await store.load(address);
-    if (!isUsable(rec, Date.now())) {
-      setAgentReady(false);
-      return;
-    }
-    setBusy('send');
-    setOutcome(null);
-    const out = await runMirror({
-      api,
-      token,
-      body: { ticker: view.ticker, coin, notionalUsd: usdAmt, leverage: lev, stopLossPct: sl },
-      privateKey: rec.privateKey,
-      onProgress: setProgress,
-    });
-    setBusy(null);
-    setProgress(null);
-    setOutcome(out);
-    if (out.kind === 'error' && out.code === 'NO_AGENT') setAgentReady(false);
-    if (out.kind === 'filled')
-      fire({ text: 'GACHA!', kana: 'ガチャ', tone: 'blue', x: '46%', y: '-18px' });
-    void loadOrders();
-  };
-
-  const recheck = async () => {
-    if (!token || outcome?.kind !== 'unknown') return;
-    const r = await api.mirrorOrders(token);
-    if (!r.ok) return;
-    setOrders(r.data.orders);
-    const row = r.data.orders.find((o) => o.groupId === outcome.groupId && o.kind === 'order');
-    if (row && (row.status === 'FILLED' || row.status === 'RESTING'))
-      setOutcome({
-        kind: 'filled',
-        groupId: outcome.groupId,
-        order: outcome.order,
-        receipts: outcome.receipts,
-        warning: row.error,
-      });
-    else
-      setProblem(
-        `Checked again: ${row ? row.status.toLowerCase() : 'no record yet'}. Still no definitive answer.`,
+  const doLink = () =>
+    guarded('link', async () => {
+      if (!token || !address) return;
+      const r = await linkWallet(api, token, address, (message) =>
+        signMessage.mutateAsync({ message }),
       );
+      if (!r.ok) setProblem(r.message);
+      else await refresh();
+    });
+
+  /** Hyperliquid approvals and engine registration; the key counts as ready only after all of them. */
+  const approve = async () => {
+    if (!token || !address || !store) return;
+    const wallet = await getWalletClient(walletConfig);
+    await approveAgentKey({ api, token, store, master: address, signer: { wallet } });
+    setAgentReady(true);
   };
+  const doApprove = () => guarded('approve', approve);
+  /** The stored key no longer works: forget it, mint a new one and approve that instead. */
+  const doReapprove = () =>
+    guarded('approve', async () => {
+      if (!address || !store) return;
+      await store.remove(address);
+      setAgentReady(false);
+      setOutcome(null);
+      setChecked(null);
+      await approve();
+    });
+
+  const doSend = () =>
+    guarded('send', async () => {
+      if (!token || !address || !store || !coin || !preview.canSend) return;
+      const rec = await store.load(address);
+      if (!isUsable(rec, Date.now())) {
+        setAgentReady(false);
+        return;
+      }
+      setOutcome(null);
+      setChecked(null);
+      const out = await runMirror({
+        api,
+        token,
+        body: { ticker: view.ticker, coin, notionalUsd: usdAmt, leverage: lev, stopLossPct: sl },
+        privateKey: rec.privateKey,
+        onProgress: setProgress,
+      });
+      setOutcome(out);
+      if (out.kind === 'filled')
+        fire({ text: 'GACHA!', kana: 'ガチャ', tone: 'blue', x: '46%', y: '-18px' });
+      void loadOrders();
+    });
+
+  /** Asks the engine's order log (which reconciles with Hyperliquid) about an unknown order. Read-only. */
+  const checkOutcome = useCallback(async () => {
+    const out = outcomeRef.current;
+    if (!token || out?.kind !== 'unknown' || checking.current) return;
+    checking.current = true;
+    try {
+      const r = await api.mirrorOrders(token);
+      if (outcomeRef.current !== out) return;
+      const at = new Date().toLocaleTimeString();
+      if (!r.ok) {
+        setChecked(`Checked at ${at}: cannot reach the engine (${r.message}). Trying again.`);
+        return;
+      }
+      setOrders(r.data.orders);
+      const res = resolveUnknown(
+        r.data.orders.find((o) => o.id === out.stepId),
+        out.since,
+        Date.now(),
+      );
+      if (res.kind === 'filled')
+        setOutcome({
+          kind: 'filled',
+          groupId: out.groupId,
+          order: out.order,
+          receipts: [...out.receipts, res.receipt],
+          warning: res.warning,
+          note: res.note,
+          closed: res.closed,
+        });
+      else if (res.kind === 'rejected')
+        setOutcome({
+          kind: 'error',
+          code: 'REJECTED',
+          message: res.message,
+          receipts: out.receipts,
+        });
+      else setChecked(`Checked at ${at}. Still no definitive answer (${res.status}).`);
+    } finally {
+      checking.current = false;
+    }
+  }, [api, token]);
+
+  // While the outcome is unknown, keep asking (backing off) until the engine knows.
+  useEffect(() => {
+    if (outcome?.kind !== 'unknown') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (i: number) => {
+      timer = setTimeout(
+        async () => {
+          await checkOutcome();
+          if (!cancelled) schedule(i + 1);
+        },
+        RECHECK_MS[Math.min(i, RECHECK_MS.length - 1)],
+      );
+    };
+    schedule(0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [outcome, checkOutcome]);
 
   const leash = (
     <div className="co-leash">
@@ -352,7 +431,7 @@ export function MirrorTicket({
     </header>
   );
 
-  if (available === null)
+  if (availability === null)
     return (
       <section className="co-ticket co-mirror" aria-labelledby="mirror-h">
         {head}
@@ -361,7 +440,26 @@ export function MirrorTicket({
         </p>
       </section>
     );
-  if (!available)
+  if ('error' in availability)
+    return (
+      <section className="co-ticket co-mirror" aria-labelledby="mirror-h" data-testid="mirror-off">
+        {head}
+        {leash}
+        <div className="co-steps" style={{ padding: 16 }}>
+          <div className="co-closed co-closed--red" role="alert">
+            <b>Mirror status unknown</b>
+            <span>
+              Cannot ask the engine whether Mirror is on ({availability.error}). Nothing can be sent
+              until it answers.
+            </span>
+            <button className="ws-link" type="button" onClick={() => setAskAgain((n) => n + 1)}>
+              Ask again
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  if (!availability.available)
     return (
       <section className="co-ticket co-mirror" aria-labelledby="mirror-h" data-testid="mirror-off">
         {head}
@@ -370,8 +468,10 @@ export function MirrorTicket({
           <div className="co-closed">
             <b>Mirror is off on this engine</b>
             <span>
-              It runs without a Nansen key (REPLAY or a paused live engine), so it cannot place real
-              orders. The floor, the committee and play-money trading work the same.
+              {availability.mode === 'replay'
+                ? 'This engine replays a recorded session, so it cannot place real orders.'
+                : 'This live engine runs without access to the Nansen Trading API, so it cannot place real orders.'}{' '}
+              The floor, the committee and play-money trading work the same.
             </span>
           </div>
         </div>
@@ -434,7 +534,7 @@ export function MirrorTicket({
             <button
               className="ws-btn"
               type="button"
-              disabled={busy === 'link'}
+              disabled={busy !== null}
               onClick={() => void doLink()}
             >
               {busy === 'link' ? 'Waiting for your wallet…' : 'Sign to link'}
@@ -462,18 +562,20 @@ export function MirrorTicket({
               <li>
                 {TICK}
                 <span>
-                  <b>Revoke</b> it any time on Hyperliquid; it expires by itself in 180 days
+                  <b>Revoke</b> it any time on Hyperliquid; it expires by itself in{' '}
+                  {AGENT_VALID_DAYS} days
                 </span>
               </li>
             </ul>
             <p className="co-sub" style={{ margin: 0 }}>
               The key is created and kept in this browser. Your wallet also approves Nansen's
-              builder fee once (0.08% at most), if it hasn't already.
+              builder fee once ({builderFeeRate(BUILDER_FEE_CEILING)} at most), if it hasn't
+              already.
             </p>
             <button
               className="ws-btn"
               type="button"
-              disabled={busy === 'approve'}
+              disabled={busy !== null}
               onClick={() => void doApprove()}
             >
               {busy === 'approve' ? 'Waiting for your wallet…' : 'Approve agent key'}
@@ -514,7 +616,7 @@ export function MirrorTicket({
                         Trader in at {coinPx(p.entryPx)}, now {coinPx(mk)}
                         {adv === null
                           ? ''
-                          : `: you'd enter ${pctAbs(adv)} ${adv >= 0 ? 'worse' : 'better'}${bad ? ', over the 5% limit' : ''}`}
+                          : `: you'd enter ${pctAbs(adv)} ${adv >= 0 ? 'worse' : 'better'}${bad ? `, over the ${pctText(MIRROR.antiFomoPct)} limit` : ''}`}
                       </span>
                     </label>
                   );
@@ -726,11 +828,13 @@ export function MirrorTicket({
           return (
             <div className="co-sending" role="status">
               <i aria-hidden="true" />
-              {progress === 'preparing'
-                ? 'The engine is checking a fresh snapshot…'
-                : progress?.startsWith('signing')
-                  ? 'Your agent key is signing…'
-                  : 'Signed. Waiting for Hyperliquid…'}
+              {progress === null
+                ? 'Getting your agent key…'
+                : progress === 'preparing'
+                  ? 'The engine is checking a fresh snapshot…'
+                  : progress.startsWith('signing')
+                    ? 'Your agent key is signing…'
+                    : 'Signed. Waiting for Hyperliquid…'}
             </div>
           );
         if (outcome)
@@ -739,7 +843,10 @@ export function MirrorTicket({
               outcome={outcome}
               view={view}
               coin={coin ?? ''}
-              onRecheck={() => void recheck()}
+              checked={checked}
+              busy={busy !== null}
+              onRecheck={() => void checkOutcome()}
+              onReapprove={() => void doReapprove()}
               onAgain={() => {
                 setOutcome(null);
                 setPicked(false);
@@ -752,14 +859,14 @@ export function MirrorTicket({
             <button
               className="ws-btn"
               type="button"
-              disabled={!preview.canSend}
+              disabled={busy !== null || !preview.canSend}
               onClick={() => void doSend()}
             >
               {preview.canSend ? `Sign and send $${usdAmt} mirror` : 'Refused by the committee'}
             </button>
             <p>
               {preview.canSend
-                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${coin} leverage to ${lev}x (cross), then a market ${pos && pos.size > 0 ? 'buy' : 'sell'} with your stop attached. Slippage limit 1%.`
+                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${coin} leverage to ${lev}x (cross), then a market ${pos && pos.size > 0 ? 'buy' : 'sell'} with your stop attached. Slippage limit ${pctText(MARKET_SLIPPAGE)}.`
                 : 'Nothing was signed or sent. Fix what the committee refused and the stamps re-check instantly.'}
             </p>
           </div>
@@ -834,14 +941,21 @@ function Outcome({
   outcome,
   view,
   coin,
+  checked,
+  busy,
   onRecheck,
+  onReapprove,
   onAgain,
   onDesk,
 }: {
   outcome: MirrorOutcome;
   view: CompanyView;
   coin: string;
+  /** Result of the last check of an unknown outcome. */
+  checked: string | null;
+  busy: boolean;
   onRecheck(): void;
+  onReapprove(): void;
   onAgain(): void;
   onDesk(): void;
 }) {
@@ -869,7 +983,8 @@ function Outcome({
         </button>
       </div>
     );
-  if (outcome.kind === 'error')
+  if (outcome.kind === 'error') {
+    const agentBad = agentProblem(outcome);
     return (
       <div className="co-receipt co-unknown" role="alert">
         <div className="co-receipt__top">
@@ -878,33 +993,54 @@ function Outcome({
             <b>
               {outcome.code === 'REGION_BLOCKED'
                 ? 'Trading is unavailable in this region'
-                : 'Not sent'}
+                : agentBad
+                  ? 'Your agent key no longer works'
+                  : 'Not placed'}
             </b>
             <span>{outcome.message}</span>
           </div>
         </div>
-        <button className="ws-link" type="button" onClick={onAgain}>
-          Start again
-        </button>
+        {agentBad ? (
+          <p style={{ margin: 0 }}>
+            No order was placed. Approve a new agent key (your wallet signs again), then send once
+            more.
+          </p>
+        ) : null}
+        <div className="co-receipt__links">
+          {agentBad ? (
+            <button className="ws-btn" type="button" disabled={busy} onClick={onReapprove}>
+              Re-approve agent
+            </button>
+          ) : null}
+          <button className="ws-link" type="button" onClick={onAgain}>
+            Start again
+          </button>
+        </div>
       </div>
     );
+  }
   const order = outcome.order;
   const last = outcome.receipts[outcome.receipts.length - 1];
-  const explorer = last?.explorerUrl ?? null;
+  const explorer = last?.explorerUrl || null;
   if (outcome.kind === 'unknown')
     return (
       <div className="co-receipt co-unknown" role="status">
         <div className="co-receipt__top">
           <Hanko kanji="不明" word="UNKNOWN" tone="ink" label="Unknown" />
           <div>
-            <b>Result unknown. Check Hyperliquid.</b>
+            <b>Outcome unknown — checking with Hyperliquid</b>
             <span>{outcome.detail}</span>
           </div>
         </div>
         <p style={{ margin: 0 }}>
-          Your order may have filled. <b>Don't send it again yet</b>: open your positions on
-          Hyperliquid first. We never resend automatically.
+          Your order may have filled. <b>Don't send it again</b>: the engine is checking your
+          Hyperliquid position, and we never resend automatically.
         </p>
+        {checked ? (
+          <p className="co-sub" style={{ margin: 0 }}>
+            {checked}
+          </p>
+        ) : null}
         <ul className="co-rl">
           <li>
             {TICK}
@@ -951,10 +1087,19 @@ function Outcome({
             {order.notionalUsd}
           </b>
           <span>
-            {last?.status === 'RESTING' ? 'Resting on Hyperliquid' : 'Filled on Hyperliquid'}
+            {outcome.closed
+              ? 'Filled on Hyperliquid, and closed there since'
+              : last?.status === 'RESTING'
+                ? 'Resting on Hyperliquid'
+                : 'Filled on Hyperliquid'}
           </span>
         </div>
       </div>
+      {outcome.note ? (
+        <p className="co-sub" style={{ margin: 0 }}>
+          Confirmed through the engine: {outcome.note}.
+        </p>
+      ) : null}
       <ul className="co-rl">
         <li>
           {TICK}
@@ -979,10 +1124,13 @@ function Outcome({
           </span>
         </li>
         <li>
-          {outcome.warning ? QMARK : TICK}
+          {outcome.warning || outcome.note ? QMARK : TICK}
           <span>
             <b>Stop at {coinPx(order.stopLossPx)}</b>
-            {outcome.warning ?? 'attached as a reduce-only trigger'}
+            {outcome.warning ??
+              (outcome.note
+                ? 'attached to the order; check that it is on Hyperliquid'
+                : 'attached as a reduce-only trigger')}
           </span>
         </li>
       </ul>

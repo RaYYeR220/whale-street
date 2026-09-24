@@ -43,11 +43,42 @@ export async function approveBuilderFeeOnHl(
   });
 }
 
-/** Short human reason from a Hyperliquid/transport error. */
+/** The error and every `cause` under it (wallet libraries wrap the provider's error). */
+function causes(err: unknown): unknown[] {
+  const out: unknown[] = [];
+  for (let e = err; e !== null && e !== undefined && out.length < 10; ) {
+    out.push(e);
+    e = typeof e === 'object' ? (e as { cause?: unknown }).cause : undefined;
+  }
+  return out;
+}
+
+const messageOf = (e: unknown): string =>
+  typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string'
+    ? (e as { message: string }).message
+    : String(e);
+
+/** A wallet decline: viem's UserRejectedRequestError or an EIP-1193 4001 anywhere in the chain. */
+export function isUserRejection(err: unknown): boolean {
+  return causes(err).some((e) => {
+    const o = (typeof e === 'object' && e !== null ? e : {}) as { name?: unknown; code?: unknown };
+    return (
+      o.name === 'UserRejectedRequestError' ||
+      o.code === 4001 ||
+      /user rejected|user denied|denied/i.test(messageOf(e))
+    );
+  });
+}
+
+/** Short human reason from a wallet, Hyperliquid or transport error. */
 export function hlErrorText(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (/user rejected|denied/i.test(msg)) return 'You declined the signature in your wallet.';
-  if (/must deposit/i.test(msg))
+  if (isUserRejection(err)) return 'You declined the signature in your wallet.';
+  const chain = causes(err).map(messageOf);
+  if (chain.some((m) => /must deposit/i.test(m)))
     return 'This wallet has no Hyperliquid deposit yet. Deposit USDC on Hyperliquid first.';
+  // Keep the wrapper's words and add the innermost reason ("Failed to sign…: device locked").
+  const top = chain[0] ?? String(err);
+  const inner = chain.length > 1 ? chain[chain.length - 1] : undefined;
+  const msg = inner && inner !== top ? `${top}: ${inner}` : top;
   return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
 }

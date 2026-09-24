@@ -16,6 +16,3 @@ export const walletConfig = createConfig({
     [optimism.id]: http(),
   },
 });
-
-/** Highest builder fee we approve for Nansen, in tenths of a basis point (80 = 0.08%, the untiered ceiling). */
-export const BUILDER_FEE_CEILING = 80;

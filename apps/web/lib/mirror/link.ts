@@ -4,6 +4,7 @@
  */
 import type { Api } from '../api';
 import type { PlayerView } from '../api-types';
+import { hlErrorText, isUserRejection } from './hl';
 
 /** Must match apps/engine/src/services/players.ts linkMessage byte for byte. */
 export const linkMessage = (address: string, nonce: string): string =>
@@ -23,8 +24,10 @@ export async function linkWallet(
   try {
     signature = await signMessage(linkMessage(address, n.data.nonce));
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, message: /reject|denied/i.test(msg) ? 'You declined the signature.' : msg };
+    return {
+      ok: false,
+      message: isUserRejection(err) ? 'You declined the signature.' : hlErrorText(err),
+    };
   }
   const r = await api.authLink(token, address, signature);
   return r.ok ? { ok: true, player: r.data.player } : { ok: false, message: r.message };
