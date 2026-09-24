@@ -418,9 +418,13 @@ describe('mirror', () => {
 
     // No position change on Hyperliquid yet: the outcome stays unknown (never guessed REJECTED).
     t.clock.advance(31_000);
-    expect(await list()).toMatchObject({ status: 'UNKNOWN' });
     const wallet = master.address.toLowerCase();
-    expect(t.info.calls).toContain(`clearinghouse:${wallet}`);
+    const reads = () => t.info.calls.filter((c) => c === `clearinghouse:${wallet}`).length;
+    const before = reads();
+    expect(await list()).toMatchObject({ status: 'UNKNOWN' });
+    await e.settle();
+    expect(reads()).toBe(before + 1);
+    expect(await list()).toMatchObject({ status: 'UNKNOWN' });
 
     t.info.states.set(wallet, {
       positions: [pos('HYPE', 1.22, 41.05, null, 3)],
@@ -428,6 +432,9 @@ describe('mirror', () => {
       time: null,
     });
     t.clock.advance(16_000);
+    // GET answers from storage at once; the reconcile runs in the background.
+    expect(await list()).toMatchObject({ status: 'UNKNOWN' });
+    await e.settle();
     const reconciled = await list();
     expect(reconciled).toMatchObject({ status: 'FILLED' });
     expect(reconciled.error).toContain('reconciled');
@@ -645,6 +652,249 @@ describe('mirror', () => {
     ]);
   });
 
+  it('a prepared step ages from the first Nansen prepare call, not from when its rows were written', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    // Each Nansen prepare call takes 20 s: the leverage nonce is 40 s old when the rows are written.
+    trading.onPrepare = () => t.clock.advance(20_000);
+    const { lev } = await prepareSteps(e, player.id);
+    trading.onPrepare = null;
+    t.clock.advance(25_000);
+    expect(
+      await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712)),
+    ).toMatchObject({ ok: false, code: 'EXPIRED', status: 410 });
+    expect(trading.calls.filter((c) => c.method === 'execute')).toEqual([]);
+  });
+
+  it('rounds the size down to szDecimals before prepare and refuses below the minimum', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    trading.assets = [{ assetId: 159, name: 'HYPE', szDecimals: 0, maxLeverage: 10 }];
+    // $100 at 41 is 2.44 HYPE; whole coins only → 2 (≈ $82), never rounded up past $100.
+    const r = await e.mirror.prepare(player.id, { ...HYP_50, notionalUsd: 100 });
+    expect(r).toMatchObject({ ok: true, order: { size: 2 } });
+    const req = trading.calls.find((c) => c.method === 'prepareOrder')?.args[0] as { size: number };
+    expect(req.size).toBe(2);
+
+    // $30 at 41 is 0.73 HYPE → 0 whole coins: below the $10 minimum.
+    const before = trading.calls.length;
+    const small = await e.mirror.prepare(player.id, { ...HYP_50, notionalUsd: 30 });
+    expect(refusalCodes(small)).toEqual(['BELOW_MIN_SIZE']);
+    expect(trading.calls.slice(before).filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    const groupId = small.ok ? small.groupId : '';
+    expect(e.mirror.orders(player.id).filter((o) => o.groupId === groupId)).toMatchObject([
+      { status: 'REFUSED', refusals: [{ code: 'BELOW_MIN_SIZE' }] },
+    ]);
+  });
+
+  it('a malformed prepared leg is a validation failure with a row, not a crash', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    trading.orderAction = (a) => ({ ...a, orders: [(a.orders as unknown[])[0], null] });
+    const r = await e.mirror.prepare(player.id, HYP_50);
+    expect(r).toMatchObject({ ok: false, code: 'ACTION_MISMATCH', status: 502 });
+    expect(e.mirror.orders(player.id)[0]).toMatchObject({ status: 'REJECTED' });
+    expect(e.mirror.orders(player.id)[0]?.error).toContain('malformed');
+  });
+
+  it('rejects a prepared order for another builder or a vault, and fails closed without the builder', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    trading.builderAddress = '0x1111111111111111111111111111111111111111';
+    const wrongBuilder = await e.mirror.prepare(player.id, HYP_50);
+    expect(wrongBuilder).toMatchObject({ ok: false, code: 'ACTION_MISMATCH' });
+    expect(wrongBuilder.ok ? '' : wrongBuilder.message).toContain('builder');
+    await t.app.close();
+
+    const s2 = await setup();
+    s2.e.mirror.registerAgent(s2.player.id, s2.master.address, s2.agent.address);
+    s2.trading.vaultAddress = '0x2222222222222222222222222222222222222222';
+    const vault = await s2.e.mirror.prepare(s2.player.id, HYP_50);
+    expect(vault).toMatchObject({ ok: false, code: 'ACTION_MISMATCH' });
+    expect(vault.ok ? '' : vault.message).toContain('vault');
+    expect(s2.e.mirror.orders(s2.player.id)[0]).toMatchObject({ status: 'REJECTED' });
+    await t.app.close();
+
+    const s3 = await setup();
+    s3.e.mirror.registerAgent(s3.player.id, s3.master.address, s3.agent.address);
+    s3.trading.builderFail = { status: 500, error: 'HTTP 500: builder lookup failed' };
+    expect(await s3.e.mirror.prepare(s3.player.id, HYP_50)).toMatchObject({
+      ok: false,
+      code: 'UPSTREAM_FAILED',
+    });
+    expect(s3.trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    expect(s3.e.mirror.orders(s3.player.id)[0]).toMatchObject({ status: 'REJECTED' });
+  });
+
+  it('persists "company no longer listed" at execute as a POLICY_CHANGED rejection', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const { lev, ord } = await prepareSteps(e, player.id);
+    await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
+    e.state.companies.delete(TRADER);
+    expect(
+      await e.mirror.execute(player.id, ord.stepId, await sign(agent, ord.eip712)),
+    ).toMatchObject({ ok: false, code: 'POLICY_CHANGED', message: 'company no longer listed' });
+    expect(e.repos.mirrorOrders.get(ord.stepId)).toMatchObject({
+      status: 'REJECTED',
+      refusals: [{ code: 'POLICY_CHANGED' }],
+    });
+    expect(
+      trading.calls.filter(
+        (c) =>
+          c.method === 'execute' &&
+          (c.args[0] as { action: { type: string } }).action.type === 'order',
+      ),
+    ).toEqual([]);
+  });
+
+  it('a region-blocked meta() at prepare writes a TRADING_UNAVAILABLE row; an unknown ticker writes none', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    expect(await e.mirror.prepare(player.id, { ...HYP_50, ticker: 'NOPE' })).toMatchObject({
+      code: 'UNKNOWN_TICKER',
+    });
+    expect(e.mirror.orders(player.id)).toEqual([]);
+    trading.metaFail = { status: 451, error: 'HTTP 451: region' };
+    expect(await e.mirror.prepare(player.id, HYP_50)).toMatchObject({
+      ok: false,
+      code: 'REGION_BLOCKED',
+      status: 451,
+    });
+    expect(e.mirror.orders(player.id)).toMatchObject([
+      { status: 'REJECTED', refusals: [{ code: 'TRADING_UNAVAILABLE' }] },
+    ]);
+  });
+
+  it('GET /api/mirror/orders answers without waiting for the Hyperliquid read', async () => {
+    const { e, trading, master, agent, player, token } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const id = await placeOrder(e, trading, player.id, agent, 50, {
+      status: null,
+      error: 'timeout',
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = t.info.clearinghouse.bind(t.info);
+    t.info.clearinghouse = async (user) => {
+      await gate;
+      return read(user);
+    };
+    t.clock.advance(31_000);
+    const res = await Promise.race([
+      t.app.inject({ url: '/api/mirror/orders', headers: bearer(token) }),
+      new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+    ]);
+    release();
+    if (res === 'blocked') throw new Error('GET /api/mirror/orders waited for Hyperliquid');
+    expect(res.statusCode).toBe(200);
+    expect(res.json().orders.find((o: { id: string }) => o.id === id)).toMatchObject({
+      status: 'UNKNOWN',
+    });
+    await e.settle();
+  });
+
+  it('skips reconcile when mirror trading is unavailable', async () => {
+    const { e, master, player } = await setup({ mode: 'replay' });
+    const wallet = master.address.toLowerCase();
+    const now = t.clock.now();
+    e.repos.agentKeys.upsert({
+      playerId: player.id,
+      masterAddress: wallet,
+      agentAddress: '0x00000000000000000000000000000000000000ee',
+      registeredAt: now,
+    });
+    e.repos.mirrorOrders.insert({
+      id: 'ms_unknown',
+      playerId: player.id,
+      companyId: TRADER,
+      coin: 'HYPE',
+      kind: 'order',
+      stepIndex: 1,
+      groupId: 'mg_unknown',
+      status: 'UNKNOWN',
+      notionalUsd: 50,
+      refusals: null,
+      request: { ...HYP_50, hlBaselineSzi: 0 },
+      action: {
+        type: 'order',
+        orders: [
+          { a: 159, b: true, p: '41.41', s: '1.21', r: false, t: { limit: { tif: 'Ioc' } } },
+        ],
+      },
+      eip712: null,
+      nonce: 1,
+      vaultAddress: null,
+      hlOid: null,
+      avgPx: null,
+      error: null,
+      createdAt: now,
+      updatedAt: now,
+      masterAddress: wallet,
+    });
+    t.info.states.set(wallet, {
+      positions: [pos('HYPE', 1.21, 41, null, 3)],
+      accountValue: 500,
+      time: null,
+    });
+    t.clock.advance(31_000);
+    await e.mirror.reconcile(player.id);
+    expect(t.info.calls.filter((c) => c.startsWith('clearinghouse'))).toEqual([]);
+    expect(e.repos.mirrorOrders.get('ms_unknown')?.status).toBe('UNKNOWN');
+  });
+
+  it('execute outcomes — 2xx non-ok → UNKNOWN, 451 → REJECTED once, 408 → UNKNOWN, thrown → UNKNOWN', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const orderExecutes = () =>
+      trading.calls.filter(
+        (c) =>
+          c.method === 'execute' &&
+          (c.args[0] as { action: { type: string } }).action.type === 'order',
+      ).length;
+    const run = async (arm: () => void) => {
+      const { lev, ord } = await prepareSteps(e, player.id, 20);
+      await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
+      arm();
+      const before = orderExecutes();
+      const r = await e.mirror.execute(player.id, ord.stepId, await sign(agent, ord.eip712));
+      trading.executeFail = null;
+      trading.executeThrow = null;
+      trading.executeStatus = 'ok';
+      trading.executeStatuses = [{ filled: { oid: 77, totalSz: '1.2', avgPx: '41.05' } }];
+      return { r, row: e.repos.mirrorOrders.get(ord.stepId), sent: orderExecutes() - before };
+    };
+
+    const region = await run(() => {
+      trading.executeFail = { status: 451, error: 'HTTP 451: region' };
+    });
+    expect(region.r).toMatchObject({ ok: false, code: 'REGION_BLOCKED', status: 451 });
+    expect(region.row?.status).toBe('REJECTED');
+    expect(region.sent).toBe(1);
+
+    const notOk = await run(() => {
+      trading.executeStatus = 'err';
+      trading.executeStatuses = [];
+    });
+    expect(notOk.r).toMatchObject({ ok: true, receipt: { status: 'UNKNOWN' } });
+    expect(notOk.row?.status).toBe('UNKNOWN');
+
+    const timeout = await run(() => {
+      trading.executeFail = { status: 408, error: 'HTTP 408: request timeout' };
+    });
+    expect(timeout.r).toMatchObject({ ok: true, receipt: { status: 'UNKNOWN' } });
+    expect(timeout.row?.status).toBe('UNKNOWN');
+
+    const thrown = await run(() => {
+      trading.executeThrow = new Error('socket closed');
+    });
+    expect(thrown.r).toMatchObject({ ok: true, receipt: { status: 'UNKNOWN' } });
+    expect(thrown.row?.status).toBe('UNKNOWN');
+    expect(thrown.row?.error).toContain('socket closed');
+  });
+
   it('never leaks the Nansen API key into responses or the database', async () => {
     const { e, trading, master, agent, player } = await setup();
     e.mirror.registerAgent(player.id, master.address, agent.address);
@@ -668,6 +918,9 @@ describe('validateOrderAction', () => {
     markPx: 41,
   };
   const asset = { assetId: 159, name: 'HYPE', szDecimals: 2, maxLeverage: 10 };
+  const LIMITS = { builderAddress: NANSEN_BUILDER, maxNotionalUsd: 100 };
+  const v = (action: Record<string, unknown>, o: typeof order = order, a: typeof asset = asset) =>
+    validateOrderAction(action, o, a, LIMITS);
   const good = () => ({
     type: 'order',
     orders: [
@@ -686,46 +939,93 @@ describe('validateOrderAction', () => {
   });
 
   it('accepts the expected bracket and names each mismatch', () => {
-    expect(validateOrderAction(good(), order, asset)).toBeNull();
-    expect(validateOrderAction({ ...good(), builder: undefined }, order, asset)).toBe(
-      'missing builder code',
-    );
-    expect(validateOrderAction({ ...good(), orders: [good().orders[0]] }, order, asset)).toBe(
-      'missing reduce-only stop-loss leg',
-    );
-    expect(validateOrderAction(good(), { ...order, size: 2 }, asset)).toContain('size');
-    expect(validateOrderAction(good(), { ...order, markPx: 50 }, asset)).toContain('price');
-    expect(validateOrderAction(good(), order, { ...asset, assetId: 1 })).toBe('wrong asset');
+    expect(v(good())).toBeNull();
+    expect(v({ ...good(), builder: undefined })).toBe('missing builder code');
+    expect(v({ ...good(), orders: [good().orders[0]] })).toBe('missing reduce-only stop-loss leg');
+    expect(v(good(), { ...order, size: 2 })).toContain('size');
+    expect(v(good(), { ...order, markPx: 50 })).toContain('price');
+    expect(v(good(), order, { ...asset, assetId: 1 })).toBe('wrong asset');
   });
 
   it('rejects extra opening legs, a misplaced stop and an excessive builder fee', () => {
     const [entry, stop] = good().orders;
-    expect(
-      validateOrderAction({ ...good(), orders: [entry, stop, entry] }, order, asset),
-    ).toContain('extra');
+    expect(v({ ...good(), orders: [entry, stop, entry] })).toContain('extra');
     const farStop = {
       ...stop,
       t: { trigger: { isMarket: true, triggerPx: '30', tpsl: 'sl' } },
     };
-    expect(validateOrderAction({ ...good(), orders: [entry, farStop] }, order, asset)).toContain(
-      'stop-loss',
-    );
+    expect(v({ ...good(), orders: [entry, farStop] })).toContain('stop-loss');
     // A tight stop (40.9 under a 41 mark): a trigger above the mark is within 1% but would fire at once.
     const wrongSide = {
       ...stop,
       t: { trigger: { isMarket: true, triggerPx: '41.2', tpsl: 'sl' } },
     };
     const tight = { ...order, stopLossPx: 40.9 };
-    expect(validateOrderAction({ ...good(), orders: [entry, wrongSide] }, tight, asset)).toContain(
-      'stop-loss',
-    );
+    expect(v({ ...good(), orders: [entry, wrongSide] }, tight)).toContain('stop-loss');
     const tp = { ...stop, t: { trigger: { isMarket: true, triggerPx: '37.6', tpsl: 'tp' } } };
-    expect(validateOrderAction({ ...good(), orders: [entry, tp] }, order, asset)).toBe(
-      'missing reduce-only stop-loss leg',
+    expect(v({ ...good(), orders: [entry, tp] })).toBe('missing reduce-only stop-loss leg');
+    expect(v({ ...good(), builder: { b: NANSEN_BUILDER, f: 500 } })).toContain('builder fee');
+  });
+
+  it('bounds the prepared notional (size × limit price) by the max plus slippage', () => {
+    // Whole coins only, $100 at a 60 mark → 1.67 coins, but Nansen prepared 2 (≈ $121).
+    const coarse = { ...asset, szDecimals: 0 };
+    const probe = { ...order, notionalUsd: 100, size: 100 / 60, markPx: 60, stopLossPx: 55 };
+    const [entry, stop] = good().orders;
+    const two = {
+      ...good(),
+      orders: [
+        { ...entry, p: '60.6', s: '2' },
+        {
+          ...stop,
+          p: '55',
+          s: '2',
+          t: { trigger: { isMarket: true, triggerPx: '55', tpsl: 'sl' } },
+        },
+      ],
+    };
+    expect(v(two, probe, coarse)).toContain('notional');
+    // 1 coin (≈ $60.6) is fine.
+    const one = {
+      ...two,
+      orders: [
+        { ...two.orders[0], s: '1' },
+        { ...two.orders[1], s: '1' },
+      ],
+    };
+    expect(v(one, { ...probe, size: 1 }, coarse)).toBeNull();
+  });
+
+  it('treats a non-object leg as a validation failure instead of throwing', () => {
+    const [entry] = good().orders;
+    expect(() => v({ ...good(), orders: [entry, null] })).not.toThrow();
+    expect(v({ ...good(), orders: [entry, null] })).toContain('malformed');
+    expect(v({ ...good(), orders: [null] })).toContain('malformed');
+    expect(v({ ...good(), orders: [entry, 'sl'] })).toContain('malformed');
+  });
+
+  it('pins the bracket shape (IOC entry, normalTpsl, market stop, Nansen builder, no vault)', () => {
+    const [entry, stop] = good().orders;
+    expect(v({ ...good(), orders: [{ ...entry, t: { limit: { tif: 'Gtc' } } }, stop] })).toContain(
+      'Ioc',
     );
+    expect(v({ ...good(), grouping: 'na' })).toContain('normalTpsl');
+    expect(v({ ...good(), grouping: undefined })).toContain('normalTpsl');
+    const limitStop = {
+      ...stop,
+      t: { trigger: { isMarket: false, triggerPx: '37.6', tpsl: 'sl' } },
+    };
+    expect(v({ ...good(), orders: [entry, limitStop] })).toContain('market');
     expect(
-      validateOrderAction({ ...good(), builder: { b: NANSEN_BUILDER, f: 500 } }, order, asset),
-    ).toContain('builder fee');
+      v({ ...good(), builder: { b: '0x1111111111111111111111111111111111111111', f: 80 } }),
+    ).toContain('builder');
+    expect(
+      v({ ...good(), builder: { b: `0x${NANSEN_BUILDER.slice(2).toUpperCase()}`, f: 80 } }),
+    ).toBeNull();
+    expect(v({ ...good(), vaultAddress: '0x2222222222222222222222222222222222222222' })).toContain(
+      'vault',
+    );
+    expect(v({ ...good(), vaultAddress: null })).toBeNull();
   });
 
   it('checks the prepared leverage action', () => {

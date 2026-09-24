@@ -77,7 +77,12 @@ export function registerMirrorRoutes(app: FastifyInstance, e: Engine): void {
   app.get('/api/mirror/orders', async (req, reply) => {
     const player = requirePlayer(e, req, reply);
     if (!player) return reply;
-    await e.mirror.reconcile(player.id);
+    // Answer from storage at once; the (rate-limited) Hyperliquid reconcile runs in the background.
+    e.track(
+      e.mirror
+        .reconcile(player.id)
+        .catch((err) => e.log.warn('mirror reconcile failed', { error: String(err) })),
+    );
     return { orders: e.mirror.orders(player.id) };
   });
 }

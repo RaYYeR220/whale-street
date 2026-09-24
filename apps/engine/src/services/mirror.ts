@@ -5,7 +5,6 @@ import {
   evaluateMirror,
   type MirrorContext,
   type MirrorOrder,
-  type MirrorRefusal,
   type MirrorRequest,
   PARAMS,
   type Params,
@@ -37,7 +36,7 @@ import type { Refresher } from '../ingest/refresh';
 import type { Logger } from '../log';
 import type { CompanyRuntime, MarketState } from '../market/state';
 import type { TradingPort } from '../ports';
-import type { MirrorKind, MirrorStatus } from '../types';
+import type { MirrorKind, MirrorReason, MirrorStatus } from '../types';
 
 /** A prepared step must be signed and executed within this window (Nansen nonces go stale). */
 export const STEP_TTL_MS = 60_000;
@@ -56,6 +55,8 @@ export const CLOSE_GRACE_MS = 5 * MINUTE_MS;
 const META_TTL_MS = HOUR_MS;
 /** Stop-loss trigger may differ from the policy price by this fraction (HL tick rounding). */
 const STOP_TOLERANCE = 0.01;
+/** size × limit price may exceed maxNotionalUsd by the market slippage plus this rounding margin. */
+const NOTIONAL_ROUNDING = 0.005;
 /** Statuses that count as an open mirror (unless the wallet is flat on the coin, see openMirrors). */
 const OPEN_STATUS_LIST: readonly MirrorStatus[] = ['SUBMITTED', 'FILLED', 'RESTING', 'UNKNOWN'];
 /** Attempts that reached (or may have reached) Hyperliquid: their notional counts toward the daily cap. */
@@ -63,6 +64,7 @@ const PLACED_STATUSES: ReadonlySet<MirrorStatus> = new Set([...OPEN_STATUS_LIST,
 /** Order statuses whose real outcome may still be learned from Hyperliquid. */
 const RECONCILABLE: ReadonlySet<MirrorStatus> = new Set(['UNKNOWN', 'SUBMITTED']);
 const REGION_MESSAGE = 'trading unavailable in this region';
+const TRADING_UNAVAILABLE: MirrorReason = { code: 'TRADING_UNAVAILABLE', message: REGION_MESSAGE };
 
 export type MirrorErrorCode =
   | 'TRADING_UNAVAILABLE'
@@ -87,7 +89,7 @@ export interface MirrorError {
   status: number;
   code: MirrorErrorCode;
   message: string;
-  refusals?: MirrorRefusal[];
+  refusals?: MirrorReason[];
 }
 
 export interface MirrorPrepareRequest extends MirrorRequest {
@@ -101,7 +103,7 @@ export interface MirrorStep {
 }
 
 export type PrepareResult =
-  | { ok: true; groupId: string; refusals: MirrorRefusal[] }
+  | { ok: true; groupId: string; refusals: MirrorReason[] }
   | { ok: true; groupId: string; order: MirrorOrder; steps: MirrorStep[] }
   | MirrorError;
 
@@ -124,7 +126,7 @@ export interface MirrorOrderView {
   coin: string;
   status: MirrorStatus;
   notionalUsd: number;
-  refusals: MirrorRefusal[] | null;
+  refusals: MirrorReason[] | null;
   hlOid: number | null;
   avgPx: number | null;
   error: string | null;
@@ -180,7 +182,7 @@ const err = (
   status: number,
   code: MirrorErrorCode,
   message: string,
-  refusals?: MirrorRefusal[],
+  refusals?: MirrorReason[],
 ): MirrorError => ({
   ok: false,
   status,
@@ -200,13 +202,19 @@ const isDefinitiveRejection = (status: number | null): boolean =>
   status !== null && status >= 400 && status < 500 && status !== 408;
 
 type WireOrder = { a?: unknown; b?: unknown; p?: unknown; s?: unknown; r?: unknown; t?: unknown };
-type WireTrigger = { triggerPx?: unknown; tpsl?: unknown };
+type WireTrigger = { triggerPx?: unknown; tpsl?: unknown; isMarket?: unknown };
 
 const asRecord = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
 const triggerOf = (o: WireOrder): WireTrigger | null =>
   asRecord(asRecord(o.t)?.trigger) as WireTrigger | null;
+
+/** Rounds a size DOWN to `decimals` places (the epsilon absorbs binary noise like 2.4299999…). */
+const floorTo = (x: number, decimals: number): number => {
+  const f = 10 ** decimals;
+  return Math.floor(x * f + 1e-9) / f;
+};
 
 /** Strict numeric read of an HL wire value (number or numeric string); anything else → null. */
 const num = (v: unknown): number | null => {
@@ -218,24 +226,42 @@ const num = (v: unknown): number | null => {
   return null;
 };
 
+/** What a prepared order is checked against besides the policy decision. */
+export interface OrderActionLimits {
+  /** Nansen's builder address (from /perp/builder-fee); the order's builder code must be it. */
+  builderAddress: string;
+  /** params.mirror.maxNotionalUsd: size × limit price may exceed it only by slippage + rounding. */
+  maxNotionalUsd: number;
+}
+
 /**
- * Re-checks Nansen's prepared order action against the policy decision: asset, side, size, price,
- * reduce-only flag, a reduce-only stop-loss trigger leg at the policy stop price, no extra opening
- * legs, and Nansen's builder code with a fee at most MAX_BUILDER_FEE.
+ * Re-checks Nansen's prepared order action against the policy decision, failing closed on any
+ * other shape: a `normalTpsl` bracket with no vault; an IOC limit entry (how market orders are
+ * sent) on the right asset and side, with the policy size, a price within slippage of the mark and
+ * a notional within the cap; only reduce-only exits, including a market stop-loss trigger at the
+ * policy stop price; and Nansen's own builder code with a fee at most MAX_BUILDER_FEE.
  */
 export function validateOrderAction(
   action: Record<string, unknown>,
   order: MirrorOrder,
   asset: PerpAsset,
+  limits: OrderActionLimits,
 ): string | null {
   if (action.type !== 'order') return 'not an order action';
-  const orders = Array.isArray(action.orders) ? (action.orders as WireOrder[]) : [];
-  const main = orders[0];
+  if (action.grouping !== 'normalTpsl')
+    return `grouping ${String(action.grouping)} is not normalTpsl`;
+  if (action.vaultAddress !== undefined && action.vaultAddress !== null)
+    return 'order must not target a vault';
+  const legs = Array.isArray(action.orders) ? action.orders.map(asRecord) : [];
+  if (legs.length === 0) return 'no order legs';
+  if (legs.some((l) => l === null)) return 'malformed order leg';
+  const [main, ...exits] = legs as WireOrder[];
   if (!main) return 'no order legs';
   if (main.a !== asset.assetId) return 'wrong asset';
   if (main.b !== order.isBuy) return 'wrong side';
   if (main.r !== false) return 'entry leg must not be reduce-only';
-  if (!asRecord(asRecord(main.t)?.limit)) return 'entry leg must be a limit order';
+  if (asRecord(asRecord(main.t)?.limit)?.tif !== 'Ioc')
+    return 'entry leg must be an Ioc limit order (a market order)';
   const size = num(main.s) ?? Number.NaN;
   const tolerance = Math.max(order.size * 0.01, 10 ** -asset.szDecimals);
   if (!(size > 0 && Math.abs(size - order.size) <= tolerance))
@@ -243,11 +269,14 @@ export function validateOrderAction(
   const px = num(main.p) ?? Number.NaN;
   if (!(Math.abs(px / order.markPx - 1) <= MARKET_SLIPPAGE + 0.002))
     return `price ${String(main.p)} is too far from mark`;
-  const exits = orders.slice(1);
+  const maxNotional = limits.maxNotionalUsd * (1 + MARKET_SLIPPAGE + NOTIONAL_ROUNDING);
+  if (!(size * px <= maxNotional))
+    return `notional $${(size * px).toFixed(2)} exceeds $${maxNotional.toFixed(2)}`;
   if (exits.some((o) => o.a !== asset.assetId || o.b !== !order.isBuy || o.r !== true))
     return 'unexpected extra order leg (only reduce-only exits are allowed)';
   const stop = exits.find((o) => triggerOf(o)?.tpsl === 'sl');
   if (!stop) return 'missing reduce-only stop-loss leg';
+  if (triggerOf(stop)?.isMarket !== true) return 'stop-loss leg must be a market trigger';
   const triggerPx = num(triggerOf(stop)?.triggerPx) ?? Number.NaN;
   // Tick rounding only: never more than half-way to the mark, so the stop stays on the right side.
   const stopTolerance = Math.min(
@@ -260,6 +289,8 @@ export function validateOrderAction(
     return `stop-loss size ${String(stop.s)} differs from ${size}`;
   const builder = asRecord(action.builder);
   if (!builder || typeof builder.b !== 'string') return 'missing builder code';
+  if (builder.b.toLowerCase() !== limits.builderAddress.toLowerCase())
+    return `builder ${builder.b} is not Nansen's builder ${limits.builderAddress}`;
   if (typeof builder.f !== 'number' || !(builder.f >= 0 && builder.f <= MAX_BUILDER_FEE))
     return `builder fee ${String(builder.f)} exceeds ${MAX_BUILDER_FEE}`;
   return null;
@@ -293,6 +324,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
   const info = d.info ?? null;
   const secret = d.config.nansenApiKey;
   let meta: { at: number; assets: Map<string, PerpAsset> } | null = null;
+  let builder: { at: number; address: string } | null = null;
   const lastReconcile = new Map<string, number>();
 
   const available = () => d.config.mode === 'live' && d.trading !== null;
@@ -313,6 +345,21 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         : err(502, 'UPSTREAM_FAILED', `could not load Nansen perp markets: ${redact(r.error)}`);
     meta = { at: now, assets: new Map(r.value.map((a) => [a.name, a])) };
     return meta.assets;
+  };
+
+  /** Nansen's builder address (global; cached like meta), from the builder-fee endpoint. */
+  const builderAddress = async (wallet: Address): Promise<string | MirrorError> => {
+    const now = d.clock.now();
+    if (builder && now - builder.at < META_TTL_MS) return builder.address;
+    const trading = d.trading;
+    if (!trading) return err(503, 'TRADING_UNAVAILABLE', 'mirror trading is disabled');
+    const r = await trading.builderFee(wallet);
+    if (!r.ok)
+      return r.status === 451
+        ? regionBlocked()
+        : err(502, 'UPSTREAM_FAILED', `could not load the Nansen builder: ${redact(r.error)}`);
+    builder = { at: now, address: r.value.builderAddress.toLowerCase() };
+    return builder.address;
   };
 
   /** The master wallet's Hyperliquid positions; null when they could not be read. */
@@ -394,6 +441,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     status: MirrorStatus;
     notionalUsd: number;
     request: Record<string, unknown>;
+    /** Defaults to now; prepared steps use the moment their nonce was requested. */
+    createdAt?: number;
   }): MirrorOrderRow => {
     const now = d.clock.now();
     return {
@@ -415,7 +464,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       hlOid: null,
       avgPx: null,
       error: null,
-      createdAt: now,
+      createdAt: o.createdAt ?? now,
       updatedAt: now,
       masterAddress: o.master,
     };
@@ -453,6 +502,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const r = await trading.builderFee(wallet as Address);
       if (!r.ok)
         return r.status === 451 ? regionBlocked() : err(502, 'UPSTREAM_FAILED', redact(r.error));
+      builder = { at: d.clock.now(), address: r.value.builderAddress.toLowerCase() };
       return { ok: true, status: r.value };
     },
 
@@ -488,9 +538,41 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       if (!rt) return err(404, 'UNKNOWN_TICKER', 'no such ticker');
       const master = agent.masterAddress as Address;
 
+      const groupId = `mg_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+      const request: StoredRequest = { ...req };
+      /** Every attempt on a listed company is a row: REFUSED (policy) or REJECTED (failure). */
+      const record = (
+        status: 'REFUSED' | 'REJECTED',
+        refusals: MirrorReason[] | null,
+        error: string | null,
+      ) => {
+        const r = row({
+          playerId,
+          master,
+          rt,
+          coin: req.coin,
+          kind: 'order',
+          stepIndex: 1,
+          groupId,
+          status,
+          notionalUsd: req.notionalUsd,
+          request: { ...request },
+        });
+        d.repos.mirrorOrders.insert({ ...r, refusals, error });
+      };
+      const refuse = (refusals: MirrorReason[]): PrepareResult => {
+        record('REFUSED', refusals, null);
+        return { ok: true, groupId, refusals };
+      };
+      const fail = (code: MirrorErrorCode, status: number, message: string): MirrorError => {
+        record('REJECTED', code === 'REGION_BLOCKED' ? [TRADING_UNAVAILABLE] : null, message);
+        return err(status, code, message);
+      };
+      const failWith = (e: MirrorError) => fail(e.code, e.status, e.message);
+
       await d.refresher.refresh(rt.id, 'mirror');
       const table = await assets();
-      if (!(table instanceof Map)) return table;
+      if (!(table instanceof Map)) return failWith(table);
       const asset = table.get(req.coin) ?? null;
       // One HL read: live positions for the open-mirror count, and the reconcile baseline.
       const hl = await readHl(master);
@@ -504,50 +586,36 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         context(rt, req.coin, master, asset !== null, hl),
         params,
       );
-      const groupId = `mg_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-      const request: StoredRequest = { ...req };
-      if (!decision.allow || !asset) {
-        const refusals = decision.allow ? [] : decision.refusals;
-        const r = row({
-          playerId,
-          master,
-          rt,
-          coin: req.coin,
-          kind: 'order',
-          stepIndex: 1,
-          groupId,
-          status: 'REFUSED',
-          notionalUsd: req.notionalUsd,
-          request: { ...request },
-        });
-        d.repos.mirrorOrders.insert({ ...r, refusals });
-        return { ok: true, groupId, refusals };
+      if (!decision.allow || !asset) return refuse(decision.allow ? [] : decision.refusals);
+
+      // Whole lots only: round the size DOWN (so rounding never lifts it past the cap) and refuse
+      // when that leaves less than the minimum order.
+      if (!(Number.isInteger(asset.szDecimals) && asset.szDecimals >= 0 && asset.szDecimals <= 12))
+        return fail('UPSTREAM_FAILED', 502, `invalid size precision for ${req.coin}`);
+      const size = floorTo(decision.order.size, asset.szDecimals);
+      const min = params.mirror.minNotionalUsd;
+      if (!(size * decision.order.markPx >= min)) {
+        return refuse([
+          {
+            code: 'BELOW_MIN_SIZE',
+            message: `${req.coin} trades in steps of ${10 ** -asset.szDecimals}: $${req.notionalUsd} rounds down to ${size} ${req.coin}, below the $${min} minimum`,
+          },
+        ]);
       }
-      const order = decision.order;
+      const order: MirrorOrder = { ...decision.order, size };
 
-      /** Every failed attempt is logged as a REJECTED order row. */
-      const fail = (code: MirrorErrorCode, status: number, message: string) => {
-        const r = row({
-          playerId,
-          master,
-          rt,
-          coin: req.coin,
-          kind: 'order',
-          stepIndex: 1,
-          groupId,
-          status: 'REJECTED',
-          notionalUsd: req.notionalUsd,
-          request: { ...request },
-        });
-        d.repos.mirrorOrders.insert({ ...r, error: message });
-        return err(status, code, message);
-      };
+      const nansenBuilder = await builderAddress(master);
+      if (typeof nansenBuilder !== 'string') return failWith(nansenBuilder);
 
+      // The 60 s step window starts at the first Nansen prepare call (when the nonce is minted).
+      const preparedAt = d.clock.now();
       const lev = await trading.prepareLeverage(master, req.coin, order.leverage);
       if (!lev.ok)
         return lev.status === 451
           ? fail('REGION_BLOCKED', 451, REGION_MESSAGE)
           : fail('PREPARE_FAILED', 502, `leverage: ${redact(lev.error)}`);
+      if (lev.value.vaultAddress !== null)
+        return fail('ACTION_MISMATCH', 502, 'prepared leverage rejected: it targets a vault');
       const levMismatch = validateLeverageAction(lev.value.action, order, asset);
       if (levMismatch)
         return fail('ACTION_MISMATCH', 502, `prepared leverage rejected: ${levMismatch}`);
@@ -565,7 +633,12 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         return prepared.status === 451
           ? fail('REGION_BLOCKED', 451, REGION_MESSAGE)
           : fail('PREPARE_FAILED', 502, `order: ${redact(prepared.error)}`);
-      const mismatch = validateOrderAction(prepared.value.action, order, asset);
+      if (prepared.value.vaultAddress !== null)
+        return fail('ACTION_MISMATCH', 502, 'prepared order rejected: it targets a vault');
+      const mismatch = validateOrderAction(prepared.value.action, order, asset, {
+        builderAddress: nansenBuilder,
+        maxNotionalUsd: params.mirror.maxNotionalUsd,
+      });
       if (mismatch) return fail('ACTION_MISMATCH', 502, `prepared order rejected: ${mismatch}`);
 
       // Baseline for reconciling a non-definitive execute later (null if HL is unreachable).
@@ -583,6 +656,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           status: 'PREPARED',
           notionalUsd: 0,
           request: { ...request },
+          createdAt: preparedAt,
         }),
         action: lev.value.action,
         eip712: lev.value.eip712,
@@ -601,6 +675,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           status: 'PREPARED',
           notionalUsd: order.notionalUsd,
           request: { ...request, hlBaselineSzi: baseline },
+          createdAt: preparedAt,
         }),
         action: prepared.value.action,
         eip712: prepared.value.eip712,
@@ -685,7 +760,18 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       if (step.kind === 'order') {
         const rt = d.state.get(step.companyId);
         const req = step.request as unknown as StoredRequest;
-        if (!rt) return err(409, 'POLICY_CHANGED', 'company no longer listed');
+        if (!rt) {
+          const refusals: MirrorReason[] = [
+            { code: 'POLICY_CHANGED', message: 'company no longer listed' },
+          ];
+          d.repos.mirrorOrders.update(step.id, {
+            status: 'REJECTED',
+            refusals,
+            error: 'company no longer listed',
+            updatedAt: now,
+          });
+          return err(409, 'POLICY_CHANGED', 'company no longer listed', refusals);
+        }
         const again = evaluateMirror(
           {
             coin: req.coin,
@@ -796,7 +882,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     },
 
     async reconcile(playerId) {
-      if (!info) return;
+      if (!available() || !info) return;
       // Never read (or trade on the evidence of) a wallet the player no longer has linked.
       const agent = boundAgent(playerId);
       if ('ok' in agent) return;

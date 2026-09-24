@@ -1,4 +1,4 @@
-import type { NavState, OrderSide, Snapshot } from '@whale-street/core';
+import type { MirrorRefusalCode, NavState, OrderSide, Snapshot } from '@whale-street/core';
 
 /** How a company got listed. SEEDED = loaded from a REPLAY session (no committee run). */
 export type CompanySource = 'SCOUT' | 'IPO_DESK' | 'SEEDED';
@@ -31,6 +31,16 @@ export type MirrorStatus =
   | 'REJECTED'
   | 'UNKNOWN'
   | 'CLOSED';
+
+/**
+ * A reason stored with a mirror attempt (mirror_orders.refusals_json): a core policy refusal, or
+ * an engine-side one — the size rounds below the minimum, the policy changed before execute, or
+ * trading is unavailable (region block).
+ */
+export interface MirrorReason {
+  code: MirrorRefusalCode | 'BELOW_MIN_SIZE' | 'POLICY_CHANGED' | 'TRADING_UNAVAILABLE';
+  message: string;
+}
 
 /** Persisted NAV state of a company (companies.nav_state_json). */
 export interface NavPersist {

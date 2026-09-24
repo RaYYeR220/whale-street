@@ -40,6 +40,18 @@ export class FakeTrading implements TradingPort {
   assets: PerpAsset[] = [{ assetId: 159, name: 'HYPE', szDecimals: 2, maxLeverage: 10 }];
   prepareFail: Fail | null = null;
   executeFail: Fail | null = null;
+  metaFail: Fail | null = null;
+  builderFail: Fail | null = null;
+  /** Builder address reported by builderFee (the prepared order always carries NANSEN_BUILDER). */
+  builderAddress: string = NANSEN_BUILDER;
+  /** vault_address returned with every prepared action. */
+  vaultAddress: string | null = null;
+  /** Called at the start of every prepare call (e.g. to let the fake clock run). */
+  onPrepare: (() => void) | null = null;
+  /** Rewrites the prepared order action (to simulate unexpected shapes). */
+  orderAction: ((action: Record<string, unknown>) => Record<string, unknown>) | null = null;
+  /** Makes execute throw instead of answering. */
+  executeThrow: Error | null = null;
   flipSide = false;
   /** Top-level `status` of a 2xx execute response (NansenTrading maps a missing one to 'unknown'). */
   executeStatus = 'ok';
@@ -60,26 +72,29 @@ export class FakeTrading implements TradingPort {
 
   builderFee(wallet: Address) {
     this.calls.push({ method: 'builderFee', args: [wallet] });
+    if (this.builderFail) return this.no<BuilderFeeStatus>(this.builderFail);
     // Nansen units: fee rates in tenths of a basis point (80 = 8 bp = 0.08%).
     return this.ok<BuilderFeeStatus>('nc_bf', {
       approved: true,
       maxFeeRate: 80,
       requiredFee: 80,
-      builderAddress: NANSEN_BUILDER,
+      builderAddress: this.builderAddress as Address,
     });
   }
   meta() {
     this.calls.push({ method: 'meta', args: [] });
+    if (this.metaFail) return this.no<PerpAsset[]>(this.metaFail);
     return this.ok('nc_meta', this.assets);
   }
   prepareLeverage(wallet: Address, coin: string, leverage: number, isCross?: boolean) {
     this.calls.push({ method: 'prepareLeverage', args: [wallet, coin, leverage, isCross] });
+    this.onPrepare?.();
     if (this.prepareFail) return this.no<PreparedAction>(this.prepareFail);
     const n = ++this.nonce;
     return this.ok<PreparedAction>('nc_lev', {
       action: { type: 'updateLeverage', asset: 159, isCross: true, leverage },
       nonce: n,
-      vaultAddress: null,
+      vaultAddress: this.vaultAddress,
       eip712: agentEip712(n),
       size: null,
       price: null,
@@ -87,37 +102,39 @@ export class FakeTrading implements TradingPort {
   }
   prepareOrder(req: OrderRequest) {
     this.calls.push({ method: 'prepareOrder', args: [req] });
+    this.onPrepare?.();
     if (this.prepareFail) return this.no<PreparedAction>(this.prepareFail);
     const n = ++this.nonce;
     const isBuy = this.flipSide ? !req.isBuy : req.isBuy;
     const limit = req.price * (isBuy ? 1 + (req.slippage ?? 0) : 1 - (req.slippage ?? 0));
     const size = Math.round(req.size * 100) / 100;
+    const action: Record<string, unknown> = {
+      type: 'order',
+      orders: [
+        {
+          a: 159,
+          b: isBuy,
+          p: limit.toFixed(3),
+          s: size.toFixed(2),
+          r: false,
+          t: { limit: { tif: 'Ioc' } },
+        },
+        {
+          a: 159,
+          b: !isBuy,
+          p: String(req.stopLoss),
+          s: size.toFixed(2),
+          r: true,
+          t: { trigger: { isMarket: true, triggerPx: String(req.stopLoss), tpsl: 'sl' } },
+        },
+      ],
+      grouping: 'normalTpsl',
+      builder: { b: NANSEN_BUILDER, f: 80 },
+    };
     return this.ok<PreparedAction>('nc_order', {
-      action: {
-        type: 'order',
-        orders: [
-          {
-            a: 159,
-            b: isBuy,
-            p: limit.toFixed(3),
-            s: size.toFixed(2),
-            r: false,
-            t: { limit: { tif: 'Ioc' } },
-          },
-          {
-            a: 159,
-            b: !isBuy,
-            p: String(req.stopLoss),
-            s: size.toFixed(2),
-            r: true,
-            t: { trigger: { isMarket: true, triggerPx: String(req.stopLoss), tpsl: 'sl' } },
-          },
-        ],
-        grouping: 'normalTpsl',
-        builder: { b: NANSEN_BUILDER, f: 80 },
-      },
+      action: this.orderAction ? this.orderAction(action) : action,
       nonce: n,
-      vaultAddress: null,
+      vaultAddress: this.vaultAddress,
       eip712: agentEip712(n),
       size,
       price: limit,
@@ -130,6 +147,7 @@ export class FakeTrading implements TradingPort {
     vaultAddress: string | null;
   }) {
     this.calls.push({ method: 'execute', args: [p] });
+    if (this.executeThrow) throw this.executeThrow;
     if (this.executeFail) return this.no<ExecuteResult>(this.executeFail);
     const statuses = p.action.type === 'order' ? this.executeStatuses : [];
     return this.ok<ExecuteResult>('nc_exec', { status: this.executeStatus, statuses });
