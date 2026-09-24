@@ -14,12 +14,13 @@ import {
   NANSEN_KEY_LIMITS,
   NANSEN_TRADING_BUDGET,
 } from '../src/deps';
+import type { MoodSkew } from '../src/ingest/mood';
 import { fetchPositions } from '../src/ingest/positions';
 import { silentLogger } from '../src/log';
 import { filterSessionLines } from '../src/replay/filter';
 import { loadReplaySession, parseSession } from '../src/replay/load';
 import { createSessionRecorder } from '../src/replay/record';
-import { REPLAY_ALLOWED_PATHS } from '../src/replay/session';
+import { REPLAY_ALLOWED_PATHS, redistributable, type SessionLine } from '../src/replay/session';
 import { SYNTHETIC_A, SYNTHETIC_B, SYNTHETIC_T0, syntheticSession } from '../src/replay/synthetic';
 import { FakeFeed, hlTrade } from './helpers/fake-hl';
 import { NANSEN_BUILDER } from './helpers/fake-trading';
@@ -185,6 +186,35 @@ describe('session loading and filtering', () => {
     expect(() => parseSession(mood(MOOD, ''))).toThrow('session line 1');
   });
 
+  it('rebuilds street-mood lines to exactly the derived keys (record, bundle, load); unknown is null', () => {
+    const derived = { t: 1, k: 'mood', coin: 'BTC', smartSkew: 0.5, whaleSkew: null };
+    // Extra keys (raw totals, a nested label) never pass; a null skew stays null, never 0.
+    const extra = { ...derived, smartLongs: 48e6, positioning: { address_label: 'Fund X' } };
+    const asLine = (r: unknown) => r as SessionLine;
+    expect(redistributable(asLine(extra))).toEqual(derived);
+    // A skew missing from a line handed to the policy directly is unknown: null, not dropped.
+    const { whaleSkew: _dropped, ...missing } = derived;
+    expect(redistributable(asLine(missing))).toEqual(derived);
+    // Bundle: plain and trimmed (the carried opening mood too).
+    const parse = (lines: string[]) => lines.map((l) => JSON.parse(l) as unknown);
+    expect(parse(filterSessionLines([JSON.stringify(extra)]))).toEqual([derived]);
+    const mids = JSON.stringify({ t: 5, k: 'hl', channel: 'mids', data: { BTC: 1 } });
+    expect(parse(filterSessionLines([JSON.stringify(extra), mids], [3, 10]))[0]).toEqual({
+      ...derived,
+      t: 3,
+    });
+    // Load: what the engine will serve.
+    expect(loadReplaySession(JSON.stringify(extra)).moods).toEqual([derived]);
+    // A file line without a skew key still fails loudly at load (its line is named).
+    expect(() => loadReplaySession(JSON.stringify(missing))).toThrow('session line 1');
+    // Record: a served reading (with asOf and anything else) is written as the derived line.
+    const dir = join(tmpdir(), `ws-rec-${randomUUID()}`);
+    dirs.push(dir);
+    const rec = createSessionRecorder(join(dir, 's.ndjson'), () => 1);
+    rec.mood('BTC', { smartSkew: 0.5, whaleSkew: null, asOf: 0, smartLongs: 48e6 } as MoodSkew);
+    expect(parse(readFileSync(rec.path, 'utf8').trim().split('\n'))).toEqual([derived]);
+  });
+
   it('carries the latest street mood per coin into a trimmed window', () => {
     const mood = (t: number, coin: string, smartSkew: number) =>
       JSON.stringify({ t, k: 'mood', coin, smartSkew, whaleSkew: null });
@@ -212,6 +242,61 @@ describe('session loading and filtering', () => {
       'session line 2',
     );
     expect(() => parseSession('')).toThrow('session is empty');
+  });
+
+  it('checks every record for the fields its kind needs, naming the line', () => {
+    const company = {
+      address: SYNTHETIC_A,
+      ticker: 'A',
+      name: 'A Co',
+      anchorDate: '2026-09-21',
+      listedAt: 2,
+    };
+    const trade = { coin: 'BTC', side: 'B', px: 1, sz: 1, time: 2, hash: '0x2', users: ['a', 'b'] };
+    const nansen = {
+      t: 2,
+      k: 'nansen',
+      key: 'POST /info {}',
+      path: '/info',
+      status: 200,
+      body: {},
+    };
+    const at = (bad: unknown) =>
+      [
+        JSON.stringify({ t: 1, k: 'hl', channel: 'mids', data: { BTC: 1 } }),
+        JSON.stringify(bad),
+      ].join('\n');
+    // Well-formed records of every kind load.
+    const good = [
+      { t: 2, k: 'seed', company },
+      nansen,
+      { ...nansen, body: null },
+      { t: 2, k: 'hl', channel: 'trades', data: [trade] },
+    ];
+    for (const r of good) expect(() => parseSession(at(r)), JSON.stringify(r)).not.toThrow();
+    const bad = [
+      { t: 2, k: 'seed' },
+      { t: 2, k: 'seed', company: 'A' },
+      { t: 2, k: 'seed', company: { ...company, address: 'not-an-address' } },
+      { t: 2, k: 'seed', company: { ...company, ticker: '' } },
+      { t: 2, k: 'seed', company: { ...company, name: 7 } },
+      { t: 2, k: 'seed', company: { ...company, anchorDate: '' } },
+      { t: 2, k: 'seed', company: { ...company, listedAt: 'soon' } },
+      { ...nansen, key: undefined },
+      { ...nansen, key: '' },
+      { ...nansen, path: 42 },
+      { ...nansen, status: '200' },
+      { ...nansen, body: undefined },
+      { t: 2, k: 'hl', channel: 'book', data: [] },
+      { t: 2, k: 'hl', channel: 'mids', data: [1] },
+      { t: 2, k: 'hl', channel: 'mids', data: { BTC: 'high' } },
+      { t: 2, k: 'hl', channel: 'trades', data: {} },
+      { t: 2, k: 'hl', channel: 'trades', data: [{ ...trade, users: undefined }] },
+      { t: 2, k: 'hl', channel: 'trades', data: [{ ...trade, px: 'x' }] },
+      { t: 2, k: 'hl', channel: 'trades', data: [{ ...trade, coin: null }] },
+    ];
+    for (const r of bad)
+      expect(() => parseSession(at(r)), JSON.stringify(r)).toThrow(/^session line 2: /);
   });
 
   it('keeps only redistribution-safe records and trims to a window', () => {

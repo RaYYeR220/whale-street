@@ -8,7 +8,7 @@ import { companyRow } from './helpers/db';
 import { FakeInfo } from './helpers/fake-hl';
 import { FakeNansen, fail } from './helpers/fake-nansen';
 import { programCleanTrader, programHedgedTrader } from './helpers/traders';
-import { addCompany, makeWorld } from './helpers/world';
+import { addCompany, makeWorld, pos } from './helpers/world';
 
 const APP = '0x00000000000000000000000000000000000000a1' as const;
 const LINK = '0x00000000000000000000000000000000000000b2' as const;
@@ -209,7 +209,7 @@ describe('ipo service', () => {
     await ipo.drained();
   });
 
-  it('returns the existing application for an address pending or decided within 24 h', async () => {
+  it('returns the pending application for an address; once denied, the denial memory answers', async () => {
     const { w, nansen, info, ipo } = setup();
     programHedgedTrader(nansen, info, APP, LINK, w.clock.now());
     const first = ipo.apply('p1', APP, '10.0.0.1');
@@ -221,22 +221,125 @@ describe('ipo service', () => {
       app: { id: first.app.id, status: 'PENDING' },
     });
     await ipo.drained();
+    expect(ipo.get(first.app.id)?.status).toBe('DENIED');
     const calls = nansen.calls.length;
-    w.clock.advance(DAY_MS - 1);
-    expect(ipo.apply('p3', APP, '10.0.0.3')).toMatchObject({
-      ok: true,
-      existing: true,
-      app: { id: first.app.id, status: 'DENIED' },
-    });
+    // The scout's 7-day denial memory refuses it from local state, within 24 h and after.
+    for (const step of [1, DAY_MS]) {
+      w.clock.advance(step);
+      expect(ipo.apply('p3', APP, '10.0.0.3')).toMatchObject({
+        ok: false,
+        code: 'RECENTLY_DENIED',
+      });
+    }
     expect(nansen.calls).toHaveLength(calls);
     expect(w.repos.ipoApps.recent(10)).toHaveLength(1);
-    // Past 24 h the scout's 7-day denial memory still refuses it from local state.
-    w.clock.advance(2);
-    expect(ipo.apply('p3', APP, '10.0.0.3')).toMatchObject({
-      ok: false,
-      code: 'RECENTLY_DENIED',
-    });
+  });
+
+  it('an address approved, then delisted the same day, is cooling down (not its old application)', async () => {
+    const { w, nansen, info, ipo } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    const first = ipo.apply('p1', APP, '10.0.0.1');
+    if (!first.ok) throw new Error(first.message);
+    await ipo.drained();
+    expect(ipo.get(first.app.id)?.status).toBe('APPROVED');
+    const rt = w.state.get(APP);
+    if (!rt) throw new Error('not listed');
+    // Bankrupt within the hour: delisted with a relisting cooldown.
+    w.clock.advance(HOUR_MS);
+    rt.status = 'DELISTED';
+    rt.delistedAt = w.clock.now();
+    rt.cooldownUntil = w.clock.now() + 14 * DAY_MS;
+    w.statusOps.persist(rt);
+    const calls = nansen.calls.length;
+    expect(ipo.apply('p2', APP, '10.0.0.2')).toMatchObject({ ok: false, code: 'COOLING_DOWN' });
     expect(nansen.calls).toHaveLength(calls);
+  });
+
+  it('keeps the denial memory on wall time: a looping engine clock neither freezes nor extends it', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    const info = new FakeInfo();
+    const listing = createListingService({ ...w, nansen });
+    const wall = { t: 5_000_000 };
+    const ipo = createIpoService({
+      ...w,
+      nansen,
+      info,
+      listing,
+      log: silentLogger,
+      wallNow: () => wall.t,
+    });
+    w.state.setMarks({ BTC: 60_000 }, w.clock.now());
+    programHedgedTrader(nansen, info, APP, LINK, w.clock.now());
+    const loopStart = w.clock.now();
+    w.clock.advance(5 * 60_000);
+    const first = ipo.apply('p1', APP);
+    if (!first.ok) throw new Error(first.message);
+    await ipo.drained();
+    expect(ipo.get(first.app.id)?.status).toBe('DENIED');
+    // A REPLAY wrap: the engine clock goes back to the loop start while wall time moves on.
+    w.clock.t = loopStart;
+    wall.t += 60_000;
+    expect(ipo.apply('p1', APP)).toMatchObject({ ok: false, code: 'RECENTLY_DENIED' });
+    // A week of wall time later (the looping engine clock never gets there), it may apply again.
+    wall.t += 7 * DAY_MS;
+    w.clock.t = loopStart + 60_000;
+    expect(ipo.apply('p1', APP)).toMatchObject({ ok: true, existing: false });
+    await ipo.drained();
+  });
+
+  it('defers applications left pending by a restart, announcing each like any other decision', () => {
+    const w = makeWorld();
+    w.repos.ipoApps.insert({
+      id: 'ipo_stale',
+      address: APP,
+      playerId: 'p1',
+      status: 'PENDING',
+      verdict: null,
+      reason: null,
+      ticker: null,
+      createdAt: w.clock.now(),
+      decidedAt: null,
+      appliedWallAt: w.clock.now(),
+    });
+    const nansen = new FakeNansen();
+    const listing = createListingService({ ...w, nansen });
+    createIpoService({ ...w, nansen, info: new FakeInfo(), listing, log: silentLogger });
+    expect(w.repos.ipoApps.get('ipo_stale')).toMatchObject({
+      status: 'DEFERRED',
+      reason: 'engine restarted',
+      decidedAt: w.clock.now(),
+    });
+    expect(w.events).toContainEqual({
+      t: 'ipo',
+      update: {
+        appId: 'ipo_stale',
+        kind: 'decided',
+        status: 'DEFERRED',
+        ticker: null,
+        reason: 'engine restarted',
+      },
+    });
+  });
+
+  it('a hedging counterparty without volume figures still fails the hidden-hedge check', async () => {
+    const { w, nansen, info, ipo } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    nansen.counterpartyLists.set(APP, [{ address: LINK, interactions: null, volumeUsd: null }]);
+    info.states.set(LINK, {
+      positions: [pos('BTC', -1.5, 60_000, 80_000)],
+      accountValue: 200_000,
+      time: null,
+    });
+    const r = ipo.apply('p1', APP);
+    if (!r.ok) throw new Error(r.message);
+    await ipo.drained();
+    const app = ipo.get(r.app.id);
+    expect(app?.status).toBe('DENIED');
+    expect(app?.reason).toContain('HIDDEN_HEDGE');
+    expect(app?.verdict?.hedgeLinks).toEqual([
+      { address: LINK, coin: 'BTC', side: 'SHORT', notionalUsd: 90_000 },
+    ]);
   });
 
   it('a committee DEFERRED is reused for 24 h; a deferral without an evidence run is not', async () => {

@@ -48,6 +48,17 @@ describe('loadConfig', () => {
     expect(c.mode).toBe('live');
   });
 
+  it('ENV_FILE: an inline # comment is not part of an unquoted key; a quoted key keeps its #', () => {
+    const key = (text: string) => loadConfig({ ENV_FILE: '/x/.env' }, () => text).nansenApiKey;
+    expect(key('NANSEN_API_KEY=abc123 # my key\n')).toBe('abc123');
+    expect(key('NANSEN_API_KEY=abc123#note')).toBe('abc123');
+    expect(key('NANSEN_API_KEY="abc#123" # quoted\n')).toBe('abc#123');
+    expect(key("NANSEN_API_KEY='abc123'   \r\n")).toBe('abc123');
+    expect(key('export NANSEN_API_KEY=abc123\n')).toBe('abc123');
+    expect(key('NANSEN_API_KEY= # nothing here\n')).toBeNull();
+    expect(key('# NANSEN_API_KEY=commented-out\n')).toBeNull();
+  });
+
   it('refuses MODE=live without a key and parses csv lists and numbers', () => {
     expect(() => loadConfig({ MODE: 'live' }, noFile)).toThrow('MODE=live requires NANSEN_API_KEY');
     const c = loadConfig(

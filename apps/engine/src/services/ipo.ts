@@ -111,7 +111,14 @@ export interface IpoService {
   drained(): Promise<void>;
 }
 
+/** kv key of a committee denial; its value is the wall-clock time of the denial. */
 export const deniedKey = (address: string) => `denied:${address}`;
+
+/** True while a committee denial of `address` is within DENIAL_MEMORY_MS of wall time `wall`. */
+export function deniedRecently(repos: Repos, address: string, wall: number): boolean {
+  const deniedAt = Number(repos.kv.get(deniedKey(address)) ?? Number.NaN);
+  return Number.isFinite(deniedAt) && wall - deniedAt < DENIAL_MEMORY_MS;
+}
 
 const view = (r: IpoAppRow): IpoView => ({
   id: r.id,
@@ -141,14 +148,6 @@ export function createIpoService(d: IpoDeps): IpoService {
   const pending = new Map<string, string>();
   let running: Promise<void> | null = null;
 
-  for (const stale of d.repos.ipoApps.recent(1_000).filter((a) => a.status === 'PENDING')) {
-    d.repos.ipoApps.update(stale.id, {
-      status: 'DEFERRED',
-      reason: 'engine restarted',
-      decidedAt: d.clock.now(),
-    });
-  }
-
   const decide = (
     id: string,
     status: IpoStatus,
@@ -160,6 +159,10 @@ export function createIpoService(d: IpoDeps): IpoService {
     pending.delete(id);
     d.bus.emit({ t: 'ipo', update: { appId: id, kind: 'decided', status, ticker, reason } });
   };
+
+  // Applications a previous run left queued or under evaluation will never finish.
+  for (const stale of d.repos.ipoApps.recent(1_000).filter((a) => a.status === 'PENDING'))
+    decide(stale.id, 'DEFERRED', null, 'engine restarted');
 
   async function evaluate(id: string): Promise<void> {
     const app = d.repos.ipoApps.get(id);
@@ -174,33 +177,31 @@ export function createIpoService(d: IpoDeps): IpoService {
       d.bus.emit({ t: 'ipo', update: { appId: id, kind: 'progress', step, state } }),
     );
     const verdict = evaluateListing(ev, params);
-    if (verdict.decision === 'APPROVED' && positions) {
-      try {
-        const rt = await d.listing.list({
-          address,
-          source: 'IPO_DESK',
-          rating: verdict.rating,
-          prospectus: verdict.prospectus,
-          positions,
-        });
-        decide(id, 'APPROVED', verdict, null, rt.ticker);
-      } catch (err) {
-        decide(
-          id,
-          'DEFERRED',
-          verdict,
-          `listing failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    if (verdict.decision !== 'APPROVED') {
+      // Wall time: the REPLAY engine clock loops, so a denial stamped on it would never lapse.
+      if (verdict.decision === 'DENIED') d.repos.kv.set(deniedKey(address), String(wallNow()));
+      decide(id, verdict.decision, verdict, reasonOf(verdict));
       return;
     }
-    if (verdict.decision === 'DENIED') d.repos.kv.set(deniedKey(address), String(d.clock.now()));
-    decide(
-      id,
-      verdict.decision === 'APPROVED' ? 'DEFERRED' : verdict.decision,
-      verdict,
-      reasonOf(verdict),
-    );
+    // The committee approves only on position evidence, which is this very snapshot.
+    if (!positions) throw new Error('approved without a positions snapshot');
+    try {
+      const rt = await d.listing.list({
+        address,
+        source: 'IPO_DESK',
+        rating: verdict.rating,
+        prospectus: verdict.prospectus,
+        positions,
+      });
+      decide(id, 'APPROVED', verdict, null, rt.ticker);
+    } catch (err) {
+      decide(
+        id,
+        'DEFERRED',
+        verdict,
+        `listing failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   const pump = () => {
@@ -221,9 +222,11 @@ export function createIpoService(d: IpoDeps): IpoService {
   const existing = (row: IpoAppRow): ApplyResult => ({ ok: true, app: view(row), existing: true });
 
   /**
-   * The answer local state already gives, or null when the address needs a new application.
-   * Deferrals without a verdict (credit floor, desk busy, restart, not in recording) never ran the
-   * committee, so they are not reused.
+   * The answer local state already gives, or null when the address needs a new application. In
+   * order: the application in flight; listed; bankruptcy cooldown; the committee's denial memory;
+   * then the 24 h dedup (so a company delisted the same day answers COOLING_DOWN, not the
+   * application that listed it). Deferrals without a verdict (credit floor, desk busy, restart,
+   * not in recording) never ran the committee, so they are not reused.
    */
   const localAnswer = (address: string, now: number, wall: number): ApplyResult | null => {
     const apps = d.repos.ipoApps.byAddress(address, 20);
@@ -239,13 +242,6 @@ export function createIpoService(d: IpoDeps): IpoService {
         message: `already listed as ${company.ticker}`,
       };
     }
-    const recent = apps.find(
-      (a) =>
-        a.verdict !== null &&
-        a.status !== 'PENDING' &&
-        (a.appliedWallAt ?? Number.NEGATIVE_INFINITY) >= wall - limits.dedupMs,
-    );
-    if (recent) return existing(recent);
     if (company && (company.cooldownUntil ?? 0) > now) {
       return {
         ok: false,
@@ -253,14 +249,20 @@ export function createIpoService(d: IpoDeps): IpoService {
         message: 'bankruptcy cooldown in effect for this address',
       };
     }
-    const deniedAt = Number(d.repos.kv.get(deniedKey(address)) ?? Number.NaN);
-    if (Number.isFinite(deniedAt) && now - deniedAt < DENIAL_MEMORY_MS) {
+    if (deniedRecently(d.repos, address, wall)) {
       return {
         ok: false,
         code: 'RECENTLY_DENIED',
         message: 'the listing committee denied this address within the last 7 days',
       };
     }
+    const recent = apps.find(
+      (a) =>
+        a.verdict !== null &&
+        a.status !== 'PENDING' &&
+        (a.appliedWallAt ?? Number.NEGATIVE_INFINITY) >= wall - limits.dedupMs,
+    );
+    if (recent) return existing(recent);
     return null;
   };
 

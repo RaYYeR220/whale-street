@@ -102,10 +102,10 @@ export class MarketState {
   /** Engine-clock time the last street-mood run started (REPLAY: of the last mood line). */
   moodAt = 0;
   /**
-   * Set on a wake from IDLE, cleared by the next market-loop tick that moves NAV on fresh marks:
-   * until then NAV is still the frozen pre-IDLE value.
+   * Set at boot and on a wake from IDLE, cleared by the next market-loop tick that moves NAV on
+   * fresh marks: until then NAV is the one saved before a restart, or the frozen pre-IDLE value.
    */
-  awaitingNavTick = false;
+  awaitingNavTick = true;
   readonly flags: EngineFlags;
 
   constructor(now: number) {
@@ -119,7 +119,9 @@ export class MarketState {
     };
   }
 
+  /** Adds (or replaces) a company, keyed by its lowercase address (its id is normalized too). */
   add(rt: CompanyRuntime): void {
+    rt.id = rt.id.toLowerCase() as Address;
     this.companies.set(rt.id, rt);
   }
 

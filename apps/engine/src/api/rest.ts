@@ -149,9 +149,11 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
   });
 
   app.get('/api/companies/:ticker/history', async (req, reply) => {
+    // One validation failure answers the request: never parse (and send) the second one too.
     const params = parse(TickerParams, req.params, reply);
+    if (!params) return reply;
     const query = parse(HistoryQuery, req.query, reply);
-    if (!params || !query) return reply;
+    if (!query) return reply;
     const rt = e.state.byTicker(params.ticker);
     if (!rt) return sendError(reply, 404, 'UNKNOWN_TICKER', 'no such ticker');
     // Never past engine now: in REPLAY the rest of the recording's minutes are already stored.
@@ -273,8 +275,8 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     const body = parse(LinkBody, req.body, reply);
     if (!body) return reply;
     const r = await e.players.link(player.id, body.message, body.signature);
-    return r.ok
-      ? { player: r.player }
-      : sendError(reply, r.code === 'INVALID_MESSAGE' ? 400 : 401, r.code, r.message);
+    // A malformed message, or no nonce requested first, is a bad request; the rest fail sign-in.
+    const status = r.ok ? 200 : r.code === 'INVALID_MESSAGE' || r.code === 'NO_NONCE' ? 400 : 401;
+    return r.ok ? { player: r.player } : sendError(reply, status, r.code, r.message);
   });
 }

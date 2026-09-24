@@ -163,7 +163,12 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
         wakeDue.delete(id);
         refresh(id, 'wake');
       }
-      for (const rt of d.state.listed()) {
+      const listed = d.state.listed();
+      // A company that left the listing (bankrupt, delisted) drops its heartbeat; a relisting
+      // starts a fresh stagger instead of firing at a long-past due time.
+      const listedIds = new Set<string>(listed.map((rt) => rt.id));
+      for (const id of nextBeat.keys()) if (!listedIds.has(id)) nextBeat.delete(id);
+      for (const rt of listed) {
         const beat = nextBeat.get(rt.id);
         if (beat === undefined) {
           nextBeat.set(rt.id, now + Math.floor((HEARTBEAT_MS * (hash32(rt.id) % 1_000)) / 1_000));

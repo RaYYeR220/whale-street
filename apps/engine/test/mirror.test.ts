@@ -306,7 +306,7 @@ describe('mirror', () => {
     const { e, trading, master, agent, player, token } = await setup();
     e.mirror.registerAgent(player.id, master.address, agent.address);
     const attempt = async (fail: { status: number | null; error: string } | null) => {
-      const { lev, ord } = await prepareSteps(e, player.id, 100);
+      const { lev, ord } = await prepareSteps(e, player.id, 99);
       await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
       trading.executeFail = fail;
       const sig = await sign(agent, ord.eip712);
@@ -333,7 +333,7 @@ describe('mirror', () => {
     const filled = await attempt(null);
     expect(filled.json()).toMatchObject({ status: 'FILLED' });
 
-    // 2 unknown + 1 filled, $100 each: the 3-open and $300/day caps are both exhausted.
+    // 2 unknown + 1 filled ($99.80 sent each): the 3-open and $300/day caps are both exhausted.
     const next = await e.mirror.prepare(player.id, {
       ticker: 'HYP',
       coin: 'HYPE',
@@ -577,7 +577,7 @@ describe('mirror', () => {
     e.mirror.registerAgent(player.id, master.address, agent.address);
     const wallet = master.address.toLowerCase();
     for (let i = 0; i < 3; i++) {
-      const { lev, ord } = await prepareSteps(e, player.id, 100);
+      const { lev, ord } = await prepareSteps(e, player.id, 99);
       await e.mirror.execute(player.id, lev.stepId, await sign(agent, lev.eip712));
       expect(
         await e.mirror.execute(player.id, ord.stepId, await sign(agent, ord.eip712)),
@@ -631,7 +631,7 @@ describe('mirror', () => {
     const { e, trading, master, agent, player } = await setup();
     e.mirror.registerAgent(player.id, master.address, agent.address);
     const ids = [];
-    for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent, 100));
+    for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent, 99));
     // Still inside the 5-minute grace: a flat account does not free anything yet.
     elapse(e, 4 * 60_000);
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual([
@@ -728,6 +728,28 @@ describe('mirror', () => {
     expect(e.mirror.orders(player.id).filter((o) => o.groupId === groupId)).toMatchObject([
       { status: 'REFUSED', refusals: [{ code: 'BELOW_MIN_SIZE' }] },
     ]);
+  });
+
+  it('stores the prepared notional (size × limit price) on the order row: the daily cap counts it', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    trading.assets = [{ assetId: 159, name: 'HYPE', szDecimals: 0, maxLeverage: 10 }];
+    // $100 at 41 → 2 whole HYPE at a 41.41 limit (1% slippage): $82.82, not the $100 asked for.
+    const { lev, ord } = await prepareSteps(e, player.id, 100);
+    const row = e.repos.mirrorOrders.get(ord.stepId);
+    const legs = row?.action?.orders as Array<{ s: string; p: string }> | undefined;
+    expect(row?.notionalUsd).toBeCloseTo(Number(legs?.[0]?.s) * Number(legs?.[0]?.p), 9);
+    expect(row?.notionalUsd).toBeCloseTo(82.82, 9);
+    expect(e.repos.mirrorOrders.get(lev.stepId)?.notionalUsd).toBe(0);
+    // Three such orders placed: $248.46 of the $300 day, not $300.
+    for (let i = 0; i < 3; i++) {
+      const steps = i === 0 ? { lev, ord } : await prepareSteps(e, player.id, 100);
+      await e.mirror.execute(player.id, steps.lev.stepId, await sign(agent, steps.lev.eip712));
+      await e.mirror.execute(player.id, steps.ord.stepId, await sign(agent, steps.ord.eip712));
+    }
+    // Past the close grace with a flat wallet the slots are free; $50 more fits in the day.
+    elapse(e, 6 * 60_000);
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toBe('allowed');
   });
 
   it('a malformed prepared leg is a validation failure with a row, not a crash', async () => {

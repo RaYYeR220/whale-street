@@ -148,6 +148,7 @@ export interface Repos {
     get(key: string): string | undefined;
     set(key: string, value: string): void;
     getJson<T>(key: string): T | undefined;
+    /** Stores `value` as JSON; a value JSON cannot encode (undefined, a function) deletes the key. */
     setJson(key: string, value: unknown): void;
     delete(key: string): void;
   };
@@ -438,10 +439,10 @@ export function createRepos({ sqlite, db }: Db): Repos {
       recent: (limit) => db.select().from(ipoApps).orderBy(desc(sql`rowid`)).limit(limit).all(),
       countByPlayerAppliedSince: (playerId, wallSince) =>
         db
-          .select({ id: ipoApps.id })
+          .select({ n: sql<number>`count(*)` })
           .from(ipoApps)
           .where(and(eq(ipoApps.playerId, playerId), gte(ipoApps.appliedWallAt, wallSince)))
-          .all().length,
+          .get()?.n ?? 0,
       countAppliedSince: (wallSince) =>
         db
           .select({ n: sql<number>`count(*)` })
@@ -581,7 +582,11 @@ export function createRepos({ sqlite, db }: Db): Repos {
         return v === undefined ? undefined : (JSON.parse(v) as T);
       },
       setJson: (key, value) => {
-        const v = JSON.stringify(value);
+        const v = JSON.stringify(value) as string | undefined;
+        if (v === undefined) {
+          db.delete(kv).where(eq(kv.key, key)).run();
+          return;
+        }
         db.insert(kv)
           .values({ key, value: v })
           .onConflictDoUpdate({ target: kv.key, set: { value: v } })

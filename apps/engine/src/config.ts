@@ -49,6 +49,21 @@ export interface Config {
   trustProxy: number;
 }
 
+/**
+ * One env-file value: a quoted value is the text between its quotes (a `#` inside is kept);
+ * an unquoted value ends at the first `#` (an inline comment), like Node's `--env-file`.
+ */
+function envValue(raw: string): string {
+  const v = raw.trim();
+  const quote = v[0];
+  if (quote === '"' || quote === "'") {
+    const end = v.indexOf(quote, 1);
+    return (end > 0 ? v.slice(1, end) : v.slice(1)).trim();
+  }
+  const hash = v.indexOf('#');
+  return (hash >= 0 ? v.slice(0, hash) : v).trim();
+}
+
 function keyFromEnvFile(path: string, readFile: (p: string) => string): string | null {
   let text: string;
   try {
@@ -56,9 +71,9 @@ function keyFromEnvFile(path: string, readFile: (p: string) => string): string |
   } catch {
     throw new Error(`ENV_FILE is not readable: ${path}`);
   }
-  const m = text.match(/^\s*NANSEN_API_KEY\s*=\s*(.+?)\s*$/m);
-  const raw = m?.[1]?.replace(/^["']|["']$/g, '') ?? '';
-  return raw.length > 0 ? raw : null;
+  const m = text.match(/^[ \t]*(?:export[ \t]+)?NANSEN_API_KEY[ \t]*=([^\r\n]*)/m);
+  const value = m?.[1] === undefined ? '' : envValue(m[1]);
+  return value.length > 0 ? value : null;
 }
 
 export function loadConfig(

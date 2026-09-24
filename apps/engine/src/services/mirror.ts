@@ -27,6 +27,7 @@ import {
   serializeSignature,
   type TypedDataDomain,
 } from 'viem';
+import { RateGate } from '../api/rate';
 import type { Clock } from '../clock';
 import type { Config } from '../config';
 import { DAY_MS, HOUR_MS, MINUTE_MS } from '../dates';
@@ -236,6 +237,17 @@ const num = (v: unknown): number | null => {
   return null;
 };
 
+/**
+ * The notional an order action really sends: its entry leg's size × limit price (null when the
+ * leg is unreadable; a validated action always has one).
+ */
+export function entryNotional(action: Record<string, unknown>): number | null {
+  const main = Array.isArray(action.orders) ? asRecord(action.orders[0]) : null;
+  const size = num(main?.s);
+  const px = num(main?.p);
+  return size === null || px === null ? null : size * px;
+}
+
 /** What a prepared order is checked against besides the policy decision. */
 export interface OrderActionLimits {
   /** Nansen's builder address (from /perp/builder-fee); the order's builder code must be it. */
@@ -335,7 +347,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
   const secret = d.config.nansenApiKey;
   let meta: { at: number; assets: Map<string, PerpAsset> } | null = null;
   let builder: { at: number; address: string } | null = null;
-  const lastReconcile = new Map<string, number>();
+  /** One Hyperliquid reconcile read per player per interval; idle players are swept out. */
+  const reconcileGate = new RateGate(1, RECONCILE_INTERVAL_MS, () => d.clock.now());
   /** Builder-fee status per wallet (lowercase): the status route must not call Nansen per request. */
   const builderStatuses = new Map<
     string,
@@ -710,7 +723,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           stepIndex: 1,
           groupId,
           status: 'PREPARED',
-          notionalUsd: order.notionalUsd,
+          // What the validated action really sends (lots, slippage), so the daily cap counts it.
+          notionalUsd: entryNotional(prepared.value.action) ?? order.notionalUsd,
           request: { ...request, hlBaselineSzi: baseline },
           createdAt: preparedAt,
         }),
@@ -933,9 +947,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           now - o.updatedAt >= RECONCILE_MIN_AGE_MS,
       );
       if (candidates.length === 0) return;
-      if (now - (lastReconcile.get(playerId) ?? Number.NEGATIVE_INFINITY) < RECONCILE_INTERVAL_MS)
-        return;
-      lastReconcile.set(playerId, now);
+      if (!reconcileGate.allow(playerId)) return;
       const st = await info.clearinghouse(master as Address);
       if (!st.ok) {
         d.log.warn('mirror reconcile: hyperliquid read failed', { error: st.error });

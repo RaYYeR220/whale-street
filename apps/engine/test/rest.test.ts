@@ -1,5 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
+import { buildApp } from '../src/app';
 import { IDLE_AFTER_MS } from '../src/ingest/idle';
 import { LINK_STATEMENT } from '../src/services/players';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
@@ -156,6 +157,25 @@ describe('REST', () => {
     expect((await t.app.inject({ url: '/api/provenance/nc_trade' })).statusCode).toBe(404);
   });
 
+  it('history answers a request with both a bad ticker and a bad query exactly once (400)', async () => {
+    t = await testEngine();
+    const app = await buildApp(t.engine);
+    let sends = 0;
+    app.addHook('onRequest', async (_req, reply) => {
+      const send = reply.send.bind(reply);
+      reply.send = ((payload?: unknown) => {
+        sends++;
+        return send(payload);
+      }) as typeof reply.send;
+    });
+    await app.ready();
+    const r = await app.inject({ url: '/api/companies/TOOLONGTICKER/history?minutes=0' });
+    expect(r.statusCode).toBe(400);
+    expect(r.json()).toMatchObject({ error: 'BAD_REQUEST' });
+    expect(sends).toBe(1);
+    await app.close();
+  });
+
   it('IPO desk end to end: apply, poll, list verdicts', async () => {
     t = await testEngine();
     const { token } = await signup();
@@ -257,7 +277,7 @@ describe('REST', () => {
     expect(linked.json().player.walletAddress).toBe(account.address.toLowerCase());
   });
 
-  it('wallet link refusals: wrong domain, reused nonce, expired, wrong signer → 401; malformed → 400', async () => {
+  it('wallet link refusals: wrong domain, expired, wrong signer → 401; reused nonce, malformed → 400', async () => {
     t = await testEngine();
     const { token } = await signup();
     const wallet = privateKeyToAccount(generatePrivateKey());
@@ -294,10 +314,31 @@ describe('REST', () => {
     expect(await link({}, attacker)).toMatchObject({ status: 401, error: 'BAD_SIGNATURE' });
     const ok = await link();
     expect(ok.status).toBe(200);
-    expect(await link({}, wallet, ok.payload)).toMatchObject({ status: 401, error: 'NO_NONCE' });
+    // No nonce outstanding: a malformed request (fetch a nonce first), not a failed sign-in.
+    expect(await link({}, wallet, ok.payload)).toMatchObject({ status: 400, error: 'NO_NONCE' });
     expect(
       await link({}, wallet, { message: 'link my wallet please', signature: '0x00' }),
     ).toMatchObject({ status: 400, error: 'INVALID_MESSAGE' });
+  });
+
+  it('refuses orders from boot until the first tick moves NAV on fresh marks (503 MARKET_PAUSED)', async () => {
+    t = await testEngine({ navLive: false });
+    seedCompany();
+    const { token } = await signup();
+    const order = () =>
+      t.app.inject({
+        method: 'POST',
+        url: '/api/orders',
+        headers: bearer(token),
+        payload: { ticker: 'AAA', side: 'BUY', qty: 1 },
+      });
+    // Listening, but NAV is still the one saved before the restart.
+    const early = await order();
+    expect(early.statusCode).toBe(503);
+    expect(early.json()).toMatchObject({ error: 'MARKET_PAUSED' });
+    t.engine.state.setMarks({}, t.clock.now());
+    t.engine.tick();
+    expect((await order()).statusCode).toBe(200);
   });
 
   it('refuses orders while IDLE with 503 MARKET_PAUSED, wakes the engine, and fills once NAV is live', async () => {

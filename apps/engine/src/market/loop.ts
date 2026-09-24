@@ -2,9 +2,11 @@ import {
   computeHp,
   decayPool,
   isValidPx,
+  type Marks,
   marginCallCrossed,
   PARAMS,
   type Params,
+  positionHp,
   tickNav,
 } from '@whale-street/core';
 import { MINUTE_MS } from '../dates';
@@ -26,6 +28,23 @@ const NO_MARK_FOR = 'no mark for ';
 /** A HALT for a held coin without a mark: only the market loop lifts it (when the mark returns). */
 export const isMissingMarkHalt = (rt: CompanyRuntime): boolean =>
   rt.status === 'HALTED' && rt.haltKind === 'data' && (rt.haltReason ?? '').startsWith(NO_MARK_FOR);
+
+/**
+ * "ETH is 95% of the way from entry to its liquidation price (health 5%)": the weakest position
+ * (lowest health) names the coin; health is the share of the entry→liquidation distance left.
+ */
+function marginCallDetail(rt: CompanyRuntime, marks: Marks, hp: number): string {
+  let weakest: { coin: string; hp: number } | null = null;
+  for (const p of rt.nav.snapshot.positions) {
+    const mark = marks[p.coin];
+    if (!isValidPx(mark)) continue;
+    const h = positionHp(p, mark);
+    if (!weakest || h < weakest.hp) weakest = { coin: p.coin, hp: h };
+  }
+  const health = Math.round(hp * 100);
+  const subject = weakest ? weakest.coin : 'The weakest position';
+  return `${subject} is ${100 - health}% of the way from entry to its liquidation price (health ${health}%)`;
+}
 
 export interface LoopDeps {
   state: MarketState;
@@ -109,7 +128,7 @@ export function createMarketLoop(d: LoopDeps): MarketLoop {
             kind: 'MARGIN_CALL',
             at: now,
             provenance: rt.nav.snapshot.provenance,
-            detail: `health ${Math.round(hp * 100)}% of the way to liquidation`,
+            detail: marginCallDetail(rt, state.marks, hp),
           });
         }
         rt.hp = hp;

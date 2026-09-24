@@ -5,6 +5,22 @@ import type { EventBus } from '../events';
 import { type Logger, silentLogger } from '../log';
 import type { MarketState } from '../market/state';
 
+export interface RankRow {
+  playerId: string;
+  /** null (unknown) ranks below every known net worth. */
+  netWorth: number | null;
+  /** When the player signed up; the earlier player wins a tie. */
+  createdAt: number;
+}
+
+/** Rank order: higher net worth first, then the earlier player, then the lower player id. */
+export function compareRank(a: RankRow, b: RankRow): number {
+  const worth = (r: RankRow) => r.netWorth ?? Number.NEGATIVE_INFINITY;
+  if (worth(a) !== worth(b)) return worth(b) - worth(a);
+  if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+  return a.playerId < b.playerId ? -1 : a.playerId > b.playerId ? 1 : 0;
+}
+
 export interface SeasonService {
   /** The ACTIVE season, created (season 1, or last + 1) when none exists. */
   ensure(now: number): SeasonRow;
@@ -74,14 +90,27 @@ export function createSeasonService(d: {
             at: now,
           });
         }
-        const ranked = [...cash.entries()].sort((a, b) => b[1] - a[1]);
-        for (const [playerId, value] of ranked)
-          d.repos.portfolios.upsert({ playerId, seasonId: season.id, cash: value });
-        d.repos.seasonResults.insertMany(
-          ranked.map(([playerId, netWorth], i) => ({
-            seasonId: season.id,
+        const joined = new Map(
+          d.repos.players.many([...cash.keys()]).map((p) => [p.id, p.createdAt]),
+        );
+        const ranked = [...cash.entries()]
+          .map(([playerId, netWorth]) => ({
             playerId,
             netWorth,
+            createdAt: joined.get(playerId) ?? Number.POSITIVE_INFINITY,
+          }))
+          .sort(compareRank);
+        for (const r of ranked)
+          d.repos.portfolios.upsert({
+            playerId: r.playerId,
+            seasonId: season.id,
+            cash: r.netWorth,
+          });
+        d.repos.seasonResults.insertMany(
+          ranked.map((r, i) => ({
+            seasonId: season.id,
+            playerId: r.playerId,
+            netWorth: r.netWorth,
             rank: i + 1,
           })),
         );

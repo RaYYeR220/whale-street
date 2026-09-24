@@ -29,6 +29,11 @@ export async function testEngine(
     db?: Db;
     /** The engine logger (default: silent). */
     log?: Logger;
+    /**
+     * Start as if the market loop had already ticked once on fresh marks (default true): tests
+     * trade without driving the loop first. false keeps the boot pause (MarketState.paused).
+     */
+    navLive?: boolean;
   } = {},
 ): Promise<TestEngine> {
   const clock = new FakeClock();
@@ -54,6 +59,7 @@ export async function testEngine(
     log: o.log ?? silentLogger,
     replay: null,
   });
+  if (o.navLive ?? true) engine.state.awaitingNavTick = false;
   const app = await buildApp(engine);
   await app.ready();
   return { engine, app, clock, nansen, info, feed };

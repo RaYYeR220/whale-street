@@ -22,7 +22,7 @@ import type { EventBus } from '../events';
 import { type Logger, silentLogger } from '../log';
 import { type CompanyRuntime, type MarketState, rowFromRuntime } from '../market/state';
 import type { PlayerKind } from '../types';
-import type { SeasonService } from './seasons';
+import { compareRank, type SeasonService } from './seasons';
 
 export interface OrderRequest {
   ticker: string;
@@ -163,7 +163,11 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
   /** null (never 0) when the company has no live share price right now — never fabricate a value. */
   const priceOf = (companyId: string): number | null => {
     const rt = state.get(companyId);
-    if (!rt) return null;
+    if (!rt) {
+      // A holding outlives its company only through a bug (bankruptcy settles every holder).
+      log.error('holding in a company that is not in memory: no price', { company: companyId });
+      return null;
+    }
     const p = state.price(rt);
     return isValidPx(p) ? p : null;
   };
@@ -374,12 +378,13 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
           cash: cashByPlayer.get(playerId) ?? params.seasonStartCash,
           holdings: holdingsByPlayer.get(playerId) ?? {},
         };
-        return { playerId, netWorth: computeNetWorth(pf, prices) };
+        return {
+          playerId,
+          netWorth: computeNetWorth(pf, prices),
+          createdAt: players.get(playerId)?.createdAt ?? Number.POSITIVE_INFINITY,
+        };
       });
-      rows.sort(
-        (a, b) =>
-          (b.netWorth ?? Number.NEGATIVE_INFINITY) - (a.netWorth ?? Number.NEGATIVE_INFINITY),
-      );
+      rows.sort(compareRank);
       return rows.slice(0, limit).map((r, i) => ({
         rank: i + 1,
         playerId: r.playerId,

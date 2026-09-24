@@ -93,6 +93,23 @@ describe('scheduler', () => {
     expect(calls(refresh, 'heartbeat')).toHaveLength(4);
   });
 
+  it('forgets the heartbeat of a company that left the listing; a relisting starts afresh', () => {
+    const { w, refresh, a, tickFor } = setup();
+    const beatsOfA = () => calls(refresh, 'heartbeat').filter((id) => id === A).length;
+    tickFor(HEARTBEAT_MS + 1_000, 5_000);
+    expect(beatsOfA()).toBe(1);
+    a.status = 'DELISTED';
+    tickFor(2 * HEARTBEAT_MS, 5_000);
+    expect(beatsOfA()).toBe(1);
+    // Relisted with a fresh listing snapshot: no heartbeat at once for a long-past due time.
+    a.status = 'ACTIVE';
+    a.lastSnapshotAt = w.clock.now();
+    tickFor(1_000);
+    expect(beatsOfA()).toBe(1);
+    tickFor(HEARTBEAT_MS, 5_000);
+    expect(beatsOfA()).toBe(2);
+  });
+
   it('subscribes HL trades for held coins plus mood coins', () => {
     const { w, feed, scheduler } = setup();
     scheduler.onTick(w.clock.now());

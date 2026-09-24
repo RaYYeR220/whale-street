@@ -23,7 +23,8 @@ export function filterSessionLines(
     }
     if (window && r.k === 'mood' && r.t < window[0]) {
       const prev = openingMood.get(r.coin);
-      if (!prev || prev.t <= r.t) openingMood.set(r.coin, r);
+      const kept = redistributable(r);
+      if (kept?.k === 'mood' && (!prev || prev.t <= r.t)) openingMood.set(r.coin, kept);
       return;
     }
     if (window && (r.t < window[0] || r.t > window[1])) return;

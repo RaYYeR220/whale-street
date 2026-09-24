@@ -63,12 +63,27 @@ export function scrubLabels(v: unknown): unknown {
 }
 
 /**
+ * A street-mood line rebuilt to exactly the derived keys: anything else a line may carry (raw
+ * cohort totals, labels) is dropped, and a skew that is missing is unknown (null), never 0.
+ */
+function moodLine(r: MoodRecord): MoodRecord {
+  return {
+    t: r.t,
+    k: 'mood',
+    coin: r.coin,
+    smartSkew: r.smartSkew ?? null,
+    whaleSkew: r.whaleSkew ?? null,
+  };
+}
+
+/**
  * The redistribution policy for one record, shared by the session recorder, the bundler and the
- * REPLAY loader: seed lines, HL feed records and derived street-mood lines pass; Nansen / HL-info
- * records only on an allowlisted path, with label/name fields scrubbed from the body. `null` =
- * must never be recorded, bundled or served.
+ * REPLAY loader: seed lines and HL feed records pass; street-mood lines pass rebuilt to their
+ * derived keys; Nansen / HL-info records only on an allowlisted path, with label/name fields
+ * scrubbed from the body. `null` = must never be recorded, bundled or served.
  */
 export function redistributable(r: SessionLine): SessionLine | null {
+  if (r.k === 'mood') return moodLine(r);
   if (r.k !== 'nansen') return r;
   if (!REPLAY_ALLOWED_PATHS.has(r.path)) return null;
   return { ...r, body: scrubLabels(r.body) };

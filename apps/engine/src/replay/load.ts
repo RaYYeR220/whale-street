@@ -18,16 +18,73 @@ export interface LoadedSession {
   dropped: number;
 }
 
+type Fields = Record<string, unknown>;
+
+const isObject = (v: unknown): v is Fields =>
+  v !== null && typeof v === 'object' && !Array.isArray(v);
+const isText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+/** A seed lists a company at boot: every field of SeedCompany, with a real address. */
+function seedProblem(r: Fields): string | null {
+  const c = r.company;
+  if (!isObject(c)) return 'a seed record needs a company';
+  if (typeof c.address !== 'string' || !ADDRESS.test(c.address))
+    return 'a seed company needs a 0x address';
+  for (const key of ['ticker', 'name', 'anchorDate'] as const)
+    if (!isText(c[key])) return `a seed company needs a ${key}`;
+  if (!isNumber(c.listedAt)) return 'a seed company needs a listedAt time';
+  return null;
+}
+
+/** A Nansen / HL-info record answers one request key with a status and a (JSON) body. */
+function nansenProblem(r: Fields): string | null {
+  if (!isText(r.key)) return 'a nansen record needs a request key';
+  if (typeof r.path !== 'string') return 'a nansen record needs a path';
+  if (!Number.isInteger(r.status)) return 'a nansen record needs an HTTP status';
+  if (!('body' in r)) return 'a nansen record needs a body';
+  return null;
+}
+
+/** An HL feed record: mids (coin → number) or trades (coin, px, sz, time and the two users). */
+function hlProblem(r: Fields): string | null {
+  if (r.channel === 'mids') {
+    if (!isObject(r.data) || !Object.values(r.data).every(isNumber))
+      return 'an hl mids record needs numeric mids by coin';
+    return null;
+  }
+  if (r.channel === 'trades') {
+    if (!Array.isArray(r.data)) return 'an hl trades record needs a list of trades';
+    const ok = r.data.every(
+      (t) =>
+        isObject(t) &&
+        isText(t.coin) &&
+        isNumber(t.px) &&
+        isNumber(t.sz) &&
+        isNumber(t.time) &&
+        Array.isArray(t.users) &&
+        t.users.length === 2 &&
+        t.users.every((u) => typeof u === 'string'),
+    );
+    return ok ? null : 'an hl trade needs coin, px, sz, time and two users';
+  }
+  return 'an hl record needs channel mids or trades';
+}
+
 /**
  * A mood line goes straight into what clients are served: both skews must be present, each null
  * or a number in [−1, 1].
  */
-function isMoodRecord(r: { coin?: unknown; smartSkew?: unknown; whaleSkew?: unknown }): boolean {
-  return (
-    typeof r.coin === 'string' && r.coin.length > 0 && isSkew(r.smartSkew) && isSkew(r.whaleSkew)
-  );
+function moodProblem(r: Fields): string | null {
+  return isText(r.coin) && isSkew(r.smartSkew) && isSkew(r.whaleSkew)
+    ? null
+    : 'malformed street-mood record';
 }
 
+const PROBLEM_OF = { seed: seedProblem, nansen: nansenProblem, hl: hlProblem, mood: moodProblem };
+
+/** Parses one NDJSON line and checks it has the fields its kind needs (errors name the line). */
 export function parseSessionLine(line: string, lineNo: number): SessionLine {
   let v: unknown;
   try {
@@ -35,20 +92,16 @@ export function parseSessionLine(line: string, lineNo: number): SessionLine {
   } catch {
     throw new Error(`session line ${lineNo}: invalid JSON`);
   }
-  const r = v as { k?: unknown; t?: unknown } | null;
   if (
-    r === null ||
-    typeof r !== 'object' ||
-    typeof r.t !== 'number' ||
-    !Number.isFinite(r.t) ||
-    (r.k !== 'nansen' && r.k !== 'hl' && r.k !== 'seed' && r.k !== 'mood')
+    !isObject(v) ||
+    !isNumber(v.t) ||
+    (v.k !== 'nansen' && v.k !== 'hl' && v.k !== 'seed' && v.k !== 'mood')
   ) {
     throw new Error(`session line ${lineNo}: not a session record`);
   }
-  if (r.k === 'mood' && !isMoodRecord(v as Record<string, unknown>)) {
-    throw new Error(`session line ${lineNo}: malformed street-mood record`);
-  }
-  return v as SessionLine;
+  const problem = PROBLEM_OF[v.k](v);
+  if (problem) throw new Error(`session line ${lineNo}: ${problem}`);
+  return v as unknown as SessionLine;
 }
 
 /**

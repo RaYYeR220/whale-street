@@ -235,6 +235,7 @@ export function createEngine(deps: EngineDeps): Engine {
             listing,
             targetCompanies: config.targetCompanies,
             params,
+            wallNow,
           })
       : null,
     lastRun: live

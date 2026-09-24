@@ -6,7 +6,7 @@ import type { Repos } from '../db/repos';
 import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
 import type { NansenPort } from '../ports';
-import { DENIAL_MEMORY_MS, deniedKey } from '../services/ipo';
+import { deniedKey, deniedRecently } from '../services/ipo';
 import type { ListingService } from '../services/listing';
 import { gatherEvidence } from './evidence';
 
@@ -24,6 +24,8 @@ export interface ScoutDeps {
   listing: ListingService;
   targetCompanies: number;
   params?: Params;
+  /** Wall clock of the committee's denial memory (shared with the IPO desk); default `clock.now`. */
+  wallNow?: () => number;
 }
 
 export interface ScoutResult {
@@ -46,6 +48,7 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
   if (need <= 0) return result;
 
   const now = d.clock.now();
+  const wall = d.wallNow?.() ?? now;
   const [board, smart] = await Promise.all([
     d.nansen.perpLeaderboard(daysBefore(now, 30), utcDate(now), 100),
     d.nansen.smartMoneyPerpTrades(24, true, 50),
@@ -64,8 +67,7 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
     if (result.evaluated >= SCOUT_MAX_EVALUATIONS || result.listed.length >= need) break;
     const row = d.repos.companies.get(address);
     if (row && (row.status !== 'DELISTED' || (row.cooldownUntil ?? 0) > now)) continue;
-    const deniedAt = Number(d.repos.kv.get(deniedKey(address)) ?? Number.NaN);
-    if (Number.isFinite(deniedAt) && now - deniedAt < DENIAL_MEMORY_MS) continue;
+    if (deniedRecently(d.repos, address, wall)) continue;
 
     result.evaluated++;
     const { ev, positions } = await gatherEvidence(address, d);
@@ -84,7 +86,7 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
         d.log.warn('scout: listing failed', { error: String(err) });
       }
     } else if (verdict.decision === 'DENIED') {
-      d.repos.kv.set(deniedKey(address), String(now));
+      d.repos.kv.set(deniedKey(address), String(wall));
     }
   }
   d.repos.kv.set(SCOUT_LAST_KEY, String(now));

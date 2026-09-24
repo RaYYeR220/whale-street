@@ -1,7 +1,7 @@
 import { multiplier } from '@whale-street/core';
 import { describe, expect, it, vi } from 'vitest';
 import { createMarketLoop, MARKS_MISSING_HALT_MS } from '../src/market/loop';
-import { runtimeFromRow } from '../src/market/state';
+import { MarketState, runtimeFromRow } from '../src/market/state';
 import { addCompany, makeWorld, pos } from './helpers/world';
 
 const A = '0x00000000000000000000000000000000000000a1' as const;
@@ -85,8 +85,35 @@ describe('market loop', () => {
     loop.tick(w.clock.now());
     w.state.setMarks({ ETH: 81 }, w.clock.now());
     loop.tick(w.clock.now());
-    const kinds = w.repos.filings.recent(10).map((f) => f.kind);
-    expect(kinds).toEqual(['MARGIN_CALL']);
+    const filings = w.repos.filings.recent(10);
+    expect(filings.map((f) => f.kind)).toEqual(['MARGIN_CALL']);
+    // Entry 100, liquidation 80, mark 81: 95% of the way down, 5% of the health left.
+    expect(filings[0]?.detail).toBe(
+      'ETH is 95% of the way from entry to its liquidation price (health 5%)',
+    );
+  });
+
+  it('a fresh market is paused until the first tick on fresh marks (NAV may be from before a restart)', () => {
+    const w = makeWorld();
+    const state = new MarketState(w.clock.now());
+    const loop = createMarketLoop({ ...w, state });
+    expect(state.paused()).toBe(true);
+    state.setMarks({}, w.clock.now() - 11_000);
+    loop.tick(w.clock.now());
+    expect(state.paused()).toBe(true);
+    state.setMarks({}, w.clock.now());
+    loop.tick(w.clock.now());
+    expect(state.paused()).toBe(false);
+  });
+
+  it('keys companies by lowercase address, whatever case they were added with', () => {
+    const w = makeWorld();
+    const mixed = '0x00000000000000000000000000000000000000Ab' as const;
+    const rt = addCompany(w, { id: mixed, ticker: 'MIX' });
+    expect(w.state.get(mixed)).toBe(rt);
+    expect(w.state.get(mixed.toLowerCase())).toBe(rt);
+    expect([...w.state.companies.keys()]).toEqual([mixed.toLowerCase()]);
+    expect(rt.id).toBe(mixed.toLowerCase());
   });
 
   it('halts on an unresolved trigger, on stale data, and on low equity — with visible reasons', () => {

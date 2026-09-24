@@ -102,6 +102,31 @@ describe('repos', () => {
     expect(r.ipoSpend.get('p1', A, T0 + 1)).toBe(0);
   });
 
+  it('counts IPO applications per player and in total since a wall-clock time', () => {
+    const r = testRepos();
+    const apply = (id: string, playerId: string | null, appliedWallAt: number | null) =>
+      r.ipoApps.insert({
+        id,
+        address: A,
+        playerId,
+        status: 'PENDING',
+        verdict: null,
+        reason: null,
+        ticker: null,
+        createdAt: T0,
+        decidedAt: null,
+        appliedWallAt,
+      });
+    apply('a1', 'p1', T0 - 10);
+    apply('a2', 'p1', T0);
+    apply('a3', 'p2', T0 + 5);
+    apply('a4', 'p1', null);
+    expect(r.ipoApps.countByPlayerAppliedSince('p1', T0)).toBe(1);
+    expect(r.ipoApps.countByPlayerAppliedSince('p1', T0 - 10)).toBe(2);
+    expect(r.ipoApps.countByPlayerAppliedSince('p3', 0)).toBe(0);
+    expect(r.ipoApps.countAppliedSince(T0)).toBe(2);
+  });
+
   it('rolls back a failed transaction', () => {
     const r = testRepos();
     expect(() =>
@@ -136,6 +161,11 @@ describe('repos', () => {
     expect(r.kv.getJson<{ remaining: number }>('credits')).toEqual({ remaining: 5 });
     r.kv.delete('credits');
     expect(r.kv.get('credits')).toBeUndefined();
+    // Nothing JSON can encode: the key is removed instead of failing at the database.
+    r.kv.setJson('credits', { remaining: 5 });
+    r.kv.setJson('credits', undefined);
+    expect(r.kv.get('credits')).toBeUndefined();
+    expect(() => r.kv.setJson('never-set', undefined)).not.toThrow();
 
     r.nansenCalls.insert({
       id: 'nc_1',

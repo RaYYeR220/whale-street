@@ -147,6 +147,57 @@ describe('exchange', () => {
     await t.app.close();
   });
 
+  it('breaks net-worth ties by the earlier player, then by id (leaderboard and season results)', () => {
+    const w = makeWorld();
+    const seasons = createSeasonService({ ...w, seasonDays: 7 });
+    const exchange = createExchange({ ...w, seasons });
+    const season = seasons.ensure(w.clock.now());
+    const t = w.clock.now();
+    const player = (id: string, createdAt: number) =>
+      w.repos.players.insert({
+        id,
+        handle: `h-${id}`,
+        tokenHash: `t-${id}`,
+        kind: 'human',
+        walletAddress: null,
+        createdAt,
+      });
+    player('p-a', t + 1);
+    player('p-b', t + 1);
+    player('p-c', t);
+    for (const id of ['p-a', 'p-b', 'p-c'])
+      w.repos.portfolios.upsert({ playerId: id, seasonId: season.id, cash: 10_000 });
+    expect(exchange.leaderboard(10).map((r) => r.playerId)).toEqual(['p-c', 'p-a', 'p-b']);
+    w.clock.advance(7 * 86_400_000);
+    expect(seasons.maybeRollover(w.clock.now())).toBe(true);
+    expect(w.repos.seasonResults.forSeason(season.id).map((r) => [r.playerId, r.rank])).toEqual([
+      ['p-c', 1],
+      ['p-a', 2],
+      ['p-b', 3],
+    ]);
+  });
+
+  it('prices a holding in a company missing from memory as unknown (null) and logs it', () => {
+    const w = makeWorld();
+    const errors: Array<{ msg: string; data: unknown }> = [];
+    const log = {
+      ...silentLogger,
+      error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+    };
+    const seasons = createSeasonService({ ...w, seasonDays: 7 });
+    const exchange = createExchange({ ...w, seasons, log });
+    const alice = createPlayersService(w).create('human').player;
+    addCompany(w, { id: A, ticker: 'AAA' });
+    w.clock.advance(61_000);
+    expect(exchange.placeOrder(alice.id, { ticker: 'AAA', side: 'BUY', qty: 10 }).ok).toBe(true);
+    w.state.companies.delete(A);
+    const pf = exchange.portfolio(alice.id);
+    expect(pf.netWorth).toBeNull();
+    expect(pf.holdings[0]).toMatchObject({ companyId: A, price: null, value: null });
+    expect(exchange.leaderboard(10)[0]?.netWorth).toBeNull();
+    expect(errors).toMatchObject([{ data: { company: A } }]);
+  });
+
   it('quotes without trading and ranks the leaderboard by net worth', () => {
     const { exchange, alice, bob } = setup();
     const q = exchange.quote('AAA', 'BUY', 10);
