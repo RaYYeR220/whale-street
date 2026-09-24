@@ -10,6 +10,7 @@ import { createRepos } from './db/repos';
 import type { EngineDeps } from './engine';
 import type { Logger } from './log';
 import { loadReplaySession } from './replay/load';
+import { createReplayMood, type ReplayMood } from './replay/mood';
 import { createSessionRecorder, type SessionRecorder } from './replay/record';
 import type { SeedCompany } from './replay/session';
 import { syntheticSession } from './replay/synthetic';
@@ -38,7 +39,7 @@ export interface Runtime {
   deps: EngineDeps;
   /** REPLAY: companies to list at boot. */
   seeds: SeedCompany[];
-  replay: { clock: ReplayClock; feed: ReplayFeed } | null;
+  replay: { clock: ReplayClock; feed: ReplayFeed; mood: ReplayMood } | null;
   recorder: SessionRecorder | null;
 }
 
@@ -130,6 +131,7 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
     onCall: (c) => repos.nansenCalls.insert(c),
   });
   const feed = createReplayFeed(session.hl, () => clock.now());
+  const mood = createReplayMood(session.moods, () => clock.now());
   return {
     deps: {
       config,
@@ -144,14 +146,17 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
         recordedAt: session.recordedAt,
         synthetic,
         knownAddresses: session.knownAddresses,
+        startT: clock.startT,
+        endT: clock.endT,
         advance: () => {
           feed.advance();
+          mood.advance();
           clock.poll();
         },
       },
     },
     seeds: session.seeds,
-    replay: { clock, feed },
+    replay: { clock, feed, mood },
     recorder: null,
   };
 }

@@ -1,5 +1,5 @@
 import type { HlRecord } from '@whale-street/hl';
-import type { NansenRecord } from '@whale-street/nansen';
+import type { CohortPositioning, NansenRecord } from '@whale-street/nansen';
 
 /** A company that was listed while the session was recorded. */
 export interface SeedCompany {
@@ -16,8 +16,19 @@ export interface SeedRecord {
   company: SeedCompany;
 }
 
+/**
+ * Street mood for one coin as the engine derived and served it (never the raw Nansen
+ * position-intelligence body, which is not redistributable).
+ */
+export interface MoodRecord {
+  t: number;
+  k: 'mood';
+  coin: string;
+  positioning: CohortPositioning;
+}
+
 /** One NDJSON line of a session file. */
-export type SessionLine = NansenRecord | HlRecord | SeedRecord;
+export type SessionLine = NansenRecord | HlRecord | SeedRecord | MoodRecord;
 
 /**
  * Endpoints a bundled REPLAY session may contain (redistribution-safe: profiler data and public
@@ -52,8 +63,9 @@ export function scrubLabels(v: unknown): unknown {
 
 /**
  * The redistribution policy for one record, shared by the bundler and the REPLAY loader: seed
- * lines and HL feed records pass; Nansen / HL-info records only on an allowlisted path, with
- * label/name fields scrubbed from the body. `null` = must never be bundled or served.
+ * lines, HL feed records and derived street-mood lines pass; Nansen / HL-info records only on an
+ * allowlisted path, with label/name fields scrubbed from the body. `null` = must never be bundled
+ * or served.
  */
 export function redistributable(r: SessionLine): SessionLine | null {
   if (r.k !== 'nansen') return r;

@@ -1,8 +1,8 @@
 import { type Address, companyIdentity } from '@whale-street/core';
 import type { HlRecord, HlTrade } from '@whale-street/hl';
-import { type NansenRecord, requestKey } from '@whale-street/nansen';
+import { type CohortPositioning, type NansenRecord, requestKey } from '@whale-street/nansen';
 import { utcDate } from '../dates';
-import type { SeedRecord, SessionLine } from './session';
+import type { MoodRecord, SeedRecord, SessionLine } from './session';
 
 export const SYNTHETIC_T0 = 1_790_000_000_000;
 export const SYNTHETIC_A: Address = '0x00000000000000000000000000000000000000a1';
@@ -67,6 +67,29 @@ const seed = (address: Address, t: number): SeedRecord => {
   };
 };
 
+const cohort = (
+  smartLongs: number,
+  smartShorts: number,
+  whaleLongs: number,
+  whaleShorts: number,
+  publicLongs: number,
+  publicShorts: number,
+): CohortPositioning => ({
+  smartLongs,
+  smartShorts,
+  whaleLongs,
+  whaleShorts,
+  publicLongs,
+  publicShorts,
+});
+
+const mood = (t: number, coin: string, positioning: CohortPositioning): MoodRecord => ({
+  t,
+  k: 'mood',
+  coin,
+  positioning,
+});
+
 const trade = (coin: string, px: number, time: number, users: [string, string]): HlTrade => ({
   coin,
   side: 'B',
@@ -79,8 +102,10 @@ const trade = (coin: string, px: number, time: number, users: [string, string]):
 
 /**
  * A deterministic 10-minute session for tests and keyless demos (clearly labelled "synthetic"):
- * company A closes a BTC long at 4:55 (CLOSE) and opens SOL at 6:55 (OPEN); company B's 10x ETH
- * long is liquidated at 8:05 with equity collapsing from $30,000 to $1,000 (LIQUIDATION → BANKRUPTCY).
+ * company A closes a BTC long at 4:55 (CLOSE) and opens a SOL long at 6:55 (OPEN) into a rally;
+ * company B's 10x ETH long is liquidated at 8:05 with equity collapsing from $30,000 to $1,000
+ * (LIQUIDATION → BANKRUPTCY). Street mood (made-up cohort positioning in the derived shape):
+ * smart traders net long BTC, net short ETH and SOL.
  */
 export function syntheticSession(t0: number = SYNTHETIC_T0): string[] {
   const at = (s: number) => t0 + s * 1_000;
@@ -114,7 +139,7 @@ export function syntheticSession(t0: number = SYNTHETIC_T0): string[] {
       pp,
       { address: SYNTHETIC_A },
       positionsBody(
-        [{ coin: 'SOL', size: 100, entry: 150, liq: 100, lev: 3, upnl: 0 }],
+        [{ coin: 'SOL', size: 1_000, entry: 150, liq: 100, lev: 3, upnl: 0 }],
         251_000,
         at(415),
       ),
@@ -137,7 +162,7 @@ export function syntheticSession(t0: number = SYNTHETIC_T0): string[] {
   for (let s = 0; s <= 600; s += 5) {
     const btc = 60_000 + 500 * Math.min(1, s / 295);
     const eth = s <= 360 ? 3_000 : s >= 480 ? 2_790 : 3_000 - (210 * (s - 360)) / 120;
-    const sol = s <= 420 ? 150 : 150 + (2 * (s - 420)) / 180;
+    const sol = s <= 420 ? 150 : 150 + (10 * (s - 420)) / 180;
     const mids: HlRecord = {
       t: at(s),
       k: 'hl',
@@ -165,6 +190,11 @@ export function syntheticSession(t0: number = SYNTHETIC_T0): string[] {
       channel: 'trades',
       data: [trade('ETH', 2_790, at(480), [SYNTHETIC_B, COUNTERPARTY])],
     },
+    mood(at(0), 'BTC', cohort(48e6, 21e6, 310e6, 265e6, 4e6, 3e6)),
+    mood(at(0), 'ETH', cohort(18e6, 29e6, 140e6, 155e6, 2e6, 2e6)),
+    mood(at(0), 'SOL', cohort(6e6, 10e6, 40e6, 52e6, 1e6, 1e6)),
+    mood(at(300), 'BTC', cohort(47e6, 22e6, 305e6, 268e6, 4e6, 3e6)),
+    mood(at(300), 'ETH', cohort(15e6, 34e6, 132e6, 166e6, 2e6, 3e6)),
   );
   return lines.sort((a, b) => a.t - b.t).map((l) => JSON.stringify(l));
 }

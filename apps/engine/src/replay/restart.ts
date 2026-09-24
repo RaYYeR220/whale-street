@@ -3,6 +3,7 @@ import type { ReplayFeed } from '@whale-street/hl';
 import type { Engine } from '../engine';
 import { fetchPositions } from '../ingest/positions';
 import type { CompanyRuntime } from '../market/state';
+import type { ReplayMood } from './mood';
 import type { SeedCompany } from './session';
 
 /** Resets a company to its first recorded snapshot: NAV 100, multiplier 1, ACTIVE. */
@@ -69,14 +70,18 @@ export async function seedReplayCompanies(
 
 /**
  * REPLAY loop wrap: re-base every engine-clock timer on the rewound clock (due times from the
- * previous loop would lie beyond the loop's end and never fire), rewind the feed and replay its
- * first records (so marks are the recording's opening marks, not the previous loop's closing
- * ones), then reset every company to its first snapshot. Players keep their portfolios.
+ * previous loop would lie beyond the loop's end and never fire), rewind the feed and the street
+ * mood and replay their first records (so marks and mood are the recording's opening ones, not
+ * the previous loop's closing ones), then reset every company to its first snapshot. Players
+ * keep their portfolios.
  */
-export function restartReplay(e: Engine, feed: ReplayFeed): void {
+export function restartReplay(e: Engine, r: { feed: ReplayFeed; mood: ReplayMood }): void {
   const now = e.clock.now();
   e.resetTimers(now);
-  feed.rewind();
-  feed.advance();
+  r.feed.rewind();
+  r.feed.advance();
+  e.state.mood.clear();
+  r.mood.rewind();
+  r.mood.advance();
   for (const rt of e.state.list()) reinitialize(e, rt, now, 'replay restarted');
 }

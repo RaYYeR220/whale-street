@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { type HlFeed, recordFeed } from '@whale-street/hl';
-import { recordingFetch } from '@whale-street/nansen';
+import { type CohortPositioning, recordingFetch } from '@whale-street/nansen';
 import type { SeedCompany, SessionLine } from './session';
 
 export interface SessionRecorder {
@@ -11,6 +11,8 @@ export interface SessionRecorder {
   /** Records HL mids (throttled to 1/s) and trades for the given coins. */
   attachFeed(feed: HlFeed, coins: () => ReadonlySet<string>): () => void;
   seed(company: SeedCompany): void;
+  /** Records the street mood the engine derived for one coin (never the raw Nansen body). */
+  mood(coin: string, positioning: CohortPositioning): void;
 }
 
 /**
@@ -26,5 +28,6 @@ export function createSessionRecorder(path: string, now: () => number = Date.now
     wrapFetch: (inner) => recordingFetch(inner, write, now),
     attachFeed: (feed, coins) => recordFeed(feed, write, { coins, now }),
     seed: (company) => write({ t: now(), k: 'seed', company }),
+    mood: (coin, positioning) => write({ t: now(), k: 'mood', coin, positioning }),
   };
 }

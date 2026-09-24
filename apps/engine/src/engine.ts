@@ -1,5 +1,5 @@
 import { PARAMS, type Params } from '@whale-street/core';
-import { createBotRunner } from './bots/runner';
+import { createBotRunner, momentumLookbackMs } from './bots/runner';
 import type { Clock } from './clock';
 import type { Config } from './config';
 import { DAY_MS } from './dates';
@@ -32,7 +32,10 @@ export interface ReplayRuntime {
   /** True for the synthetic demo session (no recording available). */
   synthetic: boolean;
   knownAddresses: ReadonlySet<string>;
-  /** Called first in every tick: advances the replay feed and detects loop wraps. */
+  /** Engine-clock bounds of the recording; the REPLAY clock loops over [startT, endT). */
+  readonly startT: number;
+  readonly endT: number;
+  /** Called first in every tick: advances the replay feed and street mood, detects loop wraps. */
   advance(): void;
 }
 
@@ -192,7 +195,12 @@ export function createEngine(deps: EngineDeps): Engine {
     log,
     track,
     credits: credits ? () => credits.check() : null,
-    mood: live ? () => refreshMood({ nansen, state, clock, log }) : null,
+    mood: live
+      ? async () => {
+          await refreshMood({ nansen, state, clock, log });
+          bus.emit({ t: 'mood', at: clock.now() });
+        }
+      : null,
     scout: live
       ? () =>
           runScout({
@@ -210,7 +218,17 @@ export function createEngine(deps: EngineDeps): Engine {
   });
   scheduler.start(now);
   const idle = createIdleGate(state, bus, (t) => scheduler.wake(t), now);
-  const bots = createBotRunner({ state, repos, exchange, players, log });
+  const bots = createBotRunner({
+    state,
+    repos,
+    exchange,
+    players,
+    log,
+    momentumLookbackMs: momentumLookbackMs(
+      deps.replay ? deps.replay.endT - deps.replay.startT : null,
+    ),
+    valueBuysDips: deps.replay !== null,
+  });
 
   let timer: ReturnType<typeof setInterval> | null = null;
 

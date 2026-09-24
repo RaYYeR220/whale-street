@@ -4,14 +4,21 @@ import type { Runtime } from './deps';
 import { createEngine, type Engine } from './engine';
 import { restartReplay, seedReplayCompanies } from './replay/restart';
 
-/** Composes engine + app from a runtime: REPLAY seeding and loop restarts, LIVE session recording. */
+/**
+ * Composes engine + app from a runtime: REPLAY seeding, street mood and loop restarts; LIVE
+ * session recording.
+ */
 export async function boot(runtime: Runtime): Promise<{ engine: Engine; app: FastifyInstance }> {
   const engine = createEngine(runtime.deps);
   const replay = runtime.replay;
   if (replay) {
     const listed = await seedReplayCompanies(engine, runtime.seeds);
     engine.log.info('replay seeded', { companies: listed });
-    replay.clock.onWrap(() => restartReplay(engine, replay.feed));
+    replay.mood.onMood((coin, positioning, at) => {
+      engine.state.mood.set(coin, positioning);
+      engine.state.moodAt = at;
+    });
+    replay.clock.onWrap(() => restartReplay(engine, replay));
   }
   const recorder = runtime.recorder;
   if (recorder) {
@@ -29,6 +36,9 @@ export async function boot(runtime: Runtime): Promise<{ engine: Engine; app: Fas
     for (const rt of engine.state.listed()) seedOf(rt.id);
     engine.bus.on((ev) => {
       if (ev.t === 'filing' && ev.filing.kind === 'IPO') seedOf(ev.filing.companyId);
+      // The derived cohort positioning the engine serves; the raw Nansen body is never recorded.
+      if (ev.t === 'mood')
+        for (const [coin, positioning] of engine.state.mood) recorder.mood(coin, positioning);
     });
     recorder.attachFeed(runtime.deps.hl.feed, () => engine.state.heldCoins());
     engine.log.info('recording session', { path: recorder.path });

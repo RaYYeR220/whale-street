@@ -1,5 +1,5 @@
 import { type Holding, mulberry32, multiplier } from '@whale-street/core';
-import { HOUR_MS } from '../dates';
+import { HOUR_MS, MINUTE_MS } from '../dates';
 import type { Repos } from '../db/repos';
 import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
@@ -12,10 +12,21 @@ export const BOTS: ReadonlyArray<{ id: string; kind: BotKind; handle: string }> 
   { id: 'bot-vulture', kind: 'vulture', handle: 'Vulture Fund' },
   { id: 'bot-cohort', kind: 'cohort', handle: 'Cohort Fund' },
   { id: 'bot-momentum', kind: 'momentum', handle: 'Momentum Fund' },
+  { id: 'bot-tape', kind: 'tape', handle: 'Tape Reader' },
 ];
 
 export const BOT_MIN_WAIT_MS = 20_000;
 export const BOT_JITTER_MS = 20_000;
+/** The Tape Reader follows the NAV direction over this window. */
+export const TAPE_WINDOW_MS = 5 * MINUTE_MS;
+
+/**
+ * Momentum's lookback: 1 h in LIVE; in REPLAY a quarter of the loop span (at most 1 h), so a
+ * recording shorter than an hour still gives it a trend to follow.
+ */
+export function momentumLookbackMs(loopSpanMs: number | null): number {
+  return loopSpanMs === null ? HOUR_MS : Math.min(HOUR_MS, loopSpanMs / 4);
+}
 
 export interface BotRunner {
   onTick(now: number): void;
@@ -30,10 +41,17 @@ export function createBotRunner(d: {
   players: PlayersService;
   log: Logger;
   seed?: number;
+  /** Default 1 h (LIVE); see momentumLookbackMs. */
+  momentumLookbackMs?: number;
+  /** REPLAY: Value also trades healthy NAV dips (see BotView.valueBuysDips). Default false. */
+  valueBuysDips?: boolean;
 }): BotRunner {
   const rand = mulberry32(d.seed ?? 42);
+  const lookback = d.momentumLookbackMs ?? HOUR_MS;
   const nextAt = new Map<string, number>();
   for (const b of BOTS) d.players.ensureBot(b.id, b.handle);
+
+  const navAt = (id: string, t: number) => d.repos.navPoints.atOrBefore(id, t)?.nav ?? null;
 
   const view = (botId: string, now: number): BotView => {
     const pf = d.exchange.portfolio(botId);
@@ -58,11 +76,13 @@ export function createBotRunner(d: {
         nav: rt.nav.nav,
         price: d.state.price(rt),
         positions: rt.nav.snapshot.positions,
-        navHourAgo: d.repos.navPoints.atOrBefore(rt.id, now - HOUR_MS)?.nav ?? null,
+        navLookback: navAt(rt.id, now - lookback),
+        nav5mAgo: navAt(rt.id, now - TAPE_WINDOW_MS),
       })),
       mood: d.state.mood,
       marks: d.state.marks,
       rand,
+      valueBuysDips: d.valueBuysDips ?? false,
     };
   };
 

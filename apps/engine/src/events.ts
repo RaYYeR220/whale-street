@@ -51,7 +51,9 @@ export type EngineEvent =
   | { t: 'tape'; trade: TapeView }
   | { t: 'ipo'; update: IpoUpdate }
   | { t: 'player'; playerId: string }
-  | { t: 'status' };
+  | { t: 'status' }
+  /** A street-mood refresh finished (state.mood holds the result). */
+  | { t: 'mood'; at: number };
 
 export class EventBus {
   private readonly listeners = new Set<(e: EngineEvent) => void>();

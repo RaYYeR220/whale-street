@@ -1,11 +1,13 @@
 import type { HlRecord } from '@whale-street/hl';
 import type { NansenRecord } from '@whale-street/nansen';
-import { redistributable, type SeedCompany, type SessionLine } from './session';
+import { type MoodRecord, redistributable, type SeedCompany, type SessionLine } from './session';
 
 export interface LoadedSession {
   nansen: NansenRecord[];
   hl: HlRecord[];
   seeds: SeedCompany[];
+  /** Street mood (derived cohort positioning per coin), in file order. */
+  moods: MoodRecord[];
   startT: number;
   endT: number;
   recordedAt: number;
@@ -13,6 +15,27 @@ export interface LoadedSession {
   knownAddresses: ReadonlySet<string>;
   /** Records the load policy refused (always 0 for a plain parseSession). */
   dropped: number;
+}
+
+const POSITIONING_KEYS = [
+  'smartLongs',
+  'smartShorts',
+  'whaleLongs',
+  'whaleShorts',
+  'publicLongs',
+  'publicShorts',
+] as const;
+
+/** A mood line goes straight into what clients are served: every cohort figure must be a number. */
+function isMoodRecord(r: { coin?: unknown; positioning?: unknown }): boolean {
+  const p = r.positioning as Record<string, unknown> | null | undefined;
+  return (
+    typeof r.coin === 'string' &&
+    r.coin.length > 0 &&
+    typeof p === 'object' &&
+    p !== null &&
+    POSITIONING_KEYS.every((k) => typeof p[k] === 'number' && Number.isFinite(p[k]))
+  );
 }
 
 export function parseSessionLine(line: string, lineNo: number): SessionLine {
@@ -28,9 +51,12 @@ export function parseSessionLine(line: string, lineNo: number): SessionLine {
     typeof r !== 'object' ||
     typeof r.t !== 'number' ||
     !Number.isFinite(r.t) ||
-    (r.k !== 'nansen' && r.k !== 'hl' && r.k !== 'seed')
+    (r.k !== 'nansen' && r.k !== 'hl' && r.k !== 'seed' && r.k !== 'mood')
   ) {
     throw new Error(`session line ${lineNo}: not a session record`);
+  }
+  if (r.k === 'mood' && !isMoodRecord(v as { coin?: unknown; positioning?: unknown })) {
+    throw new Error(`session line ${lineNo}: malformed street-mood record`);
   }
   return v as SessionLine;
 }
@@ -46,6 +72,7 @@ export function parseSession(
   const nansen: NansenRecord[] = [];
   const hl: HlRecord[] = [];
   const seeds = new Map<string, SeedCompany>();
+  const moods: MoodRecord[] = [];
   const known = new Set<string>();
   let startT = Number.POSITIVE_INFINITY;
   let endT = Number.NEGATIVE_INFINITY;
@@ -66,6 +93,8 @@ export function parseSession(
       for (const a of r.key.toLowerCase().match(/0x[0-9a-f]{40}/g) ?? []) known.add(a);
     } else if (r.k === 'hl') {
       hl.push(r);
+    } else if (r.k === 'mood') {
+      moods.push(r);
     } else {
       const address = r.company.address.toLowerCase();
       known.add(address);
@@ -77,6 +106,7 @@ export function parseSession(
     nansen,
     hl,
     seeds: [...seeds.values()],
+    moods,
     startT,
     endT,
     recordedAt: startT,

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { requestKey } from '@whale-street/nansen';
 import { afterEach, describe, expect, it } from 'vitest';
 import { boot } from '../src/boot';
+import { BOTS } from '../src/bots/runner';
 import { loadConfig } from '../src/config';
 import { DAY_MS, utcDate } from '../src/dates';
 import {
@@ -21,6 +22,16 @@ import { createSessionRecorder } from '../src/replay/record';
 import { SYNTHETIC_A, SYNTHETIC_B, SYNTHETIC_T0, syntheticSession } from '../src/replay/synthetic';
 import { FakeFeed, hlTrade } from './helpers/fake-hl';
 import { NANSEN_BUILDER } from './helpers/fake-trading';
+import { inbox, send } from './helpers/ws';
+
+const COHORT = {
+  smartLongs: 3,
+  smartShorts: 1,
+  whaleLongs: 20,
+  whaleShorts: 10,
+  publicLongs: 0,
+  publicShorts: 2,
+};
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -53,10 +64,12 @@ describe('session recorder', () => {
       anchorDate: '2026-09-21',
       listedAt: 2_000,
     });
+    rec.mood('BTC', COHORT);
 
     const text = readFileSync(rec.path, 'utf8');
     expect(text).not.toContain('secret-key-123');
     const s = parseSession(text);
+    expect(s.moods).toEqual([{ t: 2_000, k: 'mood', coin: 'BTC', positioning: COHORT }]);
     expect(s.nansen).toHaveLength(1);
     expect(s.nansen[0]?.path).toBe('/api/v1/profiler/perp-positions');
     expect(s.hl.map((r) => r.channel)).toEqual(['mids', 'trades']);
@@ -82,6 +95,45 @@ describe('session loading and filtering', () => {
     expect(s.endT).toBe(SYNTHETIC_T0 + 600_000);
     expect(s.knownAddresses.has(SYNTHETIC_B)).toBe(true);
     expect(s.hl.filter((r) => r.channel === 'trades')).toHaveLength(3);
+    // Street mood for every held coin from the first second (derived cohort positioning only).
+    expect(
+      s.moods
+        .filter((m) => m.t === SYNTHETIC_T0)
+        .map((m) => m.coin)
+        .sort(),
+    ).toEqual(['BTC', 'ETH', 'SOL']);
+    expect(Object.keys(s.moods[0]?.positioning ?? {}).sort()).toEqual(Object.keys(COHORT).sort());
+  });
+
+  it('rejects malformed street-mood lines with a line number', () => {
+    const mood = (positioning: unknown, coin: unknown = 'BTC') =>
+      JSON.stringify({ t: 1, k: 'mood', coin, positioning });
+    expect(parseSession(mood(COHORT)).moods).toHaveLength(1);
+    expect(() => parseSession(mood({ ...COHORT, smartLongs: 'lots' }))).toThrow('session line 1');
+    expect(() => parseSession(mood({ smartLongs: 1 }))).toThrow('session line 1');
+    expect(() => parseSession(mood(COHORT, ''))).toThrow('session line 1');
+  });
+
+  it('carries the latest street mood per coin into a trimmed window', () => {
+    const mood = (t: number, coin: string, smartLongs: number) =>
+      JSON.stringify({ t, k: 'mood', coin, positioning: { ...COHORT, smartLongs } });
+    const lines = [
+      mood(1, 'BTC', 1),
+      mood(10, 'BTC', 2),
+      mood(10, 'ETH', 5),
+      JSON.stringify({ t: 50, k: 'hl', channel: 'mids', data: { BTC: 1 } }),
+      mood(55, 'BTC', 3),
+      mood(90, 'BTC', 4),
+    ];
+    const out = filterSessionLines(lines, [40, 60]).map(
+      (l) => JSON.parse(l) as { t: number; k: string; coin?: string; positioning?: typeof COHORT },
+    );
+    expect(out.map((r) => [r.k, r.t, r.coin ?? null, r.positioning?.smartLongs ?? null])).toEqual([
+      ['mood', 40, 'BTC', 2],
+      ['mood', 40, 'ETH', 5],
+      ['hl', 50, null, null],
+      ['mood', 55, 'BTC', 3],
+    ]);
   });
 
   it('rejects malformed lines with a line number', () => {
@@ -250,6 +302,19 @@ describe('LIVE recording privacy', () => {
               fees_usd: 0,
             },
           });
+        case '/api/v1/tgm/position-intelligence':
+          return json({
+            data: [
+              {
+                smart_trader_longs_usd: 3,
+                smart_trader_shorts_usd: 1,
+                whale_longs_usd: 20,
+                whale_shorts_usd: 10,
+                public_figure_longs_usd: 0,
+                public_figure_shorts_usd: 2,
+              },
+            ],
+          });
         case '/api/v1/perp/meta':
           return json({ assets: [{ asset_id: 0, name: 'BTC', sz_decimals: 5, max_leverage: 40 }] });
         case '/api/v1/perp/builder-fee':
@@ -295,6 +360,10 @@ describe('LIVE recording privacy', () => {
       positions: positions.value,
     });
     expect((await engine.hl.info.clearinghouse(SYNTHETIC_B)).ok).toBe(true);
+    // The first tick runs the street-mood job: its derived cohort positioning is recorded.
+    engine.tick();
+    await engine.settle();
+    expect(engine.state.mood.get('BTC')).toEqual(COHORT);
 
     // A mirror attempt: trading calls and the player's own wallet read must stay off the record.
     engine.state.setMarks({ BTC: 60_000 }, engine.clock.now());
@@ -318,6 +387,7 @@ describe('LIVE recording privacy', () => {
     );
     expect(s.nansen.some((r) => r.key.includes(SYNTHETIC_B))).toBe(true);
     expect(s.seeds.map((x) => x.address)).toEqual([SYNTHETIC_A]);
+    expect(s.moods.map((m) => [m.coin, m.positioning])).toEqual([['BTC', COHORT]]);
     expect(text).not.toContain('/api/v1/perp/');
     expect(text.toLowerCase()).not.toContain(MASTER);
     expect(text).not.toContain('wallet_address');
@@ -411,6 +481,32 @@ describe('REPLAY loader', () => {
     expect(ff).toMatchObject({ ok: true, value: { funder: SYNTHETIC_B, funderName: null } });
     await r.close();
   });
+});
+
+describe('REPLAY street mood', () => {
+  it('replays the recorded cohort positioning into the market frame, loop after loop', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    engine.idle.clientConnected(engine.clock.now());
+    await r.step();
+    const opening = new Map(engine.state.mood);
+    expect([...opening.keys()].sort()).toEqual(['BTC', 'ETH', 'SOL']);
+    const ws = await app.injectWS('/ws');
+    const box = inbox(ws);
+    send(ws, { op: 'sub', channels: ['market'] });
+    const frame = await box.waitFor((m) => m.t === 'market');
+    const coins = (frame.mood as Array<{ coin: string }>).map((m) => m.coin);
+    expect(coins.sort()).toEqual(['BTC', 'ETH', 'SOL']);
+
+    // Mid-recording update, then back to the opening positioning after the wrap.
+    for (let s = 0; s < 400; s++) await r.step();
+    expect(engine.state.mood.get('ETH')).not.toEqual(opening.get('ETH'));
+    for (let s = 0; s < 201; s++) await r.step();
+    expect(engine.clock.now() - SYNTHETIC_T0).toBeLessThan(5_000);
+    expect(new Map(engine.state.mood)).toEqual(opening);
+    ws.terminate();
+    await r.close();
+  }, 30_000);
 });
 
 describe('REPLAY database', () => {
@@ -559,6 +655,15 @@ describe('REPLAY loop wrap', () => {
       rows.filter((x) => x.id > (bounds[l]?.[key] ?? 0) && x.id <= (bounds[l + 1]?.[key] ?? 0));
     const trades = engine.repos.trades.recent(100_000);
     const filings = engine.repos.filings.recent(100_000);
+    // A lively desk: every bot places at least one order of its own within the first two loops.
+    const placed = [...inLoop(trades, 0, 'trade'), ...inLoop(trades, 1, 'trade')].filter(
+      (t) => !t.forced && t.side !== 'SETTLE',
+    );
+    for (const bot of BOTS)
+      expect(
+        placed.filter((t) => t.playerId === bot.id).length,
+        `${bot.id} orders`,
+      ).toBeGreaterThan(0);
     for (const l of [1, 2]) {
       expect(beats[l], `heartbeats in loop ${l}`).toBeGreaterThan(0);
       const bot = inLoop(trades, l, 'trade').filter((t) => t.playerId.startsWith('bot-'));
