@@ -1,5 +1,5 @@
 import type { CompanyStatus, Holding, Marks, Position } from '@whale-street/core';
-import type { MoodSkew } from '../ingest/mood';
+import { MOOD_STALE_MS, type StreetMood } from '../ingest/mood';
 
 export type BotKind = 'value' | 'vulture' | 'cohort' | 'momentum' | 'tape';
 
@@ -30,7 +30,7 @@ export interface BotView {
   cash: number;
   holdings: Readonly<Record<string, Holding>>;
   companies: readonly BotCompany[];
-  mood: ReadonlyMap<string, MoodSkew>;
+  mood: ReadonlyMap<string, StreetMood>;
   marks: Marks;
   /** Seeded PRNG in [0, 1). */
   rand: () => number;
@@ -99,18 +99,21 @@ function vulture(v: BotView): BotOrder | null {
 
 /**
  * Alignment of a company's open positions with the smart-trader cohort:
- * Σ notional·sign(size)·sign(smartSkew) / Σ notional, over coins with a known smart skew (an
- * unknown skew is no signal).
+ * Σ notional·sign(size)·sign(smartSkew) / Σ notional, over coins with a known, fresh smart skew
+ * (an unknown skew, or one older than MOOD_STALE_MS, is no signal).
  */
 export function cohortAlignment(
   c: BotCompany,
-  mood: ReadonlyMap<string, MoodSkew>,
+  mood: ReadonlyMap<string, StreetMood>,
   marks: Marks,
+  now: number,
 ): number | null {
   let num = 0;
   let den = 0;
   for (const p of c.positions) {
-    const smartSkew = mood.get(p.coin)?.smartSkew ?? null;
+    const m = mood.get(p.coin);
+    const fresh = m !== undefined && now - m.asOf <= MOOD_STALE_MS;
+    const smartSkew = fresh ? m.smartSkew : null;
     if (smartSkew === null || p.size === 0) continue;
     const notional = Math.abs(p.size) * (marks[p.coin] ?? p.entryPx);
     num += notional * Math.sign(p.size) * Math.sign(smartSkew);
@@ -122,13 +125,13 @@ export function cohortAlignment(
 /** Buys companies aligned with the smart-money cohort (> 0.5), sells misaligned ones (< −0.2). */
 function cohort(v: BotView): BotOrder | null {
   for (const c of active(v)) {
-    const a = cohortAlignment(c, v.mood, v.marks);
+    const a = cohortAlignment(c, v.mood, v.marks, v.now);
     if (longOf(v, c.id) > EPS && a !== null && a < -0.2)
       return { ticker: c.ticker, side: 'SELL', qty: longOf(v, c.id) };
   }
   const scored = active(v)
     .filter((c) => flat(v, c.id))
-    .map((c) => ({ c, a: cohortAlignment(c, v.mood, v.marks) }))
+    .map((c) => ({ c, a: cohortAlignment(c, v.mood, v.marks, v.now) }))
     .filter((x): x is { c: BotCompany; a: number } => x.a !== null && x.a > 0.5)
     .sort((x, y) => y.a - x.a)[0];
   return scored ? { ticker: scored.c.ticker, side: 'BUY', cash: stake(v, 0.03) } : null;

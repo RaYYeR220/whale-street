@@ -7,6 +7,13 @@ import type { CompanyRuntime } from '../market/state';
 import type { StatusOps } from '../market/status';
 import type { FilingService } from './filings';
 
+/** The visible halt reason while a failed settlement awaits a retry. */
+export const SETTLEMENT_PENDING = 'settlement pending';
+
+/** A HALT left by a failed settlement transaction: only a retried, successful `declare` lifts it. */
+export const isSettlementPendingHalt = (rt: CompanyRuntime): boolean =>
+  rt.status === 'HALTED' && rt.haltKind === 'data' && rt.haltReason === SETTLEMENT_PENDING;
+
 export interface BankruptcyDeps {
   repos: Repos;
   filings: FilingService;
@@ -91,10 +98,16 @@ export function createBankruptcyService(d: BankruptcyDeps): BankruptcyService {
           d.statusOps.persist(rt);
         });
       } catch (err) {
-        // The transaction rolled the DB back; put the runtime back too and retry later.
+        // The transaction rolled the DB back. Halt the company (persisted) rather than leaving it
+        // tradable at NAV x mult while settlement is still pending: this also survives a restart,
+        // since the in-memory `unsettled` set does not.
         Object.assign(rt, before);
+        rt.status = 'HALTED';
+        rt.haltKind = 'data';
+        rt.haltReason = SETTLEMENT_PENDING;
         unsettled.add(rt.id);
-        log.error('bankruptcy settlement failed; company left as it was for a retry', {
+        d.statusOps.persist(rt);
+        log.error('bankruptcy settlement failed; halted the company for a retry', {
           company: rt.ticker,
           error: String(err),
         });

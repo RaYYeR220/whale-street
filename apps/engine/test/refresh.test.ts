@@ -1,8 +1,12 @@
 import type { Position } from '@whale-street/core';
 import { describe, expect, it, vi } from 'vitest';
+import { EventBus } from '../src/events';
 import { createRefresher, restatementThreshold } from '../src/ingest/refresh';
 import { silentLogger } from '../src/log';
+import { MarketState, runtimeFromRow } from '../src/market/state';
+import { createStatusOps } from '../src/market/status';
 import { createBankruptcyService } from '../src/services/bankruptcy';
+import { createFilingService } from '../src/services/filings';
 import { FakeInfo } from './helpers/fake-hl';
 import { FakeNansen, fail } from './helpers/fake-nansen';
 import { addCompany, makeWorld, pos } from './helpers/world';
@@ -269,14 +273,84 @@ describe('refresher', () => {
       throw new Error('disk I/O error');
     });
     await refresher.refresh(A, 'trigger');
-    expect(rt.status).not.toBe('BANKRUPT');
-    expect(rt.status).not.toBe('DELISTED');
+    // Not tradable while settlement is pending, and that halt is persisted (survives a restart).
+    expect(rt.status).toBe('HALTED');
+    expect(rt.haltKind).toBe('data');
+    expect(rt.haltReason).toBe('settlement pending');
+    expect(w.repos.companies.get(A)).toMatchObject({
+      status: 'HALTED',
+      haltKind: 'data',
+      haltReason: 'settlement pending',
+    });
     expect(w.repos.holdings.forCompany(1, A)).toHaveLength(1);
     insert.mockRestore();
     await refresher.refresh(A, 'heartbeat');
     expect(rt.status).toBe('DELISTED');
     expect(w.repos.holdings.forCompany(1, A)).toEqual([]);
     expect(w.repos.portfolios.get('p1', 1)?.cash).toBeCloseTo(5 * rt.nav.nav, 8);
+    expect(kinds(w).filter((k) => k === 'DELISTING')).toHaveLength(1);
+  });
+
+  it('retries a persisted settlement-pending halt after a simulated restart', async () => {
+    const { w, nansen, info, refresher, serve } = setup([pos('ETH', 100, 3_000, 2_800)], 30_000);
+    w.repos.seasons.insert({
+      id: 1,
+      startedAt: 0,
+      endsAt: Number.MAX_SAFE_INTEGER,
+      status: 'ACTIVE',
+    });
+    w.repos.portfolios.upsert({ playerId: 'p1', seasonId: 1, cash: 0 });
+    w.repos.holdings.upsert({
+      playerId: 'p1',
+      seasonId: 1,
+      companyId: A,
+      longQty: 5,
+      longCost: 500,
+      shortQty: 0,
+      shortCollateral: 0,
+    });
+    w.state.setMarks({ ETH: 2_790 }, w.clock.now());
+    serve([], 1_000);
+    const insert = vi.spyOn(w.repos.trades, 'insert').mockImplementation(() => {
+      throw new Error('disk I/O error');
+    });
+    await refresher.refresh(A, 'trigger');
+    insert.mockRestore();
+    const persisted = w.repos.companies.get(A);
+    expect(persisted).toMatchObject({ status: 'HALTED', haltReason: 'settlement pending' });
+    if (!persisted) throw new Error('company row vanished');
+
+    // Simulated restart: brand-new in-memory state and services (empty `unsettled`), loaded only
+    // from the persisted row.
+    const bus2 = new EventBus();
+    const state2 = new MarketState(w.clock.now());
+    state2.awaitingNavTick = false;
+    const rt2 = runtimeFromRow(persisted);
+    state2.add(rt2);
+    const filings2 = createFilingService(w.repos, state2, bus2);
+    const statusOps2 = createStatusOps(w.repos, filings2);
+    const bankruptcy2 = createBankruptcyService({
+      repos: w.repos,
+      filings: filings2,
+      statusOps: statusOps2,
+      bus: bus2,
+      log: silentLogger,
+    });
+    const refresher2 = createRefresher({
+      state: state2,
+      filings: filings2,
+      statusOps: statusOps2,
+      bankruptcy: bankruptcy2,
+      nansen,
+      info,
+      clock: w.clock,
+      log: silentLogger,
+    });
+    expect(rt2.status).toBe('HALTED');
+    expect(await refresher2.refresh(A, 'heartbeat')).toEqual({ kind: 'ok' });
+    expect(rt2.status).toBe('DELISTED');
+    expect(w.repos.holdings.forCompany(1, A)).toEqual([]);
+    expect(w.repos.portfolios.get('p1', 1)?.cash).toBeCloseTo(5 * rt2.nav.nav, 8);
     expect(kinds(w).filter((k) => k === 'DELISTING')).toHaveLength(1);
   });
 

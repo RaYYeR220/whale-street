@@ -192,13 +192,20 @@ describe('bankruptcy service', () => {
     });
 
     expect(bankruptcy.declare(rt, w.clock.now())).toBe(false);
-    expect(rt.status).toBe('ACTIVE');
+    // Not tradable while settlement is pending; the halt is persisted so a restart retries it.
+    expect(rt.status).toBe('HALTED');
+    expect(rt.haltKind).toBe('data');
+    expect(rt.haltReason).toBe('settlement pending');
     expect(rt.pool).toBe(pool);
     expect(rt.delistedAt).toBeNull();
     expect(rt.cooldownUntil).toBeNull();
     expect(bankruptcy.pending(A)).toBe(true);
     expect(errors).toHaveLength(1);
-    expect(w.repos.companies.get(A)?.status).toBe('ACTIVE');
+    expect(w.repos.companies.get(A)).toMatchObject({
+      status: 'HALTED',
+      haltKind: 'data',
+      haltReason: 'settlement pending',
+    });
     expect(w.repos.portfolios.get('long', 1)?.cash).toBe(100);
     expect(w.repos.holdings.forCompany(1, A)).toHaveLength(1);
     expect(w.repos.filings.recent(10)).toEqual([]);

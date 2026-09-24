@@ -1,5 +1,6 @@
 import type { CohortPositioning } from '@whale-street/nansen';
 import type { Clock } from '../clock';
+import { HOUR_MS, MINUTE_MS } from '../dates';
 import type { Repos } from '../db/repos';
 import type { Logger } from '../log';
 import type { MarketState } from '../market/state';
@@ -10,6 +11,10 @@ export const MOOD_COINS = 6;
 export const MOOD_LAST_KEY = 'mood:last';
 /** kv key: the last derived street mood per coin, restored at boot. */
 export const MOOD_SNAPSHOT_KEY = 'mood:snapshot';
+/** A mood reading older than this is no signal to the cohort bot (it trades on nothing stale). */
+export const MOOD_STALE_MS = 30 * MINUTE_MS;
+/** A mood reading older than this is dropped from state entirely: it stops being served at all. */
+export const MOOD_PRUNE_MS = 2 * HOUR_MS;
 
 /**
  * Street mood of one coin as the engine serves it: how two Nansen cohorts lean, derived from their
@@ -86,6 +91,12 @@ export async function refreshMood(d: {
     else d.log.warn('mood fetch failed', { coin, error: r.error });
   }
   d.state.moodAt = startedAt;
+  pruneMood(d.state, d.clock.now());
+}
+
+/** Drops mood entries too old to ever be served again (MOOD_PRUNE_MS), whether or not they were refreshed this run. */
+export function pruneMood(state: MarketState, now: number): void {
+  for (const [coin, m] of state.mood) if (now - m.asOf > MOOD_PRUNE_MS) state.mood.delete(coin);
 }
 
 /** Saves the derived street mood (with each coin's asOf) for the next boot. */

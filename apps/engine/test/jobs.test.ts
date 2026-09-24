@@ -10,6 +10,7 @@ import {
 import { IDLE_AFTER_MS } from '../src/ingest/idle';
 import {
   MOOD_LAST_KEY,
+  MOOD_PRUNE_MS,
   MOOD_SNAPSHOT_KEY,
   refreshMood,
   skew,
@@ -239,6 +240,30 @@ describe('street mood', () => {
     nansen.cohorts.set('BTC', fail('HTTP 500: upstream error'));
     await refreshMood({ ...w, nansen, log: silentLogger });
     expect(w.state.mood.get('BTC')).toEqual({ smartSkew: -0.5, whaleSkew: 0, asOf: first });
+  });
+
+  it('prunes a mood entry once it is older than 2 hours, even if it is not among the current top coins', async () => {
+    const w = makeWorld();
+    const nansen = new FakeNansen();
+    addCompany(w, { id: addr(1), ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
+    // ETH is set directly (not served by Nansen, and not among the top coins below): it represents
+    // an old reading for a coin that has since fallen out of the top set.
+    w.state.mood.set('ETH', { smartSkew: 0.1, whaleSkew: 0.1, asOf: w.clock.now() });
+    w.clock.advance(MOOD_PRUNE_MS - 1);
+    nansen.cohorts.set('BTC', {
+      smartLongs: 1,
+      smartShorts: 1,
+      whaleLongs: 1,
+      whaleShorts: 1,
+      publicLongs: null,
+      publicShorts: null,
+    });
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    expect(w.state.mood.has('ETH')).toBe(true);
+    w.clock.advance(2);
+    await refreshMood({ ...w, nansen, log: silentLogger });
+    expect(w.state.mood.has('ETH')).toBe(false);
+    expect(w.state.mood.has('BTC')).toBe(true);
   });
 });
 

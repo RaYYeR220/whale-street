@@ -16,7 +16,7 @@ import { isMissingMarkHalt } from '../market/loop';
 import type { CompanyRuntime, MarketState } from '../market/state';
 import type { StatusOps } from '../market/status';
 import type { NansenPort } from '../ports';
-import type { BankruptcyService } from '../services/bankruptcy';
+import { type BankruptcyService, isSettlementPendingHalt } from '../services/bankruptcy';
 import type { FilingService } from '../services/filings';
 import { fetchPositions } from './positions';
 
@@ -136,11 +136,21 @@ export function createRefresher(d: RefreshDeps): Refresher {
     rt.lastSnapshotAt = now;
     rt.pendingTriggerAt = null;
 
-    // A settlement that failed earlier is retried here (the liquidation is not in this diff).
-    if ((diff.bankrupt || d.bankruptcy.pending(rt.id)) && d.bankruptcy.declare(rt, now))
+    // A settlement that failed earlier is retried here (the liquidation is not in this diff); a
+    // persisted settlement-pending halt keeps retrying even after a restart loses `unsettled`.
+    if (
+      (diff.bankrupt || d.bankruptcy.pending(rt.id) || isSettlementPendingHalt(rt)) &&
+      d.bankruptcy.declare(rt, now)
+    )
       return { kind: 'ok' };
     // A missing-mark halt is lifted by the market loop once the mark returns, not by a snapshot.
-    if (rt.status === 'HALTED' && rt.haltKind === 'data' && !isMissingMarkHalt(rt))
+    // A settlement-pending halt is lifted only by the successful retried declare, just above.
+    if (
+      rt.status === 'HALTED' &&
+      rt.haltKind === 'data' &&
+      !isMissingMarkHalt(rt) &&
+      !isSettlementPendingHalt(rt)
+    )
       d.statusOps.resume(rt, now, 'fresh snapshot received');
     if (next.accountValue < params.minEquityHaltUsd) {
       d.statusOps.halt(rt, 'equity', 'equity below $1,000', now);

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { BOTS, createBotRunner, momentumLookbackMs, TAPE_WINDOW_MS } from '../src/bots/runner';
 import { type BotCompany, type BotView, cohortAlignment, decide } from '../src/bots/strategies';
 import { HOUR_MS } from '../src/dates';
-import type { MoodSkew } from '../src/ingest/mood';
+import { MOOD_STALE_MS, type StreetMood } from '../src/ingest/mood';
 import { silentLogger } from '../src/log';
 import { createExchange } from '../src/services/exchange';
 import { createPlayersService } from '../src/services/players';
@@ -36,7 +36,11 @@ const short = (qty: number): Holding => ({
   shortQty: qty,
   shortCollateral: qty * 200,
 });
-const cohortOf = (smartSkew: number | null): MoodSkew => ({ smartSkew, whaleSkew: null });
+const cohortOf = (smartSkew: number | null, asOf: number = NOW): StreetMood => ({
+  smartSkew,
+  whaleSkew: null,
+  asOf,
+});
 const view = (over: Partial<BotView>): BotView => ({
   cash: 10_000,
   holdings: {},
@@ -126,12 +130,14 @@ describe('bot strategies', () => {
     ]);
     const aligned = co({ id: 'a', positions: [pos('BTC', 1, 100), pos('ETH', -1, 100)] });
     const against = co({ id: 'b', positions: [pos('BTC', -1, 100)] });
-    expect(cohortAlignment(aligned, mood, {})).toBe(1);
-    expect(cohortAlignment(against, mood, {})).toBe(-1);
-    expect(cohortAlignment(co({ id: 'c', positions: [pos('SOL', 1, 1)] }), mood, {})).toBeNull();
+    expect(cohortAlignment(aligned, mood, {}, NOW)).toBe(1);
+    expect(cohortAlignment(against, mood, {}, NOW)).toBe(-1);
+    expect(
+      cohortAlignment(co({ id: 'c', positions: [pos('SOL', 1, 1)] }), mood, {}, NOW),
+    ).toBeNull();
     // An unknown skew is no signal: the coin is left out, whatever its size.
     const mixed = co({ id: 'd', positions: [pos('BTC', 1, 100), pos('SOL', 100, 100)] });
-    expect(cohortAlignment(mixed, mood, {})).toBe(1);
+    expect(cohortAlignment(mixed, mood, {}, NOW)).toBe(1);
     expect(decide('cohort', view({ companies: [against, aligned], mood }))).toEqual({
       ticker: 'A',
       side: 'BUY',
@@ -140,6 +146,16 @@ describe('bot strategies', () => {
     expect(
       decide('cohort', view({ companies: [against], mood, holdings: { b: long(2) } })),
     ).toEqual({ ticker: 'B', side: 'SELL', qty: 2 });
+  });
+
+  it('cohort alignment ignores mood readings older than 30 minutes', () => {
+    const fresh = new Map([['BTC', cohortOf(0.8, NOW - MOOD_STALE_MS)]]);
+    const stale = new Map([['BTC', cohortOf(0.8, NOW - MOOD_STALE_MS - 1)]]);
+    const c = co({ id: 'a', positions: [pos('BTC', 1, 100)] });
+    // Exactly at the limit is still fresh; one ms past it is unknown, same as no reading at all.
+    expect(cohortAlignment(c, fresh, {}, NOW)).toBe(1);
+    expect(cohortAlignment(c, stale, {}, NOW)).toBeNull();
+    expect(cohortAlignment(c, new Map(), {}, NOW)).toBeNull();
   });
 
   it('momentum follows the NAV trend over its lookback', () => {
