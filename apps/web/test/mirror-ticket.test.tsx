@@ -465,6 +465,20 @@ describe('Mirror ticket: a browser that cannot keep the key', () => {
       'This browser cannot keep a Mirror agent key: The operation is insecure.',
     );
   });
+
+  it('never calls a storage refusal a declined signature', async () => {
+    const denied: KeyStore = {
+      load: async () => {
+        throw new Error('access to the Indexed Database API is denied in this context');
+      },
+      save: async () => undefined,
+      remove: async () => undefined,
+    };
+    mount(fakeEngine({}), denied);
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'This browser cannot keep a Mirror agent key: access to the Indexed Database API is denied in this context',
+    );
+  });
 });
 
 describe('Mirror ticket: the engine’s answers', () => {
@@ -646,13 +660,26 @@ describe('Mirror ticket: when Mirror is off', () => {
   });
 });
 
+/** What a console line shows of an argument: objects in full (an Error by name, message and stack). */
+const logText = (x: unknown): string => {
+  if (typeof x === 'string') return x;
+  if (x instanceof Error)
+    return `${x.name}: ${x.message}
+${x.stack ?? ''}`;
+  try {
+    return JSON.stringify(x) ?? String(x);
+  } catch {
+    return String(x);
+  }
+};
+
 describe('Mirror ticket: the agent key never leaves the browser', () => {
   it('appears in no request, header or log line from approval to a filled order', async () => {
     const hl = stubHyperliquid();
     const lines: string[] = [];
     const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) =>
       vi.spyOn(console, m).mockImplementation((...a: unknown[]) => {
-        lines.push(a.map((x) => (typeof x === 'string' ? x : String(x))).join(' '));
+        lines.push(a.map(logText).join(' '));
       }),
     );
     const store = createMemoryKeyStore();

@@ -58,15 +58,14 @@ const messageOf = (e: unknown): string =>
     ? (e as { message: string }).message
     : String(e);
 
-/** A wallet decline: viem's UserRejectedRequestError or an EIP-1193 4001 anywhere in the chain. */
+/**
+ * A wallet decline: viem's UserRejectedRequestError or an EIP-1193 4001 anywhere in the chain.
+ * Never matched on wording: other failures say "denied" too (a browser refusing IndexedDB).
+ */
 export function isUserRejection(err: unknown): boolean {
   return causes(err).some((e) => {
     const o = (typeof e === 'object' && e !== null ? e : {}) as { name?: unknown; code?: unknown };
-    return (
-      o.name === 'UserRejectedRequestError' ||
-      o.code === 4001 ||
-      /user rejected|user denied|denied/i.test(messageOf(e))
-    );
+    return o.name === 'UserRejectedRequestError' || o.code === 4001;
   });
 }
 

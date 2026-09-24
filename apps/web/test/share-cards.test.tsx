@@ -28,6 +28,7 @@ vi.mock('../lib/og/og', async (load) => ({
   ogFonts: async () => [],
 }));
 
+const { movingFooter } = await import('../lib/og/og');
 const { default: companyCard } = await import('../app/(app)/c/[ticker]/opengraph-image');
 const { default: profileCard } = await import('../app/(app)/u/[handle]/opengraph-image');
 
@@ -65,5 +66,30 @@ describe('share cards in REPLAY', () => {
     );
     expect(profile).toContain('$10,550.00');
     expect(profile).not.toContain(REPLAY);
+  });
+});
+
+describe('share cards when the status call fails', () => {
+  const down: ApiResult<StatusView> = {
+    ok: false,
+    status: 0,
+    error: 'TIMEOUT',
+    message: 'the engine did not answer in time',
+  };
+
+  it('keep the last mode the engine reported', async () => {
+    engine.status = ok<StatusView>(status({ mode: 'replay' }));
+    await profileCard({ params: Promise.resolve({ handle: 'Molten%20Mako' }) });
+    engine.status = down;
+    expect(markup(await companyCard({ params: Promise.resolve({ ticker: 'OOH' }) }))).toContain(
+      REPLAY,
+    );
+  });
+
+  it('say the mode is unknown when the engine never reported one, never pass for live', () => {
+    const memory = { mode: null };
+    expect(movingFooter(down, 'Play money', memory)).toBe('Live status unknown · Play money');
+    expect(movingFooter(ok(status({ mode: 'live' })), 'Play money', memory)).toBe('Play money');
+    expect(movingFooter(down, 'Play money', memory)).toBe('Play money');
   });
 });

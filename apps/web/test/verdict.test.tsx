@@ -30,7 +30,8 @@ describe('approved verdict', () => {
     );
     expect(IPO_CAP_USD).toBe(PARAMS.ipoCapFrac * PARAMS.seasonStartCash);
     expect(html).toContain('its IPO window is open for 0:42');
-    expect(html).toContain(`buy up to $${IPO_CAP_USD.toLocaleString('en-US')} per player`);
+    // Pinned, not derived: the cap a player reads is $1,000 (10% of the $10,000 season cash).
+    expect(html).toContain('buy up to $1,000.00 per player');
   });
 
   it('names no cap once the window has closed', () => {

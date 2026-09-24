@@ -44,6 +44,7 @@ import {
   approveBuilderFeeOnHl,
   builderFeeRate,
   hlErrorText,
+  isUserRejection,
 } from '../lib/mirror/hl';
 import { createIdbKeyStore, createMemoryKeyStore } from '../lib/mirror/keystore';
 import { linkWallet } from '../lib/mirror/link';
@@ -191,7 +192,7 @@ describe('Hyperliquid approvals (user-signed by the master wallet)', () => {
   });
 
   it('turns wallet and Hyperliquid errors into plain sentences', () => {
-    expect(hlErrorText(new Error('User rejected the request.'))).toBe(
+    expect(hlErrorText(new UserRejectedRequestError(new Error('User rejected the request.')))).toBe(
       'You declined the signature in your wallet.',
     );
     expect(hlErrorText(new Error('Must deposit before performing actions'))).toMatch(
@@ -227,6 +228,15 @@ describe('Hyperliquid approvals (user-signed by the master wallet)', () => {
     expect(hlErrorText(new Error('Failed to sign', { cause: new Error('device locked') }))).toBe(
       'Failed to sign: device locked',
     );
+  });
+
+  it('never reads another failure as a decline, whatever its wording', () => {
+    const storage = new Error('access to the Indexed Database API is denied in this context');
+    expect(isUserRejection(storage)).toBe(false);
+    expect(hlErrorText(new Error('wrapped', { cause: storage }))).not.toMatch(/declined/);
+    expect(isUserRejection(new Error('User denied message signature.'))).toBe(false);
+    expect(isUserRejection({ code: 4001, message: 'x' })).toBe(true);
+    expect(isUserRejection(new UserRejectedRequestError(new Error('x')))).toBe(true);
   });
 });
 
@@ -351,6 +361,11 @@ describe('wallet link (Sign-In with Ethereum)', () => {
       code: 'DECLINED',
       message: 'You declined the signature.',
     });
+    const blocked = await linkWallet(engineLinks().api, 'tok', target, async () => {
+      throw new Error('access to the Indexed Database API is denied in this context');
+    });
+    expect(blocked).toMatchObject({ ok: false, code: 'SIGN_FAILED' });
+    expect(blocked.ok ? '' : blocked.message).not.toMatch(/declined/i);
   });
 
   it('maps every engine link refusal to its own sentence', () => {

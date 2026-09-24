@@ -167,6 +167,33 @@ export function headline(app: IpoView, companyName: string | null): string {
   return 'The committee is reviewing';
 }
 
+/**
+ * The committee record behind a listed company, looked up in the applications the engine lists
+ * (at most IPO_LOOKUP_LIMIT, the engine's page cap; it has no lookup by company). `missing` says
+ * how many were read: an older application is out of reach, not absent.
+ */
+export type ListingLookup =
+  | { kind: 'loading' }
+  | { kind: 'found'; app: IpoView }
+  | { kind: 'missing'; scanned: number }
+  | { kind: 'error'; message: string };
+
+/** GET /api/ipo answers at most this many applications. */
+export const IPO_LOOKUP_LIMIT = 100;
+
+export function listingRecord(
+  apps: readonly IpoView[],
+  company: { id: string; ticker: string },
+): ListingLookup {
+  const address = company.id.toLowerCase();
+  const app = apps.find(
+    (a) =>
+      a.status === 'APPROVED' &&
+      (a.ticker === company.ticker || a.address.toLowerCase() === address),
+  );
+  return app ? { kind: 'found', app } : { kind: 'missing', scanned: apps.length };
+}
+
 /** Where the giant stamp lands on one row of six: over two neighbours that passed, so the failing check stays readable. */
 export function stampColumn(checks: readonly CheckResult[], decision: IpoView['status']): number {
   if (decision === 'APPROVED') return 3;

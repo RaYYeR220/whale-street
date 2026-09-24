@@ -5,6 +5,7 @@ import {
   deferral,
   hedgeOffset,
   headline as ipoHeadline,
+  listingRecord,
   MEMBERS,
   progressStates,
   stampColumn,
@@ -108,5 +109,40 @@ describe('IPO address check', () => {
     expect(addressProblem('')).toMatch(/Paste a Hyperliquid address/);
     expect(addressProblem('0x123')).toMatch(/this has 5/);
     expect(addressProblem(' 0x3b1e2c4d5e6f708192a3b4c5d6e7f8091a2ba7d2 ')).toBeNull();
+  });
+});
+
+describe('the committee record behind a listing', () => {
+  const app = (o: Partial<IpoView>): IpoView => ({
+    id: 'ipo_1',
+    address: `0x${'ab'.repeat(20)}`,
+    status: 'APPROVED',
+    reason: null,
+    ticker: 'OOH',
+    verdict: null,
+    createdAt: T0,
+    decidedAt: T0,
+    ...o,
+  });
+
+  it('finds the approved application by ticker or by the company address', () => {
+    const company = { id: `0x${'AB'.repeat(20)}`, ticker: 'NEW' };
+    const byAddress = app({ id: 'a', ticker: 'OLD' });
+    expect(listingRecord([app({ id: 'x', status: 'DENIED' }), byAddress], company)).toEqual({
+      kind: 'found',
+      app: byAddress,
+    });
+    expect(listingRecord([app({ id: 'b', address: '0x1', ticker: 'NEW' })], company)).toMatchObject(
+      { kind: 'found', app: { id: 'b' } },
+    );
+  });
+
+  it('says it was not found among the applications it could read', () => {
+    expect(
+      listingRecord([app({ address: '0x1', ticker: 'GBC' })], { id: '0x2', ticker: 'OOH' }),
+    ).toEqual({
+      kind: 'missing',
+      scanned: 1,
+    });
   });
 });

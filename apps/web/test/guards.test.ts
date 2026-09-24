@@ -72,31 +72,76 @@ describe('no secrets in the browser', () => {
 });
 
 const BUILD = join(WEB, '.next');
-const built = existsSync(join(BUILD, 'static'));
 
-// Runs whenever a production build is present (`pnpm --filter @whale-street/web build`).
-describe.runIf(built)('the production build', () => {
-  const text = (dir: string) =>
-    existsSync(dir) ? walk(dir, (n) => /\.(js|mjs|cjs|json|html|rsc|txt|map)$/.test(n)) : [];
+/**
+ * Whether the production build can be scanned, and why not: there is none (`pnpm check` never
+ * builds), or it is older than the newest source, so it would not show what the sources send.
+ */
+export function buildScan(o: {
+  built: boolean;
+  builtAt: number | null;
+  newestSourceAt: number;
+}): { run: true } | { run: false; reason: string } {
+  if (!o.built || o.builtAt === null)
+    return {
+      run: false,
+      reason: 'no production build; run `pnpm --filter @whale-street/web build` to scan it',
+    };
+  if (o.builtAt < o.newestSourceAt)
+    return { run: false, reason: 'the production build is older than the sources; rebuild it' };
+  return { run: true };
+}
 
-  it('sends the browser no non-public environment read', () => {
-    const js = walk(join(BUILD, 'static'), (n) => /\.(js|mjs)$/.test(n));
-    expect(js.length).toBeGreaterThan(0);
-    const bad = js.flatMap((f) =>
-      envReads(readFileSync(f, 'utf8'))
-        .filter((name) => !/^NEXT_PUBLIC_[A-Z0-9_]+$/.test(name) && name !== 'NODE_ENV')
-        .map((name) => `${relative(BUILD, f)}: ${name}`),
-    );
-    expect(bad).toEqual([]);
-  });
-
-  it('never names the Nansen API key, in browser or server output', () => {
-    const files = [...text(join(BUILD, 'static')), ...text(join(BUILD, 'server'))];
-    expect(files.length).toBeGreaterThan(0);
-    expect(
-      files
-        .filter((f) => readFileSync(f, 'utf8').includes('NANSEN_API_KEY'))
-        .map((f) => relative(BUILD, f)),
-    ).toEqual([]);
+describe('the production build scan', () => {
+  it('says why it is skipped: no build, or a stale one', () => {
+    expect(buildScan({ built: false, builtAt: null, newestSourceAt: 1 })).toMatchObject({
+      run: false,
+      reason: expect.stringMatching(/^no production build/),
+    });
+    expect(buildScan({ built: true, builtAt: 5, newestSourceAt: 9 })).toMatchObject({
+      run: false,
+      reason: expect.stringMatching(/older than the sources/),
+    });
+    expect(buildScan({ built: true, builtAt: 9, newestSourceAt: 5 })).toEqual({ run: true });
   });
 });
+
+const BUILD_ID = join(BUILD, 'BUILD_ID');
+const scan = buildScan({
+  built: existsSync(join(BUILD, 'static')),
+  builtAt: existsSync(BUILD_ID) ? statSync(BUILD_ID).mtimeMs : null,
+  newestSourceAt: Math.max(
+    ...[...app, 'next.config.ts', 'package.json'].map((f) => statSync(join(WEB, f)).mtimeMs),
+  ),
+});
+
+// Runs on a current production build (`pnpm --filter @whale-street/web build`); the skipped
+// suite's name says why it did not run.
+describe.runIf(scan.run)(
+  `the production build${scan.run ? '' : ` (skipped: ${scan.reason})`}`,
+  () => {
+    const text = (dir: string) =>
+      existsSync(dir) ? walk(dir, (n) => /\.(js|mjs|cjs|json|html|rsc|txt|map)$/.test(n)) : [];
+
+    it('sends the browser no non-public environment read', () => {
+      const js = walk(join(BUILD, 'static'), (n) => /\.(js|mjs)$/.test(n));
+      expect(js.length).toBeGreaterThan(0);
+      const bad = js.flatMap((f) =>
+        envReads(readFileSync(f, 'utf8'))
+          .filter((name) => !/^NEXT_PUBLIC_[A-Z0-9_]+$/.test(name) && name !== 'NODE_ENV')
+          .map((name) => `${relative(BUILD, f)}: ${name}`),
+      );
+      expect(bad).toEqual([]);
+    });
+
+    it('never names the Nansen API key, in browser or server output', () => {
+      const files = [...text(join(BUILD, 'static')), ...text(join(BUILD, 'server'))];
+      expect(files.length).toBeGreaterThan(0);
+      expect(
+        files
+          .filter((f) => readFileSync(f, 'utf8').includes('NANSEN_API_KEY'))
+          .map((f) => relative(BUILD, f)),
+      ).toEqual([]);
+    });
+  },
+);

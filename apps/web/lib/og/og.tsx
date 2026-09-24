@@ -8,12 +8,28 @@ import type { ApiResult } from '../api';
 import type { StatusView } from '../api-types';
 import { type PortraitOptions, renderPortrait } from '../portrait';
 
+/** The last mode the engine reported to this server (cards keep saying REPLAY if a call fails). */
+const lastKnown: { mode: StatusView['mode'] | null } = { mode: null };
+
 /**
  * Footer of a card that shows moving numbers (prices, NAV, net worth): a card shared from a
- * replaying engine must not pass for live figures.
+ * replaying engine must not pass for live figures. When the status call fails, the last mode the
+ * engine reported still applies; without one, the card says the mode is unknown.
  */
-export function movingFooter(st: ApiResult<StatusView>, rest: string): string {
-  return `${st.ok && st.data.mode === 'replay' ? 'REPLAY of a recorded session · ' : ''}${rest}`;
+export function movingFooter(
+  st: ApiResult<StatusView>,
+  rest: string,
+  memory: { mode: StatusView['mode'] | null } = lastKnown,
+): string {
+  if (st.ok) memory.mode = st.data.mode;
+  const mode = memory.mode;
+  const label =
+    mode === 'replay'
+      ? 'REPLAY of a recorded session · '
+      : mode === null
+        ? 'Live status unknown · '
+        : '';
+  return `${label}${rest}`;
 }
 
 export const OG_SIZE = { width: 1200, height: 630 };

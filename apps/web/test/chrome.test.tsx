@@ -175,6 +175,31 @@ describe('player chip', () => {
     expect(chip.getAttribute('aria-label')).toMatch(/net worth — \(missing live price for OOH\)/);
     localStorage.clear();
   });
+
+  it('keeps a long reason short in the chip and whole in its label and tooltip', async () => {
+    const player = { id: 'p1', handle: 'Tester', kind: 'human', walletAddress: null, createdAt: 0 };
+    const why = 'no live price for GBC, QLP and OOH while their marks are delayed';
+    const rt = testRuntime({
+      'POST /api/players': () => json({ player, token: 'tok' }),
+      'GET /api/me': () =>
+        json({
+          player,
+          portfolio: portfolio({ netWorth: null, netWorthReason: why }),
+          seasons: [],
+        }),
+    });
+    render(
+      <Wrap runtime={rt}>
+        <PlayerChip />
+      </Wrap>,
+    );
+    const chip = await screen.findByRole('button', { name: /^Your desk: Tester/ });
+    expect(chip.textContent).toContain('no live price for GBC, QLP…');
+    expect(chip.textContent).not.toContain(why);
+    expect(chip.getAttribute('aria-label')).toContain(why);
+    expect(chip.querySelector(`[title="${why}"]`)).toBeTruthy();
+    localStorage.clear();
+  });
 });
 
 describe('the season in REPLAY', () => {

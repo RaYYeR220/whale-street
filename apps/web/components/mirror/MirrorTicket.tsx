@@ -40,6 +40,7 @@ import { useReducedMotion } from '../ink/motion';
 import { useSfx } from '../ink/Sfx';
 import { useApi, useEngineNow } from '../providers/engine';
 import { usePlayer } from '../providers/player';
+import { useActionLock } from './useActionLock';
 
 type Step = 'connect' | 'link' | 'approve' | 'pick' | 'size' | 'check' | 'sign';
 const STEPS: Array<[Step, string]> = [
@@ -202,7 +203,6 @@ export function MirrorTicket({
   const [usdAmt, setUsdAmt] = useState(50);
   const [lev, setLev] = useState(2);
   const [sl, setSl] = useState(MIRROR.defaultStopLossPct);
-  const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<MirrorOutcome | null>(null);
   const [progress, setProgress] = useState<MirrorProgress | null>(null);
@@ -212,7 +212,7 @@ export function MirrorTicket({
   const putAsideRef = useRef(putAside);
   putAsideRef.current = putAside;
   /** Taken synchronously on click, before any await: a second click never starts a second action. */
-  const lock = useRef<string | null>(null);
+  const { busy, locked, run } = useActionLock();
   const outcomeRef = useRef(outcome);
   outcomeRef.current = outcome;
   /** Sets the outcome at once for the code that runs before the next render reads the ref. */
@@ -244,7 +244,7 @@ export function MirrorTicket({
     setOrders(r.data.orders);
     // An order of this company still unknown on the engine (sent before a reload): show it as
     // being checked, so the page never offers to send it again.
-    if (outcomeRef.current || lock.current !== null) return;
+    if (outcomeRef.current || locked()) return;
     const mine = unresolvedOrders(r.data.orders, putAsideRef.current).find(
       (o) => o.ticker === view.ticker,
     );
@@ -253,7 +253,7 @@ export function MirrorTicket({
     setOutcome(outcomeRef.current);
     setCoin(mine.coin);
     setPicked(true);
-  }, [api, token, view.ticker]);
+  }, [api, token, view.ticker, locked]);
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
@@ -326,25 +326,25 @@ export function MirrorTicket({
    * double click or a second Enter never starts a second prepare; whatever throws is shown and
    * always clears the busy state.
    */
-  const guarded = async (name: string, fn: () => Promise<void>): Promise<void> => {
-    if (lock.current !== null) return;
-    lock.current = name;
-    setBusy(name);
-    setProblem(null);
-    try {
-      await fn();
-    } catch (err) {
-      if (err instanceof EngineRefusal) {
-        setProblem(mirrorErrorText(err.code, err.message));
-        // The engine has another wallet on record for this player: show the link step again.
-        if (err.code === 'NO_WALLET') await refresh();
-      } else setProblem(hlErrorText(err));
-    } finally {
-      lock.current = null;
-      setBusy(null);
-      setProgress(null);
-    }
-  };
+  const guarded = (name: string, fn: () => Promise<void>): Promise<void> =>
+    run(
+      name,
+      async () => {
+        setProblem(null);
+        try {
+          await fn();
+        } finally {
+          setProgress(null);
+        }
+      },
+      async (err) => {
+        if (err instanceof EngineRefusal) {
+          setProblem(mirrorErrorText(err.code, err.message));
+          // The engine has another wallet on record for this player: show the link step again.
+          if (err.code === 'NO_WALLET') await refresh();
+        } else setProblem(hlErrorText(err));
+      },
+    );
 
   const doLink = () =>
     guarded('link', async () => {

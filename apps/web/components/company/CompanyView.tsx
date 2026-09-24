@@ -4,8 +4,9 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { CompanyDetail } from '../../lib/api';
-import type { FilingView, HistoryPoint, IpoView } from '../../lib/api-types';
+import type { FilingView, HistoryPoint } from '../../lib/api-types';
 import { bucketSeries, MAX_HISTORY_MIN, type Range, rangeMinutes } from '../../lib/chart';
+import { IPO_LOOKUP_LIMIT, type ListingLookup, listingRecord } from '../../lib/committee';
 import { toDisplay } from '../../lib/company';
 import { price } from '../../lib/format';
 import { mergeSeries, type Series, seriesFromHistory } from '../../lib/store';
@@ -48,7 +49,7 @@ export function CompanyView({
   const [range, setRange] = useState<Range>('1h');
   const [history, setHistory] = useState<{ range: Range; series: Series } | null>(null);
   const [loadingRange, setLoadingRange] = useState(false);
-  const [record, setRecord] = useState<IpoView | null>(null);
+  const [lookup, setLookup] = useState<ListingLookup>({ kind: 'loading' });
   const [lit, setLit] = useState<ReadonlySet<number>>(new Set());
   const [sheet, setSheet] = useState<'trade' | 'mirror' | null>(null);
 
@@ -76,16 +77,23 @@ export function CompanyView({
     };
   }, [api, store, ticker, tickerFilingsHead]);
 
+  // The listing's committee record: the engine lists applications, but has no lookup by company.
+  const companyId = detail.company.id;
   useEffect(() => {
     let cancelled = false;
-    void api.ipoList(100).then((r) => {
-      if (cancelled || !r.ok) return;
-      setRecord(r.data.apps.find((a) => a.ticker === ticker && a.status === 'APPROVED') ?? null);
+    setLookup({ kind: 'loading' });
+    void api.ipoList(IPO_LOOKUP_LIMIT).then((r) => {
+      if (cancelled) return;
+      setLookup(
+        r.ok
+          ? listingRecord(r.data.apps, { id: companyId, ticker })
+          : { kind: 'error', message: r.message },
+      );
     });
     return () => {
       cancelled = true;
     };
-  }, [api, ticker]);
+  }, [api, ticker, companyId]);
 
   const view = detail.company;
   const listedAt = view.listedAt;
@@ -195,7 +203,7 @@ export function CompanyView({
           <div className="co-row co-row--files">
             <FilingsTimeline filings={filings} now={now} lit={lit} />
             <div className="co-stack">
-              <Prospectus c={c} prospectus={view.prospectus} source={view.source} record={record} />
+              <Prospectus c={c} prospectus={view.prospectus} source={view.source} lookup={lookup} />
               <Holders holders={detail.holders} you={player?.handle ?? null} />
             </div>
           </div>

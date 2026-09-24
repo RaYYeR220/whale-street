@@ -2,7 +2,8 @@
 
 import { type CheckResult, PARAMS, type Prospectus as ProspectusData } from '@whale-street/core';
 import { useState } from 'react';
-import type { FilingView, HolderView, IpoView, PositionView } from '../../lib/api-types';
+import type { FilingView, HolderView, PositionView } from '../../lib/api-types';
+import type { ListingLookup } from '../../lib/committee';
 import { type DisplayCompany, liqDistance, notional, side, unrealized } from '../../lib/company';
 import { filingText, kindOf, TONE_TEXT } from '../../lib/filings';
 import { ago, agoLong, coinPx, compact, pctAbs, upDown } from '../../lib/format';
@@ -304,17 +305,31 @@ export function Seal({
   );
 }
 
+/** Why there is no committee record to show, in words. */
+function noRecord(source: string | null, lookup: ListingLookup): string {
+  if (source === 'SEEDED')
+    return 'Loaded from the recorded session (REPLAY), so no committee ran for it.';
+  if (source === 'SCOUT')
+    return 'This listing was found by the scout, not nominated at the desk, so there is no application to publish.';
+  if (lookup.kind === 'loading') return 'Looking up the committee record…';
+  if (lookup.kind === 'error') return `Cannot load the committee record (${lookup.message}).`;
+  if (lookup.kind === 'missing')
+    return `Not found among the ${lookup.scanned} most recent applications, the most the engine lists: its record is older.`;
+  return 'The committee record for this listing is not published.';
+}
+
 export function Prospectus({
   c,
   prospectus,
   source,
-  record,
+  lookup,
 }: {
   c: DisplayCompany;
   prospectus: ProspectusData | null;
   source: string | null;
-  record: IpoView | null;
+  lookup: ListingLookup;
 }) {
+  const record = lookup.kind === 'found' ? lookup.app : null;
   const view = prospectus ?? record?.verdict?.prospectus ?? null;
   const checks = record?.verdict?.checks ?? null;
   const pass = checks?.filter((x) => x.status === 'PASS').length ?? 0;
@@ -380,11 +395,7 @@ export function Prospectus({
           </div>
         </dl>
       ) : (
-        <p className="co-sub">
-          {source === 'SEEDED'
-            ? 'Loaded from the recorded session (REPLAY), so no committee ran for it.'
-            : 'The committee record for this listing is not published.'}
-        </p>
+        <p className="co-sub">{noRecord(source, lookup)}</p>
       )}
       <h3 className="co-h3">Committee checks</h3>
       {checks ? (
@@ -400,7 +411,11 @@ export function Prospectus({
           ))}
         </ul>
       ) : (
-        <p className="co-sub">No six-check record to show.</p>
+        <p className="co-sub">
+          {view
+            ? `No six-check record to show. ${noRecord(source, lookup)}`
+            : 'No six-check record to show.'}
+        </p>
       )}
     </section>
   );

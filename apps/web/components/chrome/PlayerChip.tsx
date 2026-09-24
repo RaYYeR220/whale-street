@@ -5,6 +5,11 @@ import { Portrait } from '../ink/Portrait';
 import { usePlayer } from '../providers/player';
 import { useDrawer } from './Drawer';
 
+/** Visible length of the net-worth reason in the compact chip (the label and tooltip keep it whole). */
+const CHIP_REASON_CHARS = 26;
+const clip = (t: string) =>
+  t.length > CHIP_REASON_CHARS ? `${t.slice(0, CHIP_REASON_CHARS).trimEnd()}…` : t;
+
 /** Handle, net worth and rank; opens the portfolio drawer. */
 export function PlayerChip() {
   const { status, player, portfolio, rank } = usePlayer();
@@ -30,7 +35,7 @@ export function PlayerChip() {
         <b>{player?.handle ?? (status === 'offline' ? 'Offline' : 'Signing in…')}</b>
         <span title={why ?? undefined}>
           {usd(portfolio?.netWorth)}
-          {why ? <span className="ws-player__rank">, {why}</span> : null}
+          {why ? <span className="ws-player__rank">, {clip(why)}</span> : null}
           {rank !== null ? <span className="ws-player__rank">, rank {rank}</span> : null}
         </span>
       </span>
