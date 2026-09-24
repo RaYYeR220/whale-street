@@ -1,11 +1,12 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { HOUR_MS, MINUTE_MS } from '../dates';
+import { TRADING_PATH_PREFIX } from '../db/repos';
 import type { Engine } from '../engine';
 import { type ExchangeErrorCode, MARKET_PAUSED_RETRY_MS } from '../services/exchange';
 import type { ApplyErrorCode } from '../services/ipo';
 import { playerView } from '../services/players';
-import { requirePlayer, sendError } from './auth';
+import { AUTH_PER_MINUTE, rateLimited, requirePlayer, sendError } from './auth';
 import { type Gates, RateGate } from './rate';
 
 const SIDES = ['BUY', 'SELL', 'SHORT', 'COVER'] as const;
@@ -80,6 +81,8 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
   const now = () => e.clock.now();
   // Wall time: in REPLAY the engine clock loops, which would make this hourly cap a lifetime one.
   const signups = new RateGate(20, HOUR_MS, () => e.wallNow());
+  const nonces = new RateGate(AUTH_PER_MINUTE, MINUTE_MS, () => e.wallNow());
+  const links = new RateGate(AUTH_PER_MINUTE, MINUTE_MS, () => e.wallNow());
 
   app.get('/healthz', async () => ({ ok: true }));
 
@@ -241,17 +244,20 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
   app.get('/api/provenance', async (req, reply) => {
     const query = parse(LimitQuery, req.query, reply);
     if (!query) return reply;
-    return { calls: e.repos.nansenCalls.recent(query.limit) };
+    return { calls: e.repos.nansenCalls.recentPublic(query.limit) };
   });
 
   app.get('/api/provenance/:id', async (req, reply) => {
     const params = parse(IdParams, req.params, reply);
     if (!params) return reply;
     const call = e.repos.nansenCalls.get(params.id);
-    return call ? { call } : sendError(reply, 404, 'NOT_FOUND', 'no such call');
+    return call && !call.path.startsWith(TRADING_PATH_PREFIX)
+      ? { call }
+      : sendError(reply, 404, 'NOT_FOUND', 'no such call');
   });
 
   app.get('/api/auth/nonce', async (req, reply) => {
+    if (!nonces.allow(req.ip)) return rateLimited(reply);
     const player = requirePlayer(e, req, reply);
     if (!player) return reply;
     const nonce = e.players.nonce(player.id);
@@ -259,6 +265,7 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
   });
 
   app.post('/api/auth/link', async (req, reply) => {
+    if (!links.allow(req.ip)) return rateLimited(reply);
     const player = requirePlayer(e, req, reply);
     if (!player) return reply;
     const body = parse(LinkBody, req.body, reply);

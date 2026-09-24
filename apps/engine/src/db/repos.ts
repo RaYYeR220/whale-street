@@ -1,5 +1,5 @@
 import type { CallRecord } from '@whale-street/nansen';
-import { and, desc, eq, gt, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lte, notLike, sql } from 'drizzle-orm';
 import type { MirrorStatus } from '../types';
 import type { Db } from './index';
 import {
@@ -35,6 +35,12 @@ export type IpoAppRow = typeof ipoApps.$inferSelect;
 export type NansenCallRow = typeof nansenCalls.$inferSelect;
 export type MirrorOrderRow = typeof mirrorOrders.$inferSelect;
 export type AgentKeyRow = typeof agentKeys.$inferSelect;
+
+/**
+ * Nansen trading endpoints (Mirror: orders, leverage, execute, builder fee, meta). Their calls are
+ * logged for provenance but never served publicly: they reveal when real-money trades happen.
+ */
+export const TRADING_PATH_PREFIX = '/api/v1/perp/';
 
 export interface Repos {
   /** Runs fn inside one SQLite transaction (rolled back if fn throws). */
@@ -116,6 +122,8 @@ export interface Repos {
   nansenCalls: {
     insert(r: CallRecord): void;
     recent(limit: number): NansenCallRow[];
+    /** Newest first, without trading calls (paths under TRADING_PATH_PREFIX): the public log. */
+    recentPublic(limit: number): NansenCallRow[];
     get(id: string): NansenCallRow | undefined;
   };
   mirrorOrders: {
@@ -471,6 +479,14 @@ export function createRepos({ sqlite, db }: Db): Repos {
       },
       recent: (limit) =>
         db.select().from(nansenCalls).orderBy(desc(nansenCalls.at)).limit(limit).all(),
+      recentPublic: (limit) =>
+        db
+          .select()
+          .from(nansenCalls)
+          .where(notLike(nansenCalls.path, `${TRADING_PATH_PREFIX}%`))
+          .orderBy(desc(nansenCalls.at))
+          .limit(limit)
+          .all(),
       get: (id) => db.select().from(nansenCalls).where(eq(nansenCalls.id, id)).get(),
     },
 

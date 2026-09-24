@@ -8,10 +8,10 @@ import { createRepos, type Repos } from './db/repos';
 import { EventBus } from './events';
 import { createCreditMonitor } from './ingest/credits';
 import { createIdleGate, type IdleGate } from './ingest/idle';
-import { refreshMood } from './ingest/mood';
+import { MOOD_LAST_KEY, refreshMood } from './ingest/mood';
 import { createRefresher, type Refresher } from './ingest/refresh';
 import { createScheduler, type Scheduler } from './ingest/scheduler';
-import { runScout } from './ingest/scout';
+import { runScout, SCOUT_LAST_KEY } from './ingest/scout';
 import type { Logger } from './log';
 import { createMarketLoop } from './market/loop';
 import { MarketState, runtimeFromRow } from './market/state';
@@ -196,6 +196,10 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const live = config.mode === 'live';
   const credits = live ? createCreditMonitor({ nansen, state, repos, bus, clock, log }) : null;
+  const lastRunAt = (key: string): number | null => {
+    const v = Number(repos.kv.get(key) ?? Number.NaN);
+    return Number.isFinite(v) ? v : null;
+  };
   const scheduler = createScheduler({
     state,
     refresher,
@@ -207,6 +211,7 @@ export function createEngine(deps: EngineDeps): Engine {
     mood: live
       ? async () => {
           await refreshMood({ nansen, state, clock, log });
+          repos.kv.set(MOOD_LAST_KEY, String(state.moodAt));
           bus.emit({ t: 'mood', at: clock.now() });
         }
       : null,
@@ -224,6 +229,9 @@ export function createEngine(deps: EngineDeps): Engine {
             params,
           })
       : null,
+    lastRun: live
+      ? { scout: lastRunAt(SCOUT_LAST_KEY), mood: lastRunAt(MOOD_LAST_KEY) }
+      : undefined,
   });
   scheduler.start(now);
   const idle = createIdleGate(state, bus, (t) => scheduler.wake(t), now);

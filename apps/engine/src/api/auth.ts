@@ -22,6 +22,17 @@ export function sendError(
   return reply.code(status).send({ error, message });
 }
 
+/** Wallet-link endpoints and the Mirror agent registration: requests per minute per IP. */
+export const AUTH_PER_MINUTE = 10;
+
+export const rateLimited = (reply: FastifyReply): FastifyReply =>
+  sendError(
+    reply,
+    429,
+    'RATE_LIMITED',
+    `at most ${AUTH_PER_MINUTE} requests per minute from this address`,
+  );
+
 /**
  * Resolves the caller or answers 401; handlers return early on null. An authenticated write
  * (any method but GET/HEAD) counts as activity: it wakes the engine from IDLE and keeps it awake

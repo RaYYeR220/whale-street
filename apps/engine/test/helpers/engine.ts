@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../../src/app';
 import { loadConfig } from '../../src/config';
-import { openDb } from '../../src/db/index';
+import { type Db, openDb } from '../../src/db/index';
 import { createEngine, type Engine } from '../../src/engine';
 import { silentLogger } from '../../src/log';
 import type { TradingPort } from '../../src/ports';
@@ -25,6 +25,8 @@ export async function testEngine(
     trading?: TradingPort | null;
     /** Extra settings (e.g. TRUST_PROXY) passed to loadConfig. */
     env?: Record<string, string>;
+    /** A pre-seeded database (default: a fresh in-memory one). */
+    db?: Db;
   } = {},
 ): Promise<TestEngine> {
   const clock = new FakeClock();
@@ -42,7 +44,7 @@ export async function testEngine(
   );
   const engine = createEngine({
     config,
-    db: openDb(':memory:'),
+    db: o.db ?? openDb(':memory:'),
     nansen,
     trading: o.trading ?? null,
     hl: { feed, info },

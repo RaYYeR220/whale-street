@@ -172,6 +172,27 @@ describe('mirror', () => {
     });
   });
 
+  it('caches the builder-fee status per wallet for 60 s (failures for 10 s)', async () => {
+    const { trading, token } = await setup();
+    const get = () => t.app.inject({ url: '/api/mirror/builder-fee', headers: bearer(token) });
+    const lookups = () => trading.calls.filter((c) => c.method === 'builderFee').length;
+    expect((await get()).json()).toMatchObject({ approved: true });
+    expect((await get()).json()).toMatchObject({ approved: true });
+    expect(lookups()).toBe(1);
+    t.clock.advance(60_000);
+    await get();
+    expect(lookups()).toBe(2);
+    t.clock.advance(60_000);
+    trading.builderFail = { status: 500, error: 'HTTP 500: builder lookup failed' };
+    expect((await get()).statusCode).toBe(502);
+    expect((await get()).statusCode).toBe(502);
+    expect(lookups()).toBe(3);
+    trading.builderFail = null;
+    t.clock.advance(10_000);
+    expect((await get()).statusCode).toBe(200);
+    expect(lookups()).toBe(4);
+  });
+
   it('is unavailable in REPLAY and requires a linked wallet for the agent', async () => {
     const { e, master, agent, player } = await setup({ mode: 'replay' });
     expect(e.mirror.registerAgent(player.id, master.address, agent.address)).toMatchObject({

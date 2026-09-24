@@ -5,6 +5,7 @@ import {
   createScheduler,
   HEARTBEAT_MS,
   MOOD_EVERY_MS,
+  SCOUT_EVERY_MS,
   TRIGGER_DEBOUNCE_MS,
 } from '../src/ingest/scheduler';
 import { silentLogger } from '../src/log';
@@ -15,7 +16,7 @@ const A = '0x00000000000000000000000000000000000000a1' as const;
 const B = '0x00000000000000000000000000000000000000b2' as const;
 const OTHER = '0x00000000000000000000000000000000000000ff';
 
-function setup() {
+function setup(lastRun?: { scout: number | null; mood: number | null }) {
   const w = makeWorld();
   const feed = new FakeFeed();
   const refresh = vi.fn<Refresher['refresh']>(async () => ({ kind: 'ok' }));
@@ -33,6 +34,7 @@ function setup() {
     mood,
     scout,
     track: (p) => tracked.push(p),
+    ...(lastRun ? { lastRun } : {}),
   });
   const a = addCompany(w, { id: A, ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
   const b = addCompany(w, { id: B, ticker: 'BBB', positions: [pos('ETH', -3, 3_000)] });
@@ -119,6 +121,37 @@ describe('scheduler', () => {
     w.state.flags.idle = true;
     tickFor(MOOD_EVERY_MS, 60_000);
     expect(mood.mock.calls.length).toBe(2);
+  });
+});
+
+describe('scheduler boot seeding', () => {
+  it('seeds scout and mood from their last runs: a recent run means no job at boot', async () => {
+    const now = makeWorld().clock.now();
+    const { credits, mood, scout, scheduler, w, tickFor, flush } = setup({
+      scout: now - 60 * 60_000,
+      mood: now - 5 * 60_000,
+    });
+    scheduler.onTick(w.clock.now());
+    await flush();
+    expect([credits.mock.calls.length, mood.mock.calls.length, scout.mock.calls.length]).toEqual([
+      1, 0, 0,
+    ]);
+    tickFor(MOOD_EVERY_MS - 5 * 60_000 - 60_000, 60_000);
+    expect(mood.mock.calls.length).toBe(0);
+    tickFor(60_000, 60_000);
+    expect(mood.mock.calls.length).toBe(1);
+    await flush();
+    tickFor(SCOUT_EVERY_MS - 60 * 60_000 - MOOD_EVERY_MS + 5 * 60_000 - 60_000, 60_000);
+    expect(scout.mock.calls.length).toBe(0);
+    tickFor(60_000, 60_000);
+    expect(scout.mock.calls.length).toBe(1);
+    await flush();
+  });
+
+  it('first-ever boot (no last run) still runs both at once', () => {
+    const { mood, scout, scheduler, w } = setup({ scout: null, mood: null });
+    scheduler.onTick(w.clock.now());
+    expect([mood.mock.calls.length, scout.mock.calls.length]).toEqual([1, 1]);
   });
 });
 

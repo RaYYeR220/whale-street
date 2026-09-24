@@ -135,6 +135,24 @@ describe('REST', () => {
     });
     expect((await t.app.inject({ url: '/api/provenance' })).json().calls).toHaveLength(1);
     expect((await t.app.inject({ url: '/api/provenance/nope' })).statusCode).toBe(404);
+    // Trading calls (Mirror) stay in the DB but are never public.
+    t.engine.repos.nansenCalls.insert({
+      id: 'nc_trade',
+      method: 'POST',
+      path: '/api/v1/perp/order',
+      requestHash: 'rq2',
+      status: 200,
+      creditsUsed: 0,
+      latencyMs: 30,
+      at: t.clock.now() + 1,
+      responseHash: 'rs2',
+      error: null,
+      attempts: 1,
+    });
+    expect(t.engine.repos.nansenCalls.get('nc_trade')).toBeDefined();
+    const calls = (await t.app.inject({ url: '/api/provenance' })).json().calls;
+    expect(calls.map((c: { id: string }) => c.id)).toEqual(['nc_1']);
+    expect((await t.app.inject({ url: '/api/provenance/nc_trade' })).statusCode).toBe(404);
   });
 
   it('IPO desk end to end: apply, poll, list verdicts', async () => {
@@ -293,6 +311,30 @@ describe('REST', () => {
     t.engine.state.setMarks({}, t.clock.now());
     t.engine.tick();
     expect((await order()).statusCode).toBe(200);
+  });
+
+  it('rate-limits /api/auth/nonce, /api/auth/link and /api/mirror/agent to 10 per minute per IP', async () => {
+    t = await testEngine();
+    const { token } = await signup();
+    const hit = (method: 'GET' | 'POST', url: string) =>
+      t.app.inject({
+        method,
+        url,
+        headers: bearer(token),
+        payload: method === 'POST' ? {} : undefined,
+      });
+    for (const [method, url] of [
+      ['GET', '/api/auth/nonce'],
+      ['POST', '/api/auth/link'],
+      ['POST', '/api/mirror/agent'],
+    ] as const) {
+      for (let i = 0; i < 10; i++) expect((await hit(method, url)).statusCode).not.toBe(429);
+      const limited = await hit(method, url);
+      expect(limited.statusCode).toBe(429);
+      expect(limited.json()).toMatchObject({ error: 'RATE_LIMITED' });
+    }
+    t.clock.advance(60_000);
+    expect((await hit('GET', '/api/auth/nonce')).statusCode).toBe(200);
   });
 
   it('TRUST_PROXY=0 (default): a spoofed X-Forwarded-For does not change the rate key', async () => {

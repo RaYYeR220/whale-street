@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { HOUR_MS, MINUTE_MS } from '../src/dates';
+import { openDb } from '../src/db/index';
+import { createRepos } from '../src/db/repos';
 import { createCreditMonitor } from '../src/ingest/credits';
-import { refreshMood, topCoinsByNotional } from '../src/ingest/mood';
-import { runScout, SCOUT_MAX_EVALUATIONS } from '../src/ingest/scout';
+import { MOOD_LAST_KEY, refreshMood, topCoinsByNotional } from '../src/ingest/mood';
+import { runScout, SCOUT_LAST_KEY, SCOUT_MAX_EVALUATIONS } from '../src/ingest/scout';
 import { silentLogger } from '../src/log';
 import { deniedKey } from '../src/services/ipo';
 import { createListingService } from '../src/services/listing';
+import { testEngine } from './helpers/engine';
+import { T0 } from './helpers/fake-clock';
 import { FakeInfo } from './helpers/fake-hl';
 import { FakeNansen, fail } from './helpers/fake-nansen';
 import { programCleanTrader, programHedgedTrader } from './helpers/traders';
@@ -143,5 +148,31 @@ describe('scout', () => {
     addCompany(b.w, { id: addr(1), ticker: 'AAA' });
     expect(await b.run()).toEqual({ evaluated: 0, listed: [] });
     expect(b.nansen.calls).toHaveLength(0);
+  });
+});
+
+describe('boot-time job seeding', () => {
+  it('first boot runs scout and mood (recording mood:last); a restart after recent runs calls neither', async () => {
+    const first = await testEngine({ mode: 'live' });
+    addCompany(first.engine, { id: addr(1), ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
+    first.engine.tick();
+    await first.engine.settle();
+    expect(first.nansen.count('perpLeaderboard')).toBe(1);
+    expect(first.nansen.count('positionIntelligence')).toBe(1);
+    expect(first.engine.repos.kv.get(MOOD_LAST_KEY)).toBe(String(first.clock.now()));
+    await first.app.close();
+
+    const db = openDb(':memory:');
+    const repos = createRepos(db);
+    repos.kv.set(SCOUT_LAST_KEY, String(T0 - HOUR_MS));
+    repos.kv.set(MOOD_LAST_KEY, String(T0 - 5 * MINUTE_MS));
+    const restart = await testEngine({ mode: 'live', db });
+    addCompany(restart.engine, { id: addr(1), ticker: 'AAA', positions: [pos('BTC', 1, 60_000)] });
+    restart.engine.tick();
+    await restart.engine.settle();
+    expect(restart.nansen.count('perpLeaderboard')).toBe(0);
+    expect(restart.nansen.count('smartMoneyPerpTrades')).toBe(0);
+    expect(restart.nansen.count('positionIntelligence')).toBe(0);
+    await restart.app.close();
   });
 });

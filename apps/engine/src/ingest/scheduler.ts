@@ -29,6 +29,11 @@ export interface SchedulerDeps {
   scout: Job | null;
   /** Registers background work so tests and shutdown can await it. */
   track: (p: Promise<unknown>) => void;
+  /**
+   * Engine-clock times of the last scout / mood runs (persisted in kv): a restart schedules the
+   * next run a full period after them instead of spending credits at every boot. null = never.
+   */
+  lastRun?: { scout: number | null; mood: number | null };
 }
 
 export interface Scheduler {
@@ -44,6 +49,10 @@ export interface Scheduler {
    */
   reset(now: number): void;
 }
+
+/** Due time one period after the last run (at most one period from now); now when never run. */
+const afterLast = (last: number | null, every: number, now: number): number =>
+  last === null ? now : Math.min(last, now) + every;
 
 export function createScheduler(d: SchedulerDeps): Scheduler {
   const triggerDue = new Map<string, number>();
@@ -83,8 +92,8 @@ export function createScheduler(d: SchedulerDeps): Scheduler {
     start(now) {
       next.coins = now;
       next.credits = now;
-      next.mood = now;
-      next.scout = now;
+      next.mood = afterLast(d.lastRun?.mood ?? null, MOOD_EVERY_MS, now);
+      next.scout = afterLast(d.lastRun?.scout ?? null, SCOUT_EVERY_MS, now);
       unsubs.push(d.feed.onMids((m) => d.state.setMarks(m, d.clock.now())));
       unsubs.push(d.feed.onTrades(onTrades));
     },

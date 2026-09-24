@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { MINUTE_MS } from '../dates';
 import type { Engine } from '../engine';
 import type { MirrorError } from '../services/mirror';
-import { requirePlayer, sendError } from './auth';
+import { AUTH_PER_MINUTE, rateLimited, requirePlayer, sendError } from './auth';
 import { RateGate } from './rate';
 
 const AgentBody = z.object({ masterAddress: z.string().max(64), agentAddress: z.string().max(64) });
@@ -30,6 +30,7 @@ const fail = (reply: FastifyReply, e: MirrorError) =>
 
 export function registerMirrorRoutes(app: FastifyInstance, e: Engine): void {
   const prepares = new RateGate(10, MINUTE_MS, () => e.wallNow());
+  const agents = new RateGate(AUTH_PER_MINUTE, MINUTE_MS, () => e.wallNow());
 
   app.get('/api/mirror/status', async () => ({
     available: e.mirror.available(),
@@ -44,6 +45,7 @@ export function registerMirrorRoutes(app: FastifyInstance, e: Engine): void {
   });
 
   app.post('/api/mirror/agent', async (req, reply) => {
+    if (!agents.allow(req.ip)) return rateLimited(reply);
     const player = requirePlayer(e, req, reply);
     if (!player) return reply;
     const body = AgentBody.safeParse(req.body ?? {});

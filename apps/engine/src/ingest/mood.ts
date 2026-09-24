@@ -4,6 +4,8 @@ import type { MarketState } from '../market/state';
 import type { NansenPort } from '../ports';
 
 export const MOOD_COINS = 6;
+/** kv key: engine-clock time of the last street-mood refresh (seeds the schedule at boot). */
+export const MOOD_LAST_KEY = 'mood:last';
 
 /** Coins with the largest total notional across listed companies. */
 export function topCoinsByNotional(state: MarketState, n: number = MOOD_COINS): string[] {

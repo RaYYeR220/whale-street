@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { addCompany } from './helpers/world';
 import { inbox, send } from './helpers/ws';
@@ -76,6 +76,65 @@ describe('WS gateway', () => {
     const filing = await box.waitFor((m) => m.t === 'filing');
     expect(filing.filing).toMatchObject({ kind: 'HALT', ticker: 'AAA', detail: 'test' });
     ws.terminate();
+  });
+
+  it('closes a connection that sends more than 20 messages per second (1008)', async () => {
+    t = await testEngine();
+    const { ws, box } = await connect();
+    /** n messages in one burst; the last (hello) is answered once the server processed them all. */
+    const burst = async (n: number) => {
+      for (let i = 0; i < n - 1; i++) send(ws, { op: 'unsub', channels: ['market'] });
+      send(ws, { op: 'hello' });
+      await box.waitFor((m) => m.t === 'hello');
+      box.clear();
+    };
+    await burst(20);
+    t.clock.advance(1_000);
+    await burst(20); // a new second: a fresh budget
+    expect(ws.readyState).toBe(1);
+    const closed = new Promise<number>((resolve) => ws.on('close', (code) => resolve(code)));
+    for (let i = 0; i < 21; i++) send(ws, { op: 'unsub', channels: ['market'] });
+    expect(await closed).toBe(1008);
+  });
+
+  it('accepts at most 10 connections per IP; the 11th is closed with 1008', async () => {
+    t = await testEngine();
+    const sockets = [];
+    for (let i = 0; i < 10; i++) sockets.push((await connect()).ws);
+    expect(t.engine.status().viewers).toBe(10);
+    const extra = await t.app.injectWS('/ws');
+    const code = await new Promise<number>((resolve) => extra.on('close', (c) => resolve(c)));
+    expect(code).toBe(1008);
+    expect(t.engine.status().viewers).toBe(10);
+    sockets[0]?.terminate();
+    for (let i = 0; i < 100 && t.engine.status().viewers > 9; i++)
+      await new Promise((r) => setTimeout(r, 10));
+    const again = await connect();
+    expect(t.engine.status().viewers).toBe(10);
+    for (const s of [...sockets, again.ws]) s.terminate();
+  });
+
+  it('computes the leaderboard frame at most once per second, shared across subscribers', async () => {
+    t = await testEngine();
+    const spy = vi.spyOn(t.engine.exchange, 'leaderboard');
+    const a = await connect();
+    const b = await connect();
+    send(a.ws, { op: 'sub', channels: ['leaderboard'] });
+    send(b.ws, { op: 'sub', channels: ['leaderboard'] });
+    await a.box.waitFor((m) => m.t === 'leaderboard');
+    await b.box.waitFor((m) => m.t === 'leaderboard');
+    send(a.ws, { op: 'unsub', channels: ['leaderboard'] });
+    send(a.ws, { op: 'sub', channels: ['leaderboard'] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(a.box.msgs.filter((m) => m.t === 'leaderboard')).toHaveLength(2);
+    expect(spy).toHaveBeenCalledTimes(1);
+    t.clock.advance(1_000);
+    send(b.ws, { op: 'unsub', channels: ['leaderboard'] });
+    send(b.ws, { op: 'sub', channels: ['leaderboard'] });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(spy).toHaveBeenCalledTimes(2);
+    a.ws.terminate();
+    b.ws.terminate();
   });
 
   it('counts viewers for idle gating and answers bad messages with an error frame', async () => {

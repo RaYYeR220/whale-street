@@ -53,6 +53,9 @@ export const RECONCILE_INTERVAL_MS = 15_000;
  */
 export const CLOSE_GRACE_MS = 5 * MINUTE_MS;
 const META_TTL_MS = HOUR_MS;
+/** A wallet's builder-fee status is re-read from Nansen at most this often (failures: 10 s). */
+export const BUILDER_STATUS_TTL_MS = MINUTE_MS;
+const BUILDER_STATUS_FAILURE_TTL_MS = 10_000;
 /** Stop-loss trigger may differ from the policy price by this fraction (HL tick rounding). */
 const STOP_TOLERANCE = 0.01;
 /** size × limit price may exceed maxNotionalUsd by the market slippage plus this rounding margin. */
@@ -326,6 +329,11 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
   let meta: { at: number; assets: Map<string, PerpAsset> } | null = null;
   let builder: { at: number; address: string } | null = null;
   const lastReconcile = new Map<string, number>();
+  /** Builder-fee status per wallet (lowercase): the status route must not call Nansen per request. */
+  const builderStatuses = new Map<
+    string,
+    { until: number; result: { ok: true; status: BuilderFeeStatus } | MirrorError }
+  >();
 
   const available = () => d.config.mode === 'live' && d.trading !== null;
 
@@ -499,11 +507,23 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
         return err(503, 'TRADING_UNAVAILABLE', 'mirror trading is disabled in this mode');
       const wallet = d.repos.players.get(playerId)?.walletAddress;
       if (!wallet) return err(403, 'NO_WALLET', 'link a wallet first');
+      const key = wallet.toLowerCase();
+      const now = d.clock.now();
+      const cached = builderStatuses.get(key);
+      if (cached && now < cached.until) return cached.result;
       const r = await trading.builderFee(wallet as Address);
-      if (!r.ok)
-        return r.status === 451 ? regionBlocked() : err(502, 'UPSTREAM_FAILED', redact(r.error));
-      builder = { at: d.clock.now(), address: r.value.builderAddress.toLowerCase() };
-      return { ok: true, status: r.value };
+      const result: { ok: true; status: BuilderFeeStatus } | MirrorError = r.ok
+        ? { ok: true, status: r.value }
+        : r.status === 451
+          ? regionBlocked()
+          : err(502, 'UPSTREAM_FAILED', redact(r.error));
+      if (r.ok) builder = { at: now, address: r.value.builderAddress.toLowerCase() };
+      for (const [k, v] of builderStatuses) if (v.until <= now) builderStatuses.delete(k);
+      builderStatuses.set(key, {
+        until: now + (r.ok ? BUILDER_STATUS_TTL_MS : BUILDER_STATUS_FAILURE_TTL_MS),
+        result,
+      });
+      return result;
     },
 
     registerAgent(playerId, masterAddress, agentAddress) {

@@ -11,6 +11,8 @@ import type { ListingService } from '../services/listing';
 import { gatherEvidence } from './evidence';
 
 export const SCOUT_MAX_EVALUATIONS = 5;
+/** kv key: engine-clock time of the last completed scout run (seeds the schedule at boot). */
+export const SCOUT_LAST_KEY = 'scout:last';
 
 export interface ScoutDeps {
   nansen: NansenPort;
@@ -85,7 +87,7 @@ export async function runScout(d: ScoutDeps): Promise<ScoutResult> {
       d.repos.kv.set(deniedKey(address), String(now));
     }
   }
-  d.repos.kv.set('scout:last', String(now));
+  d.repos.kv.set(SCOUT_LAST_KEY, String(now));
   d.log.info('scout run', { evaluated: result.evaluated, listed: result.listed.length });
   return result;
 }
