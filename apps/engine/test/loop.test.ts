@@ -1,6 +1,6 @@
 import { multiplier } from '@whale-street/core';
 import { describe, expect, it, vi } from 'vitest';
-import { createMarketLoop } from '../src/market/loop';
+import { createMarketLoop, MARKS_MISSING_HALT_MS } from '../src/market/loop';
 import { runtimeFromRow } from '../src/market/state';
 import { addCompany, makeWorld, pos } from './helpers/world';
 
@@ -141,6 +141,62 @@ describe('market loop', () => {
     loop.tick(w.clock.now());
     expect(a.status).toBe('ACTIVE');
     expect(w.repos.filings.recent(5)).toEqual([]);
+  });
+
+  it('halts a company after 60 s without a mark for a held coin and resumes when the mark returns', () => {
+    const { w, loop } = setup();
+    const a = addCompany(w, {
+      id: A,
+      ticker: 'AAA',
+      positions: [pos('BTC', 1, 100), pos('XYZ', 10, 5)],
+      accountValue: 10_000,
+    });
+    const b = addCompany(w, {
+      id: B,
+      ticker: 'BBB',
+      positions: [pos('BTC', 1, 100)],
+      accountValue: 10_000,
+    });
+    const tickAfter = (ms: number, marks: Record<string, number> = { BTC: 100 }) => {
+      w.clock.advance(ms);
+      w.state.setMarks(marks, w.clock.now());
+      loop.tick(w.clock.now());
+    };
+    tickAfter(0);
+    tickAfter(MARKS_MISSING_HALT_MS);
+    expect(a.status).toBe('ACTIVE');
+    tickAfter(1_000);
+    expect(a.status).toBe('HALTED');
+    expect(a.haltKind).toBe('data');
+    expect(a.haltReason).toBe('no mark for XYZ');
+    expect(b.status).toBe('ACTIVE');
+    tickAfter(30_000);
+    expect(a.status).toBe('HALTED');
+    tickAfter(1_000, { BTC: 100, XYZ: 5 });
+    expect(a.status).toBe('ACTIVE');
+    expect(
+      w.repos.filings
+        .recent(10)
+        .map((f) => `${f.kind}:${f.detail}`)
+        .reverse(),
+    ).toEqual(['HALT:no mark for XYZ', 'RESUME:marks returned']);
+  });
+
+  it('leaves missing marks to the marks-delayed state while every mark is stale', () => {
+    const { w, loop } = setup();
+    const a = addCompany(w, {
+      id: A,
+      ticker: 'AAA',
+      positions: [pos('XYZ', 10, 5)],
+      accountValue: 10_000,
+    });
+    w.state.setMarks({ BTC: 100 }, w.clock.now());
+    for (let i = 0; i < 12; i++) {
+      w.clock.advance(10_000);
+      loop.tick(w.clock.now());
+    }
+    expect(w.state.flags.marksDelayed).toBe(true);
+    expect(a.status).toBe('ACTIVE');
   });
 
   it('persisted rows round-trip into runtime', () => {

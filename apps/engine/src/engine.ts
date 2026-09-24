@@ -150,7 +150,7 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const filings = createFilingService(repos, state, bus);
   const statusOps = createStatusOps(repos, filings);
-  const bankruptcy = createBankruptcyService({ repos, filings, statusOps, bus, params });
+  const bankruptcy = createBankruptcyService({ repos, filings, statusOps, bus, params, log });
   const refresher = createRefresher({
     state,
     filings,
@@ -177,7 +177,7 @@ export function createEngine(deps: EngineDeps): Engine {
     wallNow,
   });
   const players = createPlayersService({ repos, clock, origins: config.corsOrigins, wallNow });
-  const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays });
+  const seasons = createSeasonService({ repos, state, bus, seasonDays: config.seasonDays, log });
   seasons.ensure(now);
   const exchange = createExchange({ state, repos, bus, clock, seasons, params });
   const mirror = createMirrorService({

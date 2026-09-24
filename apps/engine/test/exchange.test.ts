@@ -1,5 +1,6 @@
 import { multiplier, PARAMS } from '@whale-street/core';
 import { describe, expect, it } from 'vitest';
+import { silentLogger } from '../src/log';
 import { createExchange } from '../src/services/exchange';
 import { createPlayersService } from '../src/services/players';
 import { createSeasonService } from '../src/services/seasons';
@@ -137,5 +138,37 @@ describe('seasons', () => {
       cash: PARAMS.seasonStartCash,
       holdings: [],
     });
+  });
+
+  it('never settles a holding at a made-up price: a company missing from state is skipped and logged', () => {
+    const w = makeWorld();
+    const errors: Array<{ msg: string; data: unknown }> = [];
+    const log = {
+      ...silentLogger,
+      error: (msg: string, data?: unknown) => errors.push({ msg, data }),
+    };
+    const seasons = createSeasonService({ ...w, seasonDays: 7, log });
+    const exchange = createExchange({ ...w, seasons });
+    const players = createPlayersService(w);
+    const alice = players.create('human').player;
+    const a = addCompany(w, { id: A, ticker: 'AAA' });
+    addCompany(w, { id: B, ticker: 'BBB' });
+    w.clock.advance(61_000);
+    seasons.ensure(w.clock.now());
+    exchange.placeOrder(alice.id, { ticker: 'AAA', side: 'BUY', qty: 10 });
+    exchange.placeOrder(alice.id, { ticker: 'BBB', side: 'BUY', qty: 10 });
+    const cash = exchange.portfolio(alice.id).cash;
+    const priceA = w.state.price(a);
+    const held = w.repos.holdings.forSeason(1).find((h) => h.companyId === B);
+    w.state.companies.delete(B);
+    w.clock.advance(7 * 86_400_000);
+
+    expect(seasons.maybeRollover(w.clock.now())).toBe(true);
+    // The known company settles at its share price; the missing one is carried as it was.
+    expect(w.repos.holdings.forSeason(1)).toEqual([held]);
+    const settles = w.repos.trades.recent(10).filter((t) => t.side === 'SETTLE');
+    expect(settles.map((t) => t.companyId)).toEqual([A]);
+    expect(w.repos.seasonResults.forSeason(1)[0]?.netWorth).toBeCloseTo(cash + 10 * priceA, 6);
+    expect(errors).toMatchObject([{ data: { company: B } }]);
   });
 });

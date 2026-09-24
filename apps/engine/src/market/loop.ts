@@ -1,6 +1,7 @@
 import {
   computeHp,
   decayPool,
+  isValidPx,
   marginCallCrossed,
   PARAMS,
   type Params,
@@ -15,6 +16,16 @@ import type { StatusOps } from './status';
 
 /** NAV freezes (never extrapolates) when the last HL mids are older than this. */
 export const MARKS_DELAY_MS = 10_000;
+/**
+ * A company holding a coin HL has no mid for (e.g. a HIP-3 position opened after listing) cannot
+ * be valued: after this long it is HALTED (kind `data`, "no mark for <COIN>") until the mark returns.
+ */
+export const MARKS_MISSING_HALT_MS = 60_000;
+const NO_MARK_FOR = 'no mark for ';
+
+/** A HALT for a held coin without a mark: only the market loop lifts it (when the mark returns). */
+export const isMissingMarkHalt = (rt: CompanyRuntime): boolean =>
+  rt.status === 'HALTED' && rt.haltKind === 'data' && (rt.haltReason ?? '').startsWith(NO_MARK_FOR);
 
 export interface LoopDeps {
   state: MarketState;
@@ -35,6 +46,26 @@ export function createMarketLoop(d: LoopDeps): MarketLoop {
   const params = d.params ?? PARAMS;
   const { state } = d;
   let last: number | null = null;
+  /** Per company: when a held coin was first seen without a mark (engine clock). */
+  const markMissingSince = new Map<string, number>();
+
+  /** Not called while every mark is stale: the marks-delayed state covers a feed outage. */
+  const checkMarks = (rt: CompanyRuntime, now: number) => {
+    const coin = rt.nav.snapshot.positions.find((p) => !isValidPx(state.marks[p.coin]))?.coin;
+    if (coin === undefined) {
+      markMissingSince.delete(rt.id);
+      if (isMissingMarkHalt(rt)) d.statusOps.resume(rt, now, 'marks returned');
+      return;
+    }
+    let since = markMissingSince.get(rt.id);
+    // A REPLAY loop wrap rewinds the clock: never count from the previous loop's future.
+    if (since === undefined || since > now) {
+      since = now;
+      markMissingSince.set(rt.id, since);
+    }
+    if (rt.status === 'ACTIVE' && now - since > MARKS_MISSING_HALT_MS)
+      d.statusOps.halt(rt, 'data', `${NO_MARK_FOR}${coin}`, now);
+  };
 
   const checkHalts = (rt: CompanyRuntime, now: number) => {
     const f = state.flags;
@@ -83,6 +114,7 @@ export function createMarketLoop(d: LoopDeps): MarketLoop {
         }
         rt.hp = hp;
 
+        if (!delayed) checkMarks(rt, now);
         if (rt.status === 'ACTIVE') checkHalts(rt, now);
         d.autoCover?.(rt, now);
 

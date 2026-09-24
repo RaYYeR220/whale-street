@@ -12,6 +12,7 @@ import type { HlInfo } from '@whale-street/hl';
 import type { Clock } from '../clock';
 import { utcDate } from '../dates';
 import type { Logger } from '../log';
+import { isMissingMarkHalt } from '../market/loop';
 import type { CompanyRuntime, MarketState } from '../market/state';
 import type { StatusOps } from '../market/status';
 import type { NansenPort } from '../ports';
@@ -135,11 +136,11 @@ export function createRefresher(d: RefreshDeps): Refresher {
     rt.lastSnapshotAt = now;
     rt.pendingTriggerAt = null;
 
-    if (diff.bankrupt) {
-      d.bankruptcy.declare(rt, now);
+    // A settlement that failed earlier is retried here (the liquidation is not in this diff).
+    if ((diff.bankrupt || d.bankruptcy.pending(rt.id)) && d.bankruptcy.declare(rt, now))
       return { kind: 'ok' };
-    }
-    if (rt.status === 'HALTED' && rt.haltKind === 'data')
+    // A missing-mark halt is lifted by the market loop once the mark returns, not by a snapshot.
+    if (rt.status === 'HALTED' && rt.haltKind === 'data' && !isMissingMarkHalt(rt))
       d.statusOps.resume(rt, now, 'fresh snapshot received');
     if (next.accountValue < params.minEquityHaltUsd) {
       d.statusOps.halt(rt, 'equity', 'equity below $1,000', now);

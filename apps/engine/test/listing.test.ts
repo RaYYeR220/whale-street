@@ -1,6 +1,7 @@
 import { companyIdentity, multiplier } from '@whale-street/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PositionsResult } from '../src/ingest/positions';
+import { silentLogger } from '../src/log';
 import { createBankruptcyService } from '../src/services/bankruptcy';
 import { createListingService, pickTicker } from '../src/services/listing';
 import { FakeNansen, fail } from './helpers/fake-nansen';
@@ -158,5 +159,56 @@ describe('bankruptcy service', () => {
     expect(notified.sort()).toEqual(['long', 'short']);
     bankruptcy.declare(rt, w.clock.now());
     expect(w.repos.filings.recent(10).filter((f) => f.kind === 'DELISTING')).toHaveLength(1);
+  });
+
+  it('restores the company when the settlement transaction fails, then settles on the next attempt', () => {
+    const w = makeWorld();
+    const errors: string[] = [];
+    const log = { ...silentLogger, error: (msg: string) => errors.push(msg) };
+    const bankruptcy = createBankruptcyService({ ...w, log });
+    const rt = addCompany(w, { id: A, ticker: 'AAA' });
+    rt.nav = { ...rt.nav, nav: 20 };
+    rt.pool = { x: 4_000, y: 6_000, l0: 5_000 };
+    const pool = rt.pool;
+    w.repos.seasons.insert({
+      id: 1,
+      startedAt: 0,
+      endsAt: Number.MAX_SAFE_INTEGER,
+      status: 'ACTIVE',
+    });
+    w.repos.portfolios.upsert({ playerId: 'long', seasonId: 1, cash: 100 });
+    w.repos.holdings.upsert({
+      playerId: 'long',
+      seasonId: 1,
+      companyId: A,
+      longQty: 10,
+      longCost: 1_000,
+      shortQty: 0,
+      shortCollateral: 0,
+    });
+    // The DB fails half-way through the settlement (after the cash and holding writes).
+    const insert = vi.spyOn(w.repos.trades, 'insert').mockImplementation(() => {
+      throw new Error('disk I/O error');
+    });
+
+    expect(bankruptcy.declare(rt, w.clock.now())).toBe(false);
+    expect(rt.status).toBe('ACTIVE');
+    expect(rt.pool).toBe(pool);
+    expect(rt.delistedAt).toBeNull();
+    expect(rt.cooldownUntil).toBeNull();
+    expect(bankruptcy.pending(A)).toBe(true);
+    expect(errors).toHaveLength(1);
+    expect(w.repos.companies.get(A)?.status).toBe('ACTIVE');
+    expect(w.repos.portfolios.get('long', 1)?.cash).toBe(100);
+    expect(w.repos.holdings.forCompany(1, A)).toHaveLength(1);
+    expect(w.repos.filings.recent(10)).toEqual([]);
+    expect(w.events.filter((e) => e.t === 'player' || e.t === 'filing')).toEqual([]);
+
+    insert.mockRestore();
+    expect(bankruptcy.declare(rt, w.clock.now())).toBe(true);
+    expect(rt.status).toBe('DELISTED');
+    expect(bankruptcy.pending(A)).toBe(false);
+    expect(w.repos.portfolios.get('long', 1)?.cash).toBeCloseTo(100 + 10 * 20, 8);
+    expect(w.repos.filings.recent(10).map((f) => f.kind)).toEqual(['DELISTING']);
   });
 });

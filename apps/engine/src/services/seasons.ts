@@ -2,6 +2,7 @@ import { multiplier, settleHolding } from '@whale-street/core';
 import { DAY_MS } from '../dates';
 import type { Repos, SeasonRow } from '../db/repos';
 import type { EventBus } from '../events';
+import { type Logger, silentLogger } from '../log';
 import type { MarketState } from '../market/state';
 
 export interface SeasonService {
@@ -16,8 +17,10 @@ export function createSeasonService(d: {
   state: MarketState;
   bus: EventBus;
   seasonDays: number;
+  log?: Logger;
 }): SeasonService {
   const lengthMs = d.seasonDays * DAY_MS;
+  const log = d.log ?? silentLogger;
 
   const create = (id: number, now: number): SeasonRow => {
     const row: SeasonRow = { id, startedAt: now, endsAt: now + lengthMs, status: 'ACTIVE' };
@@ -43,7 +46,16 @@ export function createSeasonService(d: {
         );
         for (const h of d.repos.holdings.forSeason(season.id)) {
           const rt = d.state.get(h.companyId);
-          const price = rt ? d.state.price(rt) : 0;
+          if (!rt) {
+            // No price for it: never settle at a made-up one. The holding row stays as it is.
+            log.error('season rollover: company not in memory; holding left unsettled', {
+              company: h.companyId,
+              player: h.playerId,
+              season: season.id,
+            });
+            continue;
+          }
+          const price = d.state.price(rt);
           const delta = settleHolding(h, price);
           cash.set(h.playerId, (cash.get(h.playerId) ?? 0) + delta);
           d.repos.holdings.remove(h.playerId, season.id, h.companyId);
@@ -55,9 +67,9 @@ export function createSeasonService(d: {
             qty: h.longQty + h.shortQty,
             cash: delta,
             avgPrice: price,
-            nav: rt?.nav.nav ?? 0,
-            multBefore: rt ? multiplier(rt.pool) : 1,
-            multAfter: rt ? multiplier(rt.pool) : 1,
+            nav: rt.nav.nav,
+            multBefore: multiplier(rt.pool),
+            multAfter: multiplier(rt.pool),
             forced: true,
             at: now,
           });

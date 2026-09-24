@@ -1,5 +1,5 @@
 import type { Position } from '@whale-street/core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createRefresher, restatementThreshold } from '../src/ingest/refresh';
 import { silentLogger } from '../src/log';
 import { createBankruptcyService } from '../src/services/bankruptcy';
@@ -234,6 +234,50 @@ describe('refresher', () => {
     serve([], 5_000);
     await refresher.refresh(A, 'heartbeat');
     expect(rt.status).toBe('ACTIVE');
+  });
+
+  it('leaves a missing-mark halt to the market loop: a fresh snapshot does not lift it', async () => {
+    const { w, refresher, rt, serve } = setup([pos('XYZ', 10, 5)]);
+    serve([pos('XYZ', 10, 5)]);
+    w.statusOps.halt(rt, 'data', 'no mark for XYZ', w.clock.now());
+    expect(await refresher.refresh(A, 'heartbeat')).toEqual({ kind: 'ok' });
+    expect(rt.status).toBe('HALTED');
+    expect(rt.haltReason).toBe('no mark for XYZ');
+  });
+
+  it('retries a bankruptcy whose settlement failed on the next refresh', async () => {
+    const { w, refresher, rt, serve } = setup([pos('ETH', 100, 3_000, 2_800)], 30_000);
+    w.repos.seasons.insert({
+      id: 1,
+      startedAt: 0,
+      endsAt: Number.MAX_SAFE_INTEGER,
+      status: 'ACTIVE',
+    });
+    w.repos.portfolios.upsert({ playerId: 'p1', seasonId: 1, cash: 0 });
+    w.repos.holdings.upsert({
+      playerId: 'p1',
+      seasonId: 1,
+      companyId: A,
+      longQty: 5,
+      longCost: 500,
+      shortQty: 0,
+      shortCollateral: 0,
+    });
+    w.state.setMarks({ ETH: 2_790 }, w.clock.now());
+    serve([], 1_000);
+    const insert = vi.spyOn(w.repos.trades, 'insert').mockImplementation(() => {
+      throw new Error('disk I/O error');
+    });
+    await refresher.refresh(A, 'trigger');
+    expect(rt.status).not.toBe('BANKRUPT');
+    expect(rt.status).not.toBe('DELISTED');
+    expect(w.repos.holdings.forCompany(1, A)).toHaveLength(1);
+    insert.mockRestore();
+    await refresher.refresh(A, 'heartbeat');
+    expect(rt.status).toBe('DELISTED');
+    expect(w.repos.holdings.forCompany(1, A)).toEqual([]);
+    expect(w.repos.portfolios.get('p1', 1)?.cash).toBeCloseTo(5 * rt.nav.nav, 8);
+    expect(kinds(w).filter((k) => k === 'DELISTING')).toHaveLength(1);
   });
 
   it('resumes a data halt on the next good snapshot and dedupes concurrent refreshes', async () => {
