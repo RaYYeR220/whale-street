@@ -3,6 +3,7 @@ import { parseSignature } from 'viem';
 import { generatePrivateKey, type PrivateKeyAccount, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Engine } from '../src/engine';
+import { MARKS_DELAY_MS } from '../src/market/loop';
 import { validateLeverageAction, validateOrderAction } from '../src/services/mirror';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { FakeTrading, NANSEN_BUILDER } from './helpers/fake-trading';
@@ -73,6 +74,12 @@ async function placeOrder(
   trading.executeFail = null;
   if (!r.ok) throw new Error(`execute failed: ${JSON.stringify(r)}`);
   return ord.stepId;
+}
+
+/** Time passes with the Hyperliquid feed up: the marks stay fresh. */
+function elapse(e: Engine, ms: number) {
+  t.clock.advance(ms);
+  e.state.setMarks({ HYPE: e.state.marks.HYPE ?? 41 }, t.clock.now());
 }
 
 const refusalCodes = (r: Awaited<ReturnType<Engine['mirror']['prepare']>>) =>
@@ -610,7 +617,7 @@ describe('mirror', () => {
       accountValue: 500,
       time: null,
     });
-    t.clock.advance(25 * 3_600_000);
+    elapse(e, 25 * 3_600_000);
     // 25 h later the daily cap is free again, but the three mirrors are still open on Hyperliquid.
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
     expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
@@ -626,12 +633,12 @@ describe('mirror', () => {
     const ids = [];
     for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent, 100));
     // Still inside the 5-minute grace: a flat account does not free anything yet.
-    t.clock.advance(4 * 60_000);
+    elapse(e, 4 * 60_000);
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual([
       'TOO_MANY_OPEN',
       'DAILY_CAP',
     ]);
-    t.clock.advance(2 * 60_000);
+    elapse(e, 2 * 60_000);
     // No HYPE position (the account is flat) and older than 5 minutes: closed.
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['DAILY_CAP']);
     expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
@@ -645,7 +652,7 @@ describe('mirror', () => {
       accountValue: 900,
       time: null,
     });
-    t.clock.advance(31_000);
+    elapse(e, 31_000);
     await e.mirror.reconcile(player.id);
     expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
       'CLOSED',
@@ -663,7 +670,7 @@ describe('mirror', () => {
         await placeOrder(e, trading, player.id, agent, 50, { status: null, error: 'timeout' }),
       );
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
-    t.clock.advance(6 * 60_000);
+    elapse(e, 6 * 60_000);
     const id = await placeOrder(e, trading, player.id, agent);
     expect(e.repos.mirrorOrders.get(id)?.status).toBe('FILLED');
     expect(ids.map((x) => e.repos.mirrorOrders.get(x)?.status)).toEqual([
@@ -679,7 +686,7 @@ describe('mirror', () => {
     const ids = [];
     for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent));
     t.info.states.set(master.address.toLowerCase(), 'HTTP 502: hyperliquid down');
-    t.clock.advance(25 * 3_600_000);
+    elapse(e, 25 * 3_600_000);
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
     expect(ids.map((x) => e.repos.mirrorOrders.get(x)?.status)).toEqual([
       'FILLED',
@@ -929,6 +936,67 @@ describe('mirror', () => {
     expect(thrown.r).toMatchObject({ ok: true, receipt: { status: 'UNKNOWN' } });
     expect(thrown.row?.status).toBe('UNKNOWN');
     expect(thrown.row?.error).toContain('socket closed');
+  });
+
+  it('refuses prepare on marks older than the delay (NO_MARK, no health) and on a coin without a mark', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    t.clock.advance(MARKS_DELAY_MS + 1);
+    const stale = await e.mirror.prepare(player.id, HYP_50);
+    expect(refusalCodes(stale)).toEqual(expect.arrayContaining(['NO_MARK', 'NEAR_LIQUIDATION']));
+    expect(stale.ok && 'refusals' in stale && stale.refusals).toContainEqual({
+      code: 'NEAR_LIQUIDATION',
+      message: 'health data unavailable',
+    });
+    expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    // Fresh marks for other coins only: the traded coin still has no mark.
+    e.state.marks = {};
+    e.state.setMarks({ BTC: 60_000 }, t.clock.now());
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(
+      expect.arrayContaining(['NO_MARK', 'NEAR_LIQUIDATION']),
+    );
+    expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    // Marks exactly at the delay are still fresh.
+    e.state.setMarks({ HYPE: 41 }, t.clock.now());
+    t.clock.advance(MARKS_DELAY_MS);
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toBe('allowed');
+  });
+
+  it('re-checks mark freshness at execute: stale marks refuse the order, fresh ones fill it', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const stale = await prepareSteps(e, player.id);
+    await e.mirror.execute(player.id, stale.lev.stepId, await sign(agent, stale.lev.eip712));
+    t.clock.advance(MARKS_DELAY_MS + 1);
+    const refused = await e.mirror.execute(
+      player.id,
+      stale.ord.stepId,
+      await sign(agent, stale.ord.eip712),
+    );
+    expect(refused).toMatchObject({ ok: false, code: 'POLICY_CHANGED' });
+    expect(!refused.ok && refused.refusals?.map((r) => r.code)).toEqual(
+      expect.arrayContaining(['NO_MARK', 'NEAR_LIQUIDATION']),
+    );
+    expect(e.repos.mirrorOrders.get(stale.ord.stepId)?.status).toBe('REJECTED');
+    const orderExecutes = () =>
+      trading.calls.filter(
+        (c) =>
+          c.method === 'execute' &&
+          (c.args[0] as { action: { type: string } }).action.type === 'order',
+      ).length;
+    expect(orderExecutes()).toBe(0);
+
+    e.state.setMarks({ HYPE: 41 }, t.clock.now());
+    const fresh = await prepareSteps(e, player.id);
+    await e.mirror.execute(player.id, fresh.lev.stepId, await sign(agent, fresh.lev.eip712));
+    t.clock.advance(MARKS_DELAY_MS);
+    const filled = await e.mirror.execute(
+      player.id,
+      fresh.ord.stepId,
+      await sign(agent, fresh.ord.eip712),
+    );
+    expect(filled).toMatchObject({ ok: true, receipt: { status: 'FILLED' } });
+    expect(orderExecutes()).toBe(1);
   });
 
   it('never leaks the Nansen API key into responses or the database', async () => {

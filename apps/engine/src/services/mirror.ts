@@ -34,6 +34,7 @@ import type { AgentKeyRow, MirrorOrderRow, Repos } from '../db/repos';
 import { explorerUrl } from '../events';
 import type { Refresher } from '../ingest/refresh';
 import type { Logger } from '../log';
+import { MARKS_DELAY_MS } from '../market/loop';
 import type { CompanyRuntime, MarketState } from '../market/state';
 import type { TradingPort } from '../ports';
 import type { MirrorKind, MirrorReason, MirrorStatus } from '../types';
@@ -413,7 +414,11 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     return agent;
   };
 
-  /** Caps are counted per master wallet (the real-money identity), whichever player placed them. */
+  /**
+   * Caps are counted per master wallet (the real-money identity), whichever player placed them.
+   * Marks older than MARKS_DELAY_MS (or no mark for the coin) count as no mark at all: the policy
+   * then refuses with NO_MARK and an unavailable health, never gating on a stale price.
+   */
   const context = (
     rt: CompanyRuntime,
     coin: string,
@@ -426,13 +431,18 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     const placed = d.repos.mirrorOrders
       .ordersByMaster(master, now - DAY_MS)
       .filter((o) => PLACED_STATUSES.has(o.status));
+    const marksFresh = now - d.state.marksAt <= MARKS_DELAY_MS;
+    const mark = marksFresh ? (d.state.marks[coin] ?? null) : null;
     return {
       companyStatus: rt.status,
       snapshotAgeMs: now - rt.lastSnapshotAt,
       coinSupported: supported,
       traderPosition: rt.nav.snapshot.positions.find((p) => p.coin === coin) ?? null,
-      mark: d.state.marks[coin] ?? null,
-      hp: computeHpStrict(rt.nav.snapshot.positions, d.state.marks) ?? Number.NaN,
+      mark,
+      hp:
+        mark === null
+          ? Number.NaN
+          : (computeHpStrict(rt.nav.snapshot.positions, d.state.marks) ?? Number.NaN),
       playerOpenMirrors: open,
       playerDailyNotionalUsd: placed.reduce((s, o) => s + o.notionalUsd, 0),
     };
