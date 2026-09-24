@@ -57,6 +57,29 @@ async function prepareSteps(e: Engine, playerId: string, notionalUsd = 50) {
   return { lev, ord };
 }
 
+/** Prepares and executes one mirror; `fail` makes the order step's execute fail that way. */
+async function placeOrder(
+  e: Engine,
+  trading: FakeTrading,
+  playerId: string,
+  agent: PrivateKeyAccount,
+  notionalUsd = 50,
+  fail: { status: number | null; error: string } | null = null,
+) {
+  const { lev, ord } = await prepareSteps(e, playerId, notionalUsd);
+  await e.mirror.execute(playerId, lev.stepId, await sign(agent, lev.eip712));
+  trading.executeFail = fail;
+  const r = await e.mirror.execute(playerId, ord.stepId, await sign(agent, ord.eip712));
+  trading.executeFail = null;
+  if (!r.ok) throw new Error(`execute failed: ${JSON.stringify(r)}`);
+  return ord.stepId;
+}
+
+const refusalCodes = (r: Awaited<ReturnType<Engine['mirror']['prepare']>>) =>
+  r.ok && 'refusals' in r ? r.refusals.map((x) => x.code) : r.ok ? 'allowed' : r.code;
+
+const HYP_50 = { ticker: 'HYP', coin: 'HYPE', notionalUsd: 50, leverage: 3 };
+
 describe('mirror', () => {
   it('happy path over REST: register agent → prepare → sign leverage → sign order → receipts', async () => {
     const { trading, master, agent, token } = await setup();
@@ -532,6 +555,94 @@ describe('mirror', () => {
     });
     const codes = r.ok && 'refusals' in r ? r.refusals.map((x) => x.code) : [];
     expect(codes).toEqual(expect.arrayContaining(['TOO_MANY_OPEN', 'DAILY_CAP']));
+  });
+
+  it('keeps counting an old FILLED mirror while the wallet still holds a position on its coin', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent));
+    t.info.states.set(master.address.toLowerCase(), {
+      positions: [pos('HYPE', 3.63, 41, null, 3)],
+      accountValue: 500,
+      time: null,
+    });
+    t.clock.advance(25 * 3_600_000);
+    // 25 h later the daily cap is free again, but the three mirrors are still open on Hyperliquid.
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
+    expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
+      'FILLED',
+      'FILLED',
+      'FILLED',
+    ]);
+  });
+
+  it('closes a FILLED mirror once its coin is flat on Hyperliquid, freeing the slot but not the daily cap', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent, 100));
+    // Still inside the 5-minute grace: a flat account does not free anything yet.
+    t.clock.advance(4 * 60_000);
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual([
+      'TOO_MANY_OPEN',
+      'DAILY_CAP',
+    ]);
+    t.clock.advance(2 * 60_000);
+    // No HYPE position (the account is flat) and older than 5 minutes: closed.
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['DAILY_CAP']);
+    expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
+      'CLOSED',
+      'CLOSED',
+      'CLOSED',
+    ]);
+    // Reconcile never moves a CLOSED mirror back, even when a position shows up again.
+    t.info.states.set(master.address.toLowerCase(), {
+      positions: [pos('HYPE', 7.32, 41, null, 3)],
+      accountValue: 900,
+      time: null,
+    });
+    t.clock.advance(31_000);
+    await e.mirror.reconcile(player.id);
+    expect(ids.map((id) => e.repos.mirrorOrders.get(id)?.status)).toEqual([
+      'CLOSED',
+      'CLOSED',
+      'CLOSED',
+    ]);
+  });
+
+  it('stops counting stale UNKNOWN mirrors on a flat coin without rewriting their status (prepare and execute)', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const ids = [];
+    for (let i = 0; i < 3; i++)
+      ids.push(
+        await placeOrder(e, trading, player.id, agent, 50, { status: null, error: 'timeout' }),
+      );
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
+    t.clock.advance(6 * 60_000);
+    const id = await placeOrder(e, trading, player.id, agent);
+    expect(e.repos.mirrorOrders.get(id)?.status).toBe('FILLED');
+    expect(ids.map((x) => e.repos.mirrorOrders.get(x)?.status)).toEqual([
+      'UNKNOWN',
+      'UNKNOWN',
+      'UNKNOWN',
+    ]);
+  });
+
+  it('counts every mirror when the Hyperliquid read fails (fail closed)', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const ids = [];
+    for (let i = 0; i < 3; i++) ids.push(await placeOrder(e, trading, player.id, agent));
+    t.info.states.set(master.address.toLowerCase(), 'HTTP 502: hyperliquid down');
+    t.clock.advance(25 * 3_600_000);
+    expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toEqual(['TOO_MANY_OPEN']);
+    expect(ids.map((x) => e.repos.mirrorOrders.get(x)?.status)).toEqual([
+      'FILLED',
+      'FILLED',
+      'FILLED',
+    ]);
   });
 
   it('never leaks the Nansen API key into responses or the database', async () => {

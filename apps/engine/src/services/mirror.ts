@@ -10,7 +10,7 @@ import {
   PARAMS,
   type Params,
 } from '@whale-street/core';
-import type { HlInfo } from '@whale-street/hl';
+import type { HlInfo, HlPerpState } from '@whale-street/hl';
 import {
   type ApiResult,
   type BuilderFeeStatus,
@@ -30,7 +30,7 @@ import {
 } from 'viem';
 import type { Clock } from '../clock';
 import type { Config } from '../config';
-import { DAY_MS, HOUR_MS } from '../dates';
+import { DAY_MS, HOUR_MS, MINUTE_MS } from '../dates';
 import type { AgentKeyRow, MirrorOrderRow, Repos } from '../db/repos';
 import { explorerUrl } from '../events';
 import type { Refresher } from '../ingest/refresh';
@@ -48,16 +48,18 @@ export const MAX_BUILDER_FEE = 80;
 export const RECONCILE_MIN_AGE_MS = 30_000;
 /** ...and at most this often per player. */
 export const RECONCILE_INTERVAL_MS = 15_000;
+/**
+ * A placed order stops counting as open once the master wallet shows no position on its coin and
+ * the order is older than this (time for a fill to show up on Hyperliquid).
+ */
+export const CLOSE_GRACE_MS = 5 * MINUTE_MS;
 const META_TTL_MS = HOUR_MS;
 /** Stop-loss trigger may differ from the policy price by this fraction (HL tick rounding). */
 const STOP_TOLERANCE = 0.01;
-/** Statuses that count toward the open-mirror and daily-notional caps. */
-const OPEN_STATUSES: ReadonlySet<MirrorStatus> = new Set([
-  'SUBMITTED',
-  'FILLED',
-  'RESTING',
-  'UNKNOWN',
-]);
+/** Statuses that count as an open mirror (unless the wallet is flat on the coin, see openMirrors). */
+const OPEN_STATUS_LIST: readonly MirrorStatus[] = ['SUBMITTED', 'FILLED', 'RESTING', 'UNKNOWN'];
+/** Attempts that reached (or may have reached) Hyperliquid: their notional counts toward the daily cap. */
+const PLACED_STATUSES: ReadonlySet<MirrorStatus> = new Set([...OPEN_STATUS_LIST, 'CLOSED']);
 /** Order statuses whose real outcome may still be learned from Hyperliquid. */
 const RECONCILABLE: ReadonlySet<MirrorStatus> = new Set(['UNKNOWN', 'SUBMITTED']);
 const REGION_MESSAGE = 'trading unavailable in this region';
@@ -313,12 +315,37 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     return meta.assets;
   };
 
-  /** Signed size of `wallet`'s position in `coin` on Hyperliquid (0 = flat, null = unknown). */
-  const hlSize = async (wallet: Address, coin: string): Promise<number | null> => {
+  /** The master wallet's Hyperliquid positions; null when they could not be read. */
+  const readHl = async (wallet: Address): Promise<HlPerpState | null> => {
     if (!info) return null;
-    const r = await info.clearinghouse(wallet);
-    if (!r.ok) return null;
-    return r.value.positions.find((p) => p.coin === coin)?.size ?? 0;
+    try {
+      const r = await info.clearinghouse(wallet);
+      if (r.ok) return r.value;
+      d.log.warn('mirror: hyperliquid positions unavailable', { error: r.error });
+    } catch (e) {
+      d.log.warn('mirror: hyperliquid positions unavailable', { error: String(e) });
+    }
+    return null;
+  };
+
+  /**
+   * Open mirrors of a master wallet, of any age. An order stops counting only when the HL read
+   * succeeded, the wallet has no position on the order's coin and the order is older than
+   * CLOSE_GRACE_MS; a FILLED one is then persisted as CLOSED (UNKNOWN/SUBMITTED keep their
+   * truthful status). Without a successful read (hl === null) every order counts: fail closed.
+   */
+  const openMirrors = (master: string, hl: HlPerpState | null, now: number): number => {
+    let open = 0;
+    for (const o of d.repos.mirrorOrders.ordersByMasterIn(master, OPEN_STATUS_LIST)) {
+      const settled =
+        hl !== null &&
+        now - o.createdAt > CLOSE_GRACE_MS &&
+        !hl.positions.some((p) => p.coin === o.coin);
+      if (!settled) open++;
+      else if (o.status === 'FILLED')
+        d.repos.mirrorOrders.update(o.id, { status: 'CLOSED', updatedAt: now });
+    }
+    return open;
   };
 
   /** The player's agent key, but only while the player's linked wallet is still its master. */
@@ -337,10 +364,13 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
     coin: string,
     master: string,
     supported: boolean,
+    hl: HlPerpState | null,
   ): MirrorContext => {
     const now = d.clock.now();
-    const recent = d.repos.mirrorOrders.ordersByMaster(master, now - DAY_MS);
-    const live = recent.filter((o) => OPEN_STATUSES.has(o.status));
+    const open = openMirrors(master, hl, now);
+    const placed = d.repos.mirrorOrders
+      .ordersByMaster(master, now - DAY_MS)
+      .filter((o) => PLACED_STATUSES.has(o.status));
     return {
       companyStatus: rt.status,
       snapshotAgeMs: now - rt.lastSnapshotAt,
@@ -348,8 +378,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       traderPosition: rt.nav.snapshot.positions.find((p) => p.coin === coin) ?? null,
       mark: d.state.marks[coin] ?? null,
       hp: computeHpStrict(rt.nav.snapshot.positions, d.state.marks) ?? Number.NaN,
-      playerOpenMirrors: live.length,
-      playerDailyNotionalUsd: live.reduce((s, o) => s + o.notionalUsd, 0),
+      playerOpenMirrors: open,
+      playerDailyNotionalUsd: placed.reduce((s, o) => s + o.notionalUsd, 0),
     };
   };
 
@@ -462,6 +492,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const table = await assets();
       if (!(table instanceof Map)) return table;
       const asset = table.get(req.coin) ?? null;
+      // One HL read: live positions for the open-mirror count, and the reconcile baseline.
+      const hl = await readHl(master);
       const decision = evaluateMirror(
         {
           coin: req.coin,
@@ -469,7 +501,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           leverage: req.leverage,
           stopLossPct: req.stopLossPct,
         },
-        context(rt, req.coin, master, asset !== null),
+        context(rt, req.coin, master, asset !== null, hl),
         params,
       );
       const groupId = `mg_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
@@ -537,7 +569,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       if (mismatch) return fail('ACTION_MISMATCH', 502, `prepared order rejected: ${mismatch}`);
 
       // Baseline for reconciling a non-definitive execute later (null if HL is unreachable).
-      const baseline = await hlSize(master, req.coin);
+      const baseline =
+        hl === null ? null : (hl.positions.find((p) => p.coin === req.coin)?.size ?? 0);
       const levRow: MirrorOrderRow = {
         ...row({
           playerId,
@@ -619,6 +652,8 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       }
       if (signer.toLowerCase() !== agent.agentAddress)
         return err(401, 'BAD_SIGNATURE', 'not signed by your approved agent key');
+      // Live positions for the open-mirror re-check (the critical section below cannot await).
+      const hl = pre.kind === 'order' ? await readHl(agent.masterAddress as Address) : null;
 
       // Critical section: no await from here until the row is SUBMITTED, so concurrent executes
       // can neither run the same step twice nor both slip under the open/daily caps.
@@ -658,7 +693,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
             leverage: req.leverage,
             stopLossPct: req.stopLossPct,
           },
-          context(rt, step.coin, bound.masterAddress, true),
+          context(rt, step.coin, bound.masterAddress, true, hl),
           params,
         );
         if (!again.allow) {
@@ -676,7 +711,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           );
         }
       }
-      // From here on the attempt counts toward the caps (SUBMITTED ∈ OPEN_STATUSES).
+      // From here on the attempt counts toward the caps (SUBMITTED is an open status).
       d.repos.mirrorOrders.update(step.id, { status: 'SUBMITTED', updatedAt: now });
       const action = step.action;
       const nonce = step.nonce;
@@ -790,7 +825,7 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           (x) =>
             x.id !== o.id &&
             x.coin === o.coin &&
-            OPEN_STATUSES.has(x.status) &&
+            PLACED_STATUSES.has(x.status) &&
             x.updatedAt >= o.createdAt,
         );
         if (ambiguous) continue;

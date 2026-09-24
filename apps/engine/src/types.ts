@@ -19,6 +19,8 @@ export type MirrorKind = 'leverage' | 'order';
 /**
  * UNKNOWN = execute sent but the outcome is not definitive (timeout, network error, 5xx, an
  * unparseable 2xx): the order may have reached Hyperliquid. Counts toward the caps like a fill.
+ * CLOSED = a FILLED order whose coin later showed no position on the master wallet: it no longer
+ * counts as open, but its notional still counts toward the daily cap.
  */
 export type MirrorStatus =
   | 'REFUSED'
@@ -27,7 +29,8 @@ export type MirrorStatus =
   | 'FILLED'
   | 'RESTING'
   | 'REJECTED'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  | 'CLOSED';
 
 /** Persisted NAV state of a company (companies.nav_state_json). */
 export interface NavPersist {

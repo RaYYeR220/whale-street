@@ -1,5 +1,6 @@
 import type { CallRecord } from '@whale-street/nansen';
 import { and, desc, eq, gt, gte, inArray, lte } from 'drizzle-orm';
+import type { MirrorStatus } from '../types';
 import type { Db } from './index';
 import {
   agentKeys,
@@ -118,6 +119,8 @@ export interface Repos {
     ordersSince(playerId: string, since: number): MirrorOrderRow[];
     /** Order-kind rows placed for a master wallet (any player) since `since`. */
     ordersByMaster(masterAddress: string, since: number): MirrorOrderRow[];
+    /** Order-kind rows of a master wallet (any player, any age) in one of `statuses`. */
+    ordersByMasterIn(masterAddress: string, statuses: readonly MirrorStatus[]): MirrorOrderRow[];
   };
   agentKeys: {
     upsert(row: AgentKeyRow): void;
@@ -484,6 +487,20 @@ export function createRepos({ sqlite, db }: Db): Repos {
             ),
           )
           .all(),
+      ordersByMasterIn: (masterAddress, statuses) =>
+        statuses.length === 0
+          ? []
+          : db
+              .select()
+              .from(mirrorOrders)
+              .where(
+                and(
+                  eq(mirrorOrders.masterAddress, masterAddress),
+                  eq(mirrorOrders.kind, 'order'),
+                  inArray(mirrorOrders.status, [...statuses]),
+                ),
+              )
+              .all(),
     },
 
     agentKeys: {
