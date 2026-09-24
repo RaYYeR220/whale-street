@@ -41,3 +41,35 @@ test('Mirror says it is off when the engine has no trading key', async ({ page, 
   await expect(off).toContainText('Mirror is off on this engine');
   await expect(page.getByTestId('mirror-on')).toHaveCount(0);
 });
+
+test('an order refused while the market is paused is sent once more and fills', async ({
+  page,
+  request,
+}) => {
+  const [ticker] = await listedTickers(request);
+  // The engine pauses orders while it is idle or catching up; a viewer keeps it awake, so the
+  // first reply is made to be MARKET_PAUSED here. The second request reaches the real engine.
+  let refused = 0;
+  await page.route('**/api/orders', async (route) => {
+    if (refused > 0 || route.request().method() !== 'POST') return route.continue();
+    refused += 1;
+    await route.fulfill({
+      status: 503,
+      headers: { 'retry-after': '2', 'access-control-allow-origin': '*' },
+      json: {
+        error: 'MARKET_PAUSED',
+        message:
+          'market paused while prices catch up (no live viewer or delayed marks); retry shortly',
+        retryAfterMs: 2_000,
+      },
+    });
+  });
+  await page.goto(`/c/${ticker}`);
+  await expect(page.locator('.ws-player')).toContainText('$10,000.00');
+  const buy = page.getByRole('button', { name: new RegExp(`^Buy [\\d.]+ ${ticker}$`) });
+  await expect(buy).toBeEnabled();
+  await buy.click();
+  await expect(page.getByRole('button', { name: /^Market (opening|waking up)…$/ })).toBeVisible();
+  await expect(page.locator('.ws-toast')).toContainText('Bought', { timeout: 10_000 });
+  expect(refused).toBe(1);
+});
