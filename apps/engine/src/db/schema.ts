@@ -156,6 +156,8 @@ export const nansenCalls = sqliteTable('nansen_calls', {
   responseHash: text('response_hash'),
   error: text('error'),
   attempts: integer('attempts').notNull(),
+  /** REPLAY: answered from the recording (`at` is then the time it was recorded). */
+  recorded: integer('recorded', { mode: 'boolean' }).notNull().default(false),
 });
 
 export const mirrorOrders = sqliteTable('mirror_orders', {

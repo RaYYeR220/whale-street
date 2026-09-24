@@ -7,7 +7,18 @@ export interface NansenRecord {
   path: string;
   status: number;
   body: unknown;
+  /** Response headers a recording kept, if any (the session recorder stores none). */
+  headers?: Record<string, string>;
 }
+
+/**
+ * Set by replayFetch on every answer served from a recording: when it was recorded (ms). A client
+ * built for REPLAY logs the call at that time, marked recorded.
+ */
+export const RECORDED_AT_HEADER = 'x-replay-recorded-at';
+
+/** Recorded response headers replayFetch serves again: the credit meter only. */
+const REPLAYED_HEADER = /^x-nansen-credits-/i;
 
 export const VOLATILE_FIELDS: ReadonlySet<string> = new Set([
   'date',
@@ -105,9 +116,13 @@ export function replayFetch(records: readonly NansenRecord[], now: () => number)
     const t = now();
     let pick = list[0] as NansenRecord;
     for (const r of list) if (r.t <= t) pick = r;
-    return new Response(JSON.stringify(pick.body), {
-      status: pick.status,
-      headers: { 'content-type': 'application/json' },
-    });
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      [RECORDED_AT_HEADER]: String(pick.t),
+    };
+    for (const [name, value] of Object.entries(pick.headers ?? {}))
+      if (REPLAYED_HEADER.test(name) && typeof value === 'string')
+        headers[name.toLowerCase()] = value;
+    return new Response(JSON.stringify(pick.body), { status: pick.status, headers });
   }) as typeof fetch;
 }

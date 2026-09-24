@@ -1884,6 +1884,10 @@ a.co-tag:hover {
   color: var(--ws-text-2);
   font-variant-numeric: tabular-nums;
 }
+.co-ev__rec {
+  color: var(--ws-blue-text);
+  font-weight: 700;
+}
 .me-head {
   display: grid;
   grid-template-columns: 96px 1fr;

@@ -130,10 +130,13 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
   const repos = createRepos(db);
   // Nansen and HL info both answer from the recording; anything unrecorded is a 503 (fail closed).
   const recorded = replayFetch(session.nansen, () => clock.now());
+  // Every answer served from the recording is logged at the time it was recorded, marked
+  // recorded, so the evidence drawer shows the calls behind a replayed number too.
   const http = new NansenHttp({
     apiKey: 'replay',
     fetch: recorded,
     maxRetries: 0,
+    replay: true,
     onCall: (c) => repos.nansenCalls.insert(c),
   });
   const feed = createReplayFeed(session.hl, () => clock.now());

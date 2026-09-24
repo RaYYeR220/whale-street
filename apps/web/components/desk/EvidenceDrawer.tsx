@@ -10,7 +10,13 @@ const MAX_CALLS = 12;
 type Loaded =
   | { state: 'loading' }
   | { state: 'error'; message: string }
-  | { state: 'ready'; calls: NansenCallView[]; snapshotAt: number | null };
+  | {
+      state: 'ready';
+      calls: NansenCallView[];
+      snapshotAt: number | null;
+      /** Calls the company names whose record could not be loaded. */
+      missing: number;
+    };
 
 const time = (t: number) => {
   const d = new Date(t);
@@ -49,7 +55,7 @@ export function EvidenceDrawer({
         const recent = await api.provenance(MAX_CALLS);
         if (cancelled) return;
         if (!recent.ok) setData({ state: 'error', message: recent.message });
-        else setData({ state: 'ready', calls: recent.data.calls, snapshotAt });
+        else setData({ state: 'ready', calls: recent.data.calls, snapshotAt, missing: 0 });
         return;
       }
       const results = await Promise.all(
@@ -57,7 +63,7 @@ export function EvidenceDrawer({
       );
       if (cancelled) return;
       const calls = results.flatMap((r) => (r.ok ? [r.data.call] : []));
-      setData({ state: 'ready', calls, snapshotAt });
+      setData({ state: 'ready', calls, snapshotAt, missing: results.length - calls.length });
     })();
     return () => {
       cancelled = true;
@@ -73,6 +79,8 @@ export function EvidenceDrawer({
     );
   const age = data.snapshotAt !== null && now !== null ? now - data.snapshotAt : null;
   const credits = data.calls.reduce((s, c) => s + (c.credits ?? 0), 0);
+  /** A total that leaves out a call of unknown cost, or one that could not be loaded, is a floor. */
+  const partial = data.missing > 0 || data.calls.some((c) => c.credits === null);
   return (
     <>
       <p style={{ margin: 0, fontSize: 'var(--ws-fs-16)' }}>
@@ -88,11 +96,16 @@ export function EvidenceDrawer({
           <span>Mirror only copies positions seen in the last 60 seconds.</span>
         </div>
       ) : null}
-      {data.calls.length === 0 ? (
-        <p>
-          No Nansen call is recorded for this yet
-          {status?.mode === 'replay' ? ' (the recorded session keeps no call log).' : '.'}
+      {data.missing > 0 ? (
+        <p className="ws-v-red" role="alert">
+          {data.missing} call{data.missing === 1 ? '' : 's'} could not be loaded from the engine's
+          log.
         </p>
+      ) : null}
+      {data.calls.length === 0 ? (
+        data.missing > 0 ? null : (
+          <p>No Nansen call is recorded for this yet.</p>
+        )
       ) : (
         <ul className="co-ev">
           {data.calls.map((c) => {
@@ -109,9 +122,20 @@ export function EvidenceDrawer({
                   </span>
                 ) : null}
                 <span className="row">
-                  <span>{time(c.at)}</span>
                   <span>
-                    {c.credits ?? 0} credit{c.credits === 1 ? '' : 's'}
+                    {time(c.at)}
+                    {c.recorded ? (
+                      <span
+                        className="co-ev__rec"
+                        title="Answered from the recorded session: the time is when it was recorded"
+                      >
+                        {' '}
+                        recorded
+                      </span>
+                    ) : null}
+                  </span>
+                  <span>
+                    {c.credits ?? '—'} credit{c.credits === 1 ? '' : 's'}
                   </span>
                   <span>{c.responseHash ? `${c.responseHash.slice(0, 10)}…` : 'no hash'}</span>
                 </span>
@@ -121,7 +145,8 @@ export function EvidenceDrawer({
         </ul>
       )}
       <p style={{ margin: 0, color: 'var(--ws-text-2)', fontSize: 'var(--ws-fs-13)' }}>
-        Powered by Nansen API. {credits} credit{credits === 1 ? '' : 's'} for the calls above
+        Powered by Nansen API. {partial ? 'At least ' : ''}
+        {credits} credit{credits === 1 ? '' : 's'} for the calls above
         {status?.creditsRemaining != null
           ? `; ${status.creditsRemaining.toLocaleString('en-US')} left on the account.`
           : '.'}

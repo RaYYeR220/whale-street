@@ -130,7 +130,8 @@ CREATE TABLE IF NOT EXISTS nansen_calls (
   at INTEGER NOT NULL,
   response_hash TEXT,
   error TEXT,
-  attempts INTEGER NOT NULL
+  attempts INTEGER NOT NULL,
+  recorded INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS mirror_orders (
   id TEXT PRIMARY KEY,
@@ -195,6 +196,7 @@ export function migrate(sqlite: Database.Database): void {
   ensureColumn(sqlite, 'mirror_orders', 'master_address', 'TEXT');
   ensureColumn(sqlite, 'ipo_apps', 'applied_wall_at', 'INTEGER');
   ensureColumn(sqlite, 'trades', 'write_off_usd', 'REAL NOT NULL DEFAULT 0');
+  ensureColumn(sqlite, 'nansen_calls', 'recorded', 'INTEGER NOT NULL DEFAULT 0');
   // Rows written before the column existed were LIVE rows, whose created_at is wall time.
   sqlite.exec('UPDATE ipo_apps SET applied_wall_at = created_at WHERE applied_wall_at IS NULL');
   sqlite.exec(INDEX_SQL);

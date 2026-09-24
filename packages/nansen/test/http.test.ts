@@ -1,6 +1,12 @@
 import { inspect } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { type CallRecord, type Clock, DEFAULT_ENDPOINT_LIMITS, NansenHttp } from '../src/index';
+import {
+  type CallRecord,
+  type Clock,
+  DEFAULT_ENDPOINT_LIMITS,
+  NansenHttp,
+  RECORDED_AT_HEADER,
+} from '../src/index';
 
 class FakeClock implements Clock {
   t = 0;
@@ -263,6 +269,48 @@ describe('NansenHttp', () => {
     expect(await errorOf()).toBe('HTTP 422: Order rejected: wrong side');
     expect(await errorOf()).toBe('HTTP 403: forbidden');
     expect(await errorOf()).toBe('HTTP 422: {"detail":[{"loc":["body"],"msg":"bad"}]}');
+  });
+
+  it('logs a REPLAY answer at the recording’s time, marked recorded, with the recorded credits', async () => {
+    const calls: CallRecord[] = [];
+    const clock = new FakeClock();
+    clock.t = 9_000;
+    const http = new NansenHttp({
+      apiKey: 'replay',
+      replay: true,
+      fetch: fakeFetch([
+        { status: 200, body: '{"n":1}', headers: { [RECORDED_AT_HEADER]: '1234' } },
+        {
+          status: 200,
+          body: '{"n":2}',
+          headers: { [RECORDED_AT_HEADER]: '1300', 'x-nansen-credits-used': '2' },
+        },
+        { status: 503, body: '{"error":"not in recording"}' },
+      ]),
+      clock,
+      maxRetries: 0,
+      onCall: (c) => calls.push(c),
+    });
+    for (let i = 0; i < 3; i++) await http.request('POST', '/api/v1/x', {}, parseAny);
+    expect(calls.map((c) => [c.at, c.recorded, c.creditsUsed, c.status])).toEqual([
+      [1_234, true, null, 200],
+      [1_300, true, 2, 200],
+      [9_000, false, null, 503],
+    ]);
+  });
+
+  it('never trusts a recorded-at header outside REPLAY', async () => {
+    const calls: CallRecord[] = [];
+    const clock = new FakeClock();
+    clock.t = 9_000;
+    const http = new NansenHttp({
+      apiKey: 'k',
+      fetch: fakeFetch([{ status: 200, body: '{}', headers: { [RECORDED_AT_HEADER]: '1234' } }]),
+      clock,
+      onCall: (c) => calls.push(c),
+    });
+    await http.request('POST', '/api/v1/x', {}, parseAny);
+    expect(calls[0]).toMatchObject({ at: 9_000, recorded: false });
   });
 
   it('records the balance a response reports in x-nansen-credits-remaining', async () => {

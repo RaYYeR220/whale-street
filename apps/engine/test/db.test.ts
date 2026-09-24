@@ -134,6 +134,24 @@ describe('openDb', () => {
     sqlite.close();
   });
 
+  it('adds nansen_calls.recorded (false for older rows) to an existing database (idempotent)', () => {
+    const sqlite = new Database(':memory:');
+    // The provenance log as it was before replayed calls were marked.
+    sqlite.exec(`CREATE TABLE nansen_calls (
+      id TEXT PRIMARY KEY, method TEXT NOT NULL, path TEXT NOT NULL, request_hash TEXT NOT NULL,
+      status INTEGER, credits REAL, latency_ms INTEGER NOT NULL, at INTEGER NOT NULL,
+      response_hash TEXT, error TEXT, attempts INTEGER NOT NULL)`);
+    sqlite
+      .prepare(
+        "INSERT INTO nansen_calls (id, method, path, request_hash, latency_ms, at, attempts) VALUES ('nc_1', 'POST', '/x', 'h', 1, 1, 1)",
+      )
+      .run();
+    migrate(sqlite);
+    migrate(sqlite);
+    expect(sqlite.prepare('SELECT recorded FROM nansen_calls').get()).toEqual({ recorded: 0 });
+    sqlite.close();
+  });
+
   it('indexes the per-season and per-wallet lookups', () => {
     const { sqlite, close } = openDb(':memory:');
     const indexes = (

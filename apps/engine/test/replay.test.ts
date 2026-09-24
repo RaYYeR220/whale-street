@@ -692,6 +692,56 @@ describe('REPLAY loader', () => {
   });
 });
 
+describe('REPLAY evidence log', () => {
+  type Call = {
+    id: string;
+    path: string;
+    at: number;
+    status: number | null;
+    credits: number | null;
+    recorded: boolean;
+  };
+  const calls = async (app: Awaited<ReturnType<typeof bootReplay>>['app']) =>
+    (await app.inject({ url: '/api/provenance?limit=100' })).json().calls as Call[];
+
+  it('logs every call answered from the recording, at its recorded time, marked recorded', async () => {
+    const lines = syntheticSession();
+    const session = loadReplaySession(lines.join('\n'));
+    const r = await bootReplay(lines);
+    await r.step();
+    const log = await calls(r.app);
+    expect(log.length).toBeGreaterThan(0);
+    for (const c of log) {
+      expect(c).toMatchObject({ status: 200, recorded: true, credits: null });
+      expect(session.nansen.some((n) => n.path === c.path && n.t === c.at)).toBe(true);
+    }
+    // A company's evidence ids point at those rows.
+    const company = (await r.app.inject({ url: '/api/companies' })).json().companies[0] as {
+      ticker: string;
+      provenance: string[];
+    };
+    const id = company.provenance.find((p) => p.startsWith('nc_'));
+    const one = (await r.app.inject({ url: `/api/provenance/${id}` })).json().call as Call;
+    expect(one.recorded).toBe(true);
+    await r.close();
+  });
+
+  it('takes the credits from the recorded headers when the recording kept them', async () => {
+    const lines = syntheticSession().map((l) => {
+      const rec = JSON.parse(l) as { k: string };
+      return rec.k === 'nansen'
+        ? JSON.stringify({ ...rec, headers: { 'x-nansen-credits-used': '2' } })
+        : l;
+    });
+    const r = await bootReplay(lines);
+    await r.step();
+    const log = await calls(r.app);
+    expect(log.length).toBeGreaterThan(0);
+    expect(log.every((c) => c.recorded && c.credits === 2)).toBe(true);
+    await r.close();
+  });
+});
+
 describe('REPLAY street mood', () => {
   it('replays the recorded cohort positioning into the market frame, loop after loop', async () => {
     const r = await bootReplay(syntheticSession());

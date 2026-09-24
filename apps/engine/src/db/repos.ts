@@ -474,6 +474,7 @@ export function createRepos({ sqlite, db }: Db): Repos {
             responseHash: r.responseHash,
             error: r.error,
             attempts: r.attempts,
+            recorded: r.recorded,
           })
           .onConflictDoNothing()
           .run();

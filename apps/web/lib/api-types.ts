@@ -329,6 +329,8 @@ export interface NansenCallView {
   responseHash: string | null;
   error: string | null;
   attempts: number;
+  /** REPLAY: answered from the recording; `at` is then the time it was recorded. */
+  recorded: boolean;
 }
 
 export interface BuilderFeeStatus {

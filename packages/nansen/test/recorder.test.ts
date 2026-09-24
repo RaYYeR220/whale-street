@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { type NansenRecord, recordingFetch, replayFetch, requestKey } from '../src/index';
+import {
+  type NansenRecord,
+  RECORDED_AT_HEADER,
+  recordingFetch,
+  replayFetch,
+  requestKey,
+} from '../src/index';
 
 describe('recorder', () => {
   it('requestKey ignores volatile fields and key order', () => {
@@ -77,5 +83,33 @@ describe('recorder', () => {
     expect(await call()).toEqual({ v: 1 });
     const miss = await f('https://api.nansen.ai/api/v1/z', { method: 'POST', body: '{}' });
     expect(miss.status).toBe(503);
+    expect(miss.headers.get(RECORDED_AT_HEADER)).toBeNull();
+  });
+
+  it('says when a replayed answer was recorded, with its recorded credits and nothing else', async () => {
+    const key = 'POST /api/v1/y {"a":1}';
+    const recs: NansenRecord[] = [
+      { t: 100, k: 'nansen', key, path: '/api/v1/y', status: 200, body: { v: 1 } },
+      {
+        t: 200,
+        k: 'nansen',
+        key,
+        path: '/api/v1/y',
+        status: 200,
+        body: { v: 2 },
+        headers: { 'x-nansen-credits-used': '3', 'set-cookie': 'session=secret' },
+      },
+    ];
+    let now = 150;
+    const f = replayFetch(recs, () => now);
+    const call = () => f('https://api.nansen.ai/api/v1/y', { method: 'POST', body: '{"a":1}' });
+    const first = await call();
+    expect(first.headers.get(RECORDED_AT_HEADER)).toBe('100');
+    expect(first.headers.get('x-nansen-credits-used')).toBeNull();
+    now = 250;
+    const second = await call();
+    expect(second.headers.get(RECORDED_AT_HEADER)).toBe('200');
+    expect(second.headers.get('x-nansen-credits-used')).toBe('3');
+    expect(second.headers.get('set-cookie')).toBeNull();
   });
 });

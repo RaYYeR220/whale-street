@@ -126,6 +126,7 @@ describe('REST', () => {
       responseHash: 'rs',
       error: null,
       attempts: 1,
+      recorded: false,
     });
     const history = (await t.app.inject({ url: '/api/companies/AAA/history?minutes=60' })).json();
     expect(history.points).toHaveLength(1);
@@ -152,6 +153,7 @@ describe('REST', () => {
       responseHash: 'rs2',
       error: null,
       attempts: 1,
+      recorded: false,
     });
     expect(t.engine.repos.nansenCalls.get('nc_trade')).toBeDefined();
     const calls = (await t.app.inject({ url: '/api/provenance' })).json().calls;

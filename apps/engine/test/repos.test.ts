@@ -180,6 +180,7 @@ describe('repos', () => {
       responseHash: 'sh',
       error: null,
       attempts: 1,
+      recorded: false,
     });
     expect(r.nansenCalls.get('nc_1')).toMatchObject({ credits: 1, status: 200 });
     expect(r.nansenCalls.recent(5)).toHaveLength(1);

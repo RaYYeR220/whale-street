@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type Clock, RateLimiter, realClock, type WindowLimit } from './limiter';
+import { RECORDED_AT_HEADER } from './recorder';
 import { sha256Hex, stableStringify } from './stable';
 
 export interface CallRecord {
@@ -16,6 +17,8 @@ export interface CallRecord {
   responseHash: string | null;
   error: string | null;
   attempts: number;
+  /** REPLAY: answered from the recording; `at` is then the time it was recorded. */
+  recorded: boolean;
 }
 
 export type ApiResult<T> =
@@ -33,6 +36,11 @@ export interface NansenHttpOptions {
   perSecond?: number;
   perMinute?: number;
   endpointLimits?: Record<string, WindowLimit[]>;
+  /**
+   * REPLAY: answers carry the time they were recorded (RECORDED_AT_HEADER, set by replayFetch);
+   * each such call is logged at that time with `recorded: true`. Off (LIVE): the header is ignored.
+   */
+  replay?: boolean;
 }
 
 export interface RequestOptions {
@@ -114,6 +122,7 @@ export class NansenHttp {
   private readonly clock: Clock;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
+  private readonly replay: boolean;
   private readonly global: RateLimiter;
   private readonly perEndpoint = new Map<string, RateLimiter>();
 
@@ -125,6 +134,7 @@ export class NansenHttp {
     this.clock = o.clock ?? realClock;
     this.timeoutMs = o.timeoutMs ?? 15_000;
     this.maxRetries = o.maxRetries ?? 2;
+    this.replay = o.replay ?? false;
     this.global = new RateLimiter(
       [
         { limit: o.perSecond ?? 15, windowMs: 1_000 },
@@ -161,6 +171,8 @@ export class NansenHttp {
     const requestHash = sha256Hex(stableStringify({ method, path, query: opts.query, body }));
     const at = this.clock.now();
     let attempts = 0;
+    /** REPLAY: when the answer being logged was recorded. */
+    let recordedAt: number | null = null;
 
     const finish = (
       r: ApiResult<T>,
@@ -178,16 +190,18 @@ export class NansenHttp {
         creditsUsed: meter.used,
         creditsRemaining: meter.remaining,
         latencyMs: this.clock.now() - started,
-        at,
+        at: recordedAt ?? at,
         responseHash,
         error: r.ok ? null : r.error,
         attempts,
+        recorded: recordedAt !== null,
       });
       return r;
     };
 
     for (;;) {
       attempts++;
+      recordedAt = null;
       await this.global.acquire();
       await this.perEndpoint.get(path)?.acquire();
       const started = this.clock.now();
@@ -223,6 +237,7 @@ export class NansenHttp {
         );
       }
 
+      recordedAt = this.replay ? numHeader(res.headers, RECORDED_AT_HEADER) : null;
       const credits: Meter = {
         used: numHeader(res.headers, 'x-nansen-credits-used'),
         remaining: numHeader(res.headers, 'x-nansen-credits-remaining'),
