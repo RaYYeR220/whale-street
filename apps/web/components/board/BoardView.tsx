@@ -143,6 +143,8 @@ export function BoardView({
   useChannels(['leaderboard']);
   const { api } = useEngineRuntime();
   const liveRows = useEngine((s) => s.leaderboard);
+  // REPLAY loops a recording (and revalues positions at each wrap): its season is practice only.
+  const replay = useEngine((s) => s.status?.mode === 'replay');
   const now = useEngineNow(30_000);
   const reduce = useReducedMotion();
   const { player, portfolio } = usePlayer();
@@ -204,11 +206,15 @@ export function BoardView({
     <main className="bd" id="main">
       <div className="bd-head">
         <div>
-          <h1 className="bd-h1">{season ? `Season ${season.id} standings` : 'Standings'}</h1>
+          <h1 className="bd-h1">
+            {season
+              ? `${replay && live ? 'Practice season (replay)' : `Season ${season.id}`} standings`
+              : 'Standings'}
+          </h1>
           <p className="bd-sub">
             {season
               ? live
-                ? `Ends in ${now === null ? '—' : countdown(season.endsAt - now)}. Everyone started with $10,000 of play money; humans, bots and agents are trading now.`
+                ? `Ends in ${now === null ? '—' : countdown(season.endsAt - now)}. Everyone started with $10,000 of play money; humans, bots and agents are trading now.${replay ? ' The recorded session loops and positions are revalued at each loop, so this board is for practice.' : ''}`
                 : `Ended ${dayLabel(season.endsAt)}. Final net worth, frozen at the closing bell.`
               : 'No season yet.'}
           </p>
@@ -222,7 +228,7 @@ export function BoardView({
               aria-pressed={s.id === season?.id}
               onClick={() => pickSeason(s.id)}
             >
-              Season {s.id}{' '}
+              {replay && s.status === 'ACTIVE' ? 'Practice season' : `Season ${s.id}`}{' '}
               <small>{s.status === 'ACTIVE' ? 'live' : `ended ${dayLabel(s.endsAt)}`}</small>
             </button>
           ))}

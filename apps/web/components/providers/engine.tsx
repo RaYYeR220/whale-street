@@ -6,7 +6,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
@@ -17,6 +16,7 @@ import {
   createEngineStore,
   type EngineState,
   type EngineStore,
+  engineNow,
   INITIAL_STATE,
 } from '../../lib/store';
 import { EngineSocket } from '../../lib/ws-client';
@@ -97,26 +97,25 @@ export function useChannels(channels: readonly Channel[]): void {
 }
 
 /**
- * Engine time (ms), extrapolated between 1 Hz market frames so clocks tick smoothly.
- * In REPLAY this is the recorded session's clock, not the wall clock. Null before the first frame.
+ * Engine time (ms) from status.now and the 1 Hz market frames, run on between them so clocks tick
+ * smoothly. Every age, countdown and season clock reads it: in REPLAY it is the recorded session's
+ * clock, never the browser's. Null before the engine has said what time it is.
  */
 export function useEngineNow(stepMs = 1_000): number | null {
+  const { store } = useEngineRuntime();
   const market = useEngine((s) => s.market);
+  const status = useEngine((s) => s.status);
   const [now, setNow] = useState<number | null>(null);
-  const marketRef = useRef(market);
-  marketRef.current = market;
   useEffect(() => {
-    const tick = () => {
-      const m = marketRef.current;
-      setNow(m ? m.at + Math.max(0, Date.now() - m.receivedAt) : null);
-    };
+    const tick = () => setNow(engineNow(store.getState(), Date.now()));
     tick();
     const id = setInterval(tick, stepMs);
     return () => clearInterval(id);
-  }, [stepMs]);
+  }, [store, stepMs]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new frame or status re-reads the time
   useEffect(() => {
-    if (market) setNow(market.at + Math.max(0, Date.now() - market.receivedAt));
-  }, [market]);
+    setNow(engineNow(store.getState(), Date.now()));
+  }, [store, market, status]);
   return now;
 }
 

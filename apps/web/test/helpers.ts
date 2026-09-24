@@ -59,6 +59,8 @@ export const status = (o: Partial<StatusView> = {}): StatusView => ({
   season: { id: 1, endsAt: T0 + 7 * 86_400_000 },
   companies: 2,
   viewers: 1,
+  now: T0,
+  loop: null,
   ...o,
 });
 

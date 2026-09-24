@@ -54,6 +54,14 @@ export interface StatusView {
   season: { id: number; endsAt: number } | null;
   companies: number;
   viewers: number;
+  /**
+   * Engine clock (ms): the "now" of every age and countdown. In REPLAY every engine timestamp
+   * (filings, trades, season end) is recording time and repeats each loop, so the browser clock
+   * never applies.
+   */
+  now: number;
+  /** REPLAY: the loop being played (index counts wraps since the engine started); null in LIVE. */
+  loop: { index: number; startT: number; endT: number } | null;
 }
 
 export interface PlayerView {
@@ -246,6 +254,8 @@ export interface QuoteView {
   avgPrice: number;
   price: number;
   priceAfter: number;
+  /** True while the engine refuses orders (MARKET_PAUSED): the quote is indicative. */
+  paused: boolean;
 }
 
 export interface OrderFilled {
@@ -434,4 +444,6 @@ export interface ApiErrorBody {
   error: string;
   message: string;
   refusals?: MirrorReason[];
+  /** MARKET_PAUSED: retry after this many ms (also sent as a Retry-After header in seconds). */
+  retryAfterMs?: number;
 }

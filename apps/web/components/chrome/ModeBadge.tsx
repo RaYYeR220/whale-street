@@ -3,7 +3,10 @@
 import { dayLabel } from '../../lib/format';
 import { useEngine } from '../providers/engine';
 
-/** LIVE (mint dot), REPLAY (blue, with the recording date) and the credit-saver note. Never hidden. */
+/**
+ * LIVE (mint dot), REPLAY (blue, with the recording date and the loop playing) and the
+ * credit-saver note. Never hidden; after a lost connection it keeps the last mode the engine said.
+ */
 export function ModeBadge() {
   const status = useEngine((s) => s.status);
   const connection = useEngine((s) => s.connection);
@@ -32,11 +35,12 @@ export function ModeBadge() {
           className="ws-badge ws-badge--replay"
           data-mode="replay"
           data-short="REPLAY"
-          title="Replaying a recorded session: no Nansen key is used and nothing here is live"
+          title={`Replaying a recorded session in a loop: no Nansen key is used and nothing here is live.${status.loop ? ` Loop ${status.loop.index + 1} since the engine started; each loop plays ${Math.round((status.loop.endT - status.loop.startT) / 60_000)} minutes of the recording.` : ''}`}
         >
           {status.synthetic
             ? 'REPLAY · synthetic demo'
             : `REPLAY · recorded ${status.recordedAt !== null ? dayLabel(status.recordedAt) : 'session'}`}
+          {status.loop ? ` · loop ${status.loop.index + 1}` : ''}
         </span>
       )}
       {status.creditSaver ? (

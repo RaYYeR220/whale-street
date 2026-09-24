@@ -38,6 +38,8 @@ export interface ApiFailure {
   error: string;
   message: string;
   refusals?: MirrorReason[];
+  /** MARKET_PAUSED (503): when to try again, from the body or the Retry-After header. */
+  retryAfterMs?: number;
 }
 
 export type ApiResult<T> = { ok: true; data: T } | ApiFailure;
@@ -133,12 +135,20 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
       return { ok: true, data: json as T, httpStatus: res.status };
     }
     const body = (json ?? {}) as Partial<ApiErrorBody>;
+    const header = Number(res.headers.get('retry-after'));
+    const retryAfterMs =
+      typeof body.retryAfterMs === 'number' && Number.isFinite(body.retryAfterMs)
+        ? body.retryAfterMs
+        : Number.isFinite(header) && header > 0
+          ? header * 1_000
+          : undefined;
     return {
       ok: false,
       status: res.status,
       error: typeof body.error === 'string' ? body.error : `HTTP_${res.status}`,
       message: typeof body.message === 'string' ? body.message : res.statusText || 'request failed',
       ...(Array.isArray(body.refusals) ? { refusals: body.refusals } : {}),
+      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
     };
   }
 

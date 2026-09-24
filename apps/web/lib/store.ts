@@ -48,13 +48,15 @@ export interface MarketSlice {
 export interface EngineState {
   connection: ConnectionState;
   status: StatusView | null;
+  /** Client clock (Date.now) when the status arrived: engine time runs on from status.now. */
+  statusAt: number | null;
   market: MarketSlice | null;
   /** Previous tick's entries (for price flip direction). */
   previous: Readonly<Record<string, MarketEntry>>;
   series: Readonly<Record<string, Series>>;
   /** Slower REST views (name, rating, positions, prospectus) by ticker. */
   views: Readonly<Record<string, CompanyView>>;
-  /** Engine time of the last /api/companies refresh (null before the first). */
+  /** Client time of the last /api/companies refresh (only whether there was one is used). */
   viewsAt: number | null;
   filings: FilingView[];
   tape: TapeView[];
@@ -70,6 +72,7 @@ export interface EngineState {
 export const INITIAL_STATE: EngineState = Object.freeze({
   connection: 'idle',
   status: null,
+  statusAt: null,
   market: null,
   previous: {},
   series: {},
@@ -152,7 +155,8 @@ export interface EngineStore {
   subscribe(listener: () => void): () => void;
   dispatch(msg: ServerMessage, now?: number): void;
   setConnection(c: ConnectionState): void;
-  setStatus(s: StatusView): void;
+  /** `receivedAt`: client clock when it arrived (default now). */
+  setStatus(s: StatusView, receivedAt?: number): void;
   seedFilings(filings: readonly FilingView[]): void;
   seedSeries(ticker: string, points: readonly HistoryPoint[]): void;
   setPortfolio(p: PortfolioView | null): void;
@@ -223,7 +227,7 @@ export function createEngineStore(initial: EngineState = INITIAL_STATE): EngineS
           onMarket(msg, now);
           return;
         case 'status':
-          set({ ...state, status: msg.status });
+          set({ ...state, status: msg.status, statusAt: now });
           return;
         case 'filing': {
           if (state.filings.some((f) => f.id === msg.filing.id)) return;
@@ -253,8 +257,8 @@ export function createEngineStore(initial: EngineState = INITIAL_STATE): EngineS
     setConnection(c) {
       if (state.connection !== c) set({ ...state, connection: c });
     },
-    setStatus(s) {
-      set({ ...state, status: s });
+    setStatus(s, receivedAt = Date.now()) {
+      set({ ...state, status: s, statusAt: receivedAt });
     },
     seedFilings(filings) {
       const known = new Set(state.filings.map((f) => f.id));
@@ -282,6 +286,26 @@ export function createEngineStore(initial: EngineState = INITIAL_STATE): EngineS
       set({ ...state, views: { ...state.views, [view.ticker]: view } });
     },
   };
+}
+
+/**
+ * Engine time at client time `clientNow`: the newest engine reading (status.now or the market
+ * frame's `at`, whichever arrived last) plus the wall time elapsed since it arrived. In REPLAY this
+ * is recording time; the browser clock only measures how much time passed. Null before either.
+ */
+export function engineNow(s: EngineState, clientNow: number): number | null {
+  const fromStatus =
+    s.status && s.statusAt !== null && Number.isFinite(s.status.now)
+      ? { at: s.status.now, received: s.statusAt }
+      : null;
+  const fromMarket = s.market ? { at: s.market.at, received: s.market.receivedAt } : null;
+  const base =
+    fromStatus && fromMarket
+      ? fromStatus.received > fromMarket.received
+        ? fromStatus
+        : fromMarket
+      : (fromStatus ?? fromMarket);
+  return base ? base.at + Math.max(0, clientNow - base.received) : null;
 }
 
 /** Last `minutes` buckets of a series ending at `endAt`, gaps filled with null (for sparklines). */

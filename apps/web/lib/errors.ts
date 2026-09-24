@@ -14,6 +14,8 @@ const ORDER: Record<string, string> = {
     'IPO allocation used up: at most 10% of season cash in the first minute.',
   UNKNOWN_TICKER: 'That company is not listed.',
   RATE_LIMITED: 'Too many orders at once. Wait a second.',
+  MARKET_PAUSED:
+    'The market is still paused while prices catch up. Nothing was traded; try again in a moment.',
   UNAUTHORIZED: 'Your player session expired. Reload the page.',
   NETWORK: 'Cannot reach the engine. Nothing was traded.',
   TIMEOUT: 'The engine did not answer in time. Check your desk before trying again.',

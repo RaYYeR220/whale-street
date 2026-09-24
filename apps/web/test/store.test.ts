@@ -3,12 +3,13 @@ import {
   appendPoint,
   change,
   createEngineStore,
+  engineNow,
   FILINGS_MAX,
   lastMinutes,
   MINUTE_MS,
   seriesFromHistory,
 } from '../lib/store';
-import { entry, filing, market, T0 } from './helpers';
+import { entry, filing, market, status, T0 } from './helpers';
 
 describe('market frames', () => {
   it('keeps unchanged entries (and the list) referentially stable', () => {
@@ -141,5 +142,21 @@ describe('series helpers', () => {
     expect(change([null, 100, null, 110])).toBeCloseTo(0.1);
     expect(change([null, null])).toBeNull();
     expect(change([0, 5])).toBeNull();
+  });
+});
+
+describe('engine time', () => {
+  it('runs from the newest of the status and the market frame, at wall speed in between', () => {
+    const store = createEngineStore();
+    expect(engineNow(store.getState(), T0)).toBeNull();
+    // REPLAY: engine time is recording time, a week before the wall clock here.
+    const rec = T0 - 7 * 86_400_000;
+    store.setStatus(status({ now: rec }), T0);
+    expect(engineNow(store.getState(), T0 + 500)).toBe(rec + 500);
+    store.dispatch(market(rec + 30_000, []), T0 + 1_000);
+    expect(engineNow(store.getState(), T0 + 1_500)).toBe(rec + 30_500);
+    // A later status frame wins, even when the replay loop jumped back.
+    store.dispatch({ t: 'status', status: status({ now: rec - 600_000 }) }, T0 + 2_000);
+    expect(engineNow(store.getState(), T0 + 2_000)).toBe(rec - 600_000);
   });
 });

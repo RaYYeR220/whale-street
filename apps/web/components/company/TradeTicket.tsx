@@ -54,6 +54,8 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
     qty: number;
   } | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Set while a MARKET_PAUSED order waits to be sent again ("Market opening…"). */
+  const [pausedLabel, setPausedLabel] = useState<string | null>(null);
 
   const holding = portfolio?.holdings.find((h) => h.ticker === c.ticker);
   const ipoLeft = ipoAllowance(holding?.longCost);
@@ -109,7 +111,8 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
   const place = async () => {
     if (!ok) return;
     setBusy(true);
-    await trade({ ticker: c.ticker, side: WIRE[side], qty });
+    await trade({ ticker: c.ticker, side: WIRE[side], qty }, { onPaused: setPausedLabel });
+    setPausedLabel(null);
     setBusy(false);
   };
 
@@ -341,6 +344,12 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
             <p className="co-ticket__note ws-v-red" id="trade-err" role="alert">
               {amt > 0 ? error : ''}
             </p>
+            {q?.paused && !error ? (
+              <p className="co-ticket__note" data-testid="quote-paused">
+                Market paused while prices catch up: this quote is indicative. An order now wakes
+                the market and is sent again once it opens.
+              </p>
+            ) : null}
             <button
               className={`ws-btn co-go${side === 'short' || side === 'sell' ? ' ws-btn--short' : ''}`}
               type="button"
@@ -348,7 +357,7 @@ export function TradeTicket({ c, now }: { c: DisplayCompany; now: number | null 
               onClick={() => void place()}
             >
               {busy
-                ? 'Sending…'
+                ? (pausedLabel ?? 'Sending…')
                 : ok
                   ? `${VERB[side]} ${shares(qty)} ${c.ticker}`
                   : `${VERB[side]} ${c.ticker}`}

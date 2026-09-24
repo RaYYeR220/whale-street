@@ -1,16 +1,18 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BoardView } from '../components/board/BoardView';
 import { Banners } from '../components/chrome/Banners';
 import { EngineOffline } from '../components/chrome/EngineOffline';
 import { ModeBadge } from '../components/chrome/ModeBadge';
 import { PlayerChip } from '../components/chrome/PlayerChip';
+import { SeasonClock } from '../components/chrome/SeasonClock';
 import { isCurrent, NAV } from '../components/chrome/TopBar';
 import { EngineProvider, type EngineRuntime } from '../components/providers/engine';
 import { createApi } from '../lib/api';
 import { createEngineStore } from '../lib/store';
 import { EngineSocket } from '../lib/ws-client';
-import { FakeSocket, fakeFetch, json, portfolio, status } from './helpers';
+import { FakeSocket, fakeFetch, json, portfolio, status, T0 } from './helpers';
 import { testRuntime, Wrap } from './render';
 
 function runtime(): EngineRuntime {
@@ -48,6 +50,23 @@ describe('mode badge (never hidden)', () => {
     const badge = screen.getByText('REPLAY · recorded session');
     expect(badge.getAttribute('data-mode')).toBe('replay');
     expect(badge.getAttribute('data-short')).toBe('REPLAY');
+  });
+
+  it('says which replay loop is playing', () => {
+    const rt = mount(<ModeBadge />);
+    act(() =>
+      rt.store.setStatus(
+        status({ mode: 'replay', loop: { index: 2, startT: T0, endT: T0 + 600_000 } }),
+      ),
+    );
+    expect(screen.getByText('REPLAY · recorded session · loop 3')).toBeTruthy();
+  });
+
+  it('keeps the last known mode when the engine stops answering', () => {
+    const rt = mount(<ModeBadge />);
+    act(() => rt.store.setStatus(status({ mode: 'replay' })));
+    act(() => rt.store.setConnection('reconnecting'));
+    expect(screen.getByText('REPLAY · recorded session')).toBeTruthy();
   });
 
   it('names the synthetic demo', () => {
@@ -136,5 +155,35 @@ describe('player chip', () => {
     expect(screen.getByText(/missing live price for OOH/)).toBeTruthy();
     expect(chip.getAttribute('aria-label')).toMatch(/net worth — \(missing live price for OOH\)/);
     localStorage.clear();
+  });
+});
+
+describe('the season in REPLAY', () => {
+  const season = { id: 1, startedAt: T0, endsAt: T0 + 7 * 86_400_000, status: 'ACTIVE' as const };
+  const board = (mode: 'live' | 'replay') => {
+    const rt = testRuntime();
+    rt.store.setStatus(status({ mode }), T0);
+    render(
+      <Wrap runtime={rt}>
+        <SeasonClock />
+        <BoardView seasons={[season]} initialRows={[]} />
+      </Wrap>,
+    );
+    return document.body.textContent ?? '';
+  };
+
+  it('is a practice season: the recording loops and positions are revalued at each wrap', () => {
+    const text = board('replay');
+    expect(text).toContain('Practice season (replay) standings');
+    expect(text).toContain('left in the practice season (replay)');
+    expect(text).toMatch(/recorded session loops/);
+    expect(text).not.toContain('Season 1 standings');
+  });
+
+  it('keeps the numbered season in LIVE', () => {
+    const text = board('live');
+    expect(text).toContain('Season 1 standings');
+    expect(text).toContain('left in Season 1');
+    expect(text).not.toContain('Practice season');
   });
 });

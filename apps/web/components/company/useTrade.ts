@@ -7,19 +7,35 @@ import { orderErrorText } from '../../lib/errors';
 import { pct, price, shares, usd } from '../../lib/format';
 import { useDrawer } from '../chrome/Drawer';
 import { useToast } from '../chrome/Toast';
-import { useApi } from '../providers/engine';
+import { useEngineRuntime } from '../providers/engine';
 import { usePlayer } from '../providers/player';
 
 const PAST = { BUY: 'Bought', SELL: 'Sold', SHORT: 'Shorted', COVER: 'Covered' } as const;
+/** The engine's suggested wait when a MARKET_PAUSED reply does not say (it sends 2 s). */
+export const PAUSED_RETRY_MS = 2_000;
 
-/** Places a play-money order and announces the fill (GACHA!) or the refusal. */
-export function useTrade(): (body: OrderBody) => Promise<ApiResult<OrderFilled>> {
-  const api = useApi();
+export interface TradeOptions {
+  /**
+   * The engine refused with MARKET_PAUSED (idle, marks delayed, or not ticked since boot): the
+   * refused order itself wakes it, and the order is sent once more after its delay. `label` says
+   * which ("Market waking up…" after an idle stretch, "Market opening…" otherwise).
+   */
+  onPaused?(label: string): void;
+}
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Places a play-money order and announces the fill (GACHA!) or the refusal. A MARKET_PAUSED
+ * refusal is retried once after the engine's retryAfterMs; a second one is shown as the refusal.
+ */
+export function useTrade(): (body: OrderBody, o?: TradeOptions) => Promise<ApiResult<OrderFilled>> {
+  const { api, store } = useEngineRuntime();
   const { token } = usePlayer();
   const toast = useToast();
   const { open } = useDrawer();
   return useCallback(
-    async (body: OrderBody) => {
+    async (body: OrderBody, o: TradeOptions = {}) => {
       if (!token)
         return {
           ok: false,
@@ -27,7 +43,22 @@ export function useTrade(): (body: OrderBody) => Promise<ApiResult<OrderFilled>>
           error: 'UNAUTHORIZED',
           message: 'Your player is still signing in.',
         } as const;
-      const r = await api.placeOrder(token, body);
+      // Read before sending: the order wakes an idle engine, and its status changes at once.
+      const wasIdle = store.getState().status?.idle ?? false;
+      let r = await api.placeOrder(token, body);
+      if (!r.ok && r.error === 'MARKET_PAUSED') {
+        const label = wasIdle ? 'Market waking up…' : 'Market opening…';
+        if (o.onPaused) o.onPaused(label);
+        else
+          toast({
+            sfx: '…',
+            kana: 'まって',
+            title: label,
+            sub: `Prices are catching up. Your ${body.ticker} order is sent again in a moment.`,
+          });
+        await wait(r.retryAfterMs ?? PAUSED_RETRY_MS);
+        r = await api.placeOrder(token, body);
+      }
       if (!r.ok) {
         toast({
           sfx: '✕',
@@ -48,6 +79,6 @@ export function useTrade(): (body: OrderBody) => Promise<ApiResult<OrderFilled>>
       });
       return r;
     },
-    [api, token, toast, open],
+    [api, store, token, toast, open],
   );
 }
