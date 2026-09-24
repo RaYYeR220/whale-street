@@ -12,12 +12,21 @@ import type { MirrorOrderView, MirrorPrepareBody, MirrorReason, MirrorReceipt } 
 import { STEP_TTL_MS } from './policy';
 import { signStep } from './sign';
 
+/** What the engine's order log says about an order this page did not send itself (a reload). */
+export interface LoggedOrder {
+  ticker: string;
+  coin: string;
+  notionalUsd: number;
+}
+
 export type MirrorOutcome =
   | { kind: 'refused'; refusals: MirrorReason[]; groupId: string | null }
   | {
       kind: 'filled';
       groupId: string;
-      order: MirrorOrder;
+      /** Null for an order known only from the engine's log (sent before this page loaded). */
+      order: MirrorOrder | null;
+      logged?: LoggedOrder;
       receipts: MirrorReceipt[];
       /** A problem with the attached stop-loss (the order itself is on Hyperliquid). */
       warning: string | null;
@@ -33,7 +42,9 @@ export type MirrorOutcome =
       stepId: string;
       /** When the outcome became unknown (browser clock). */
       since: number;
-      order: MirrorOrder;
+      /** Null for an order known only from the engine's log (sent before this page loaded). */
+      order: MirrorOrder | null;
+      logged?: LoggedOrder;
       receipts: MirrorReceipt[];
       detail: string;
     }
@@ -108,19 +119,54 @@ export function resolveUnknown(
   return { kind: 'unknown', status: row.status.toLowerCase() };
 }
 
+/** Order statuses whose outcome the engine is still learning from Hyperliquid. */
+export const UNRESOLVED = new Set<MirrorOrderView['status']>(['UNKNOWN', 'SUBMITTED']);
+
+/** The player's orders whose outcome is still unknown on the engine, newest first. */
+export function unresolvedOrders(
+  orders: readonly MirrorOrderView[],
+  putAside: ReadonlySet<string>,
+): MirrorOrderView[] {
+  return orders
+    .filter((o) => o.kind === 'order' && UNRESOLVED.has(o.status) && !putAside.has(o.id))
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/**
+ * An order the engine still lists as UNKNOWN or SUBMITTED, as the "checking with Hyperliquid"
+ * outcome: after a reload the page must not forget it and offer to send the same order again.
+ */
+export function unknownFromLog(row: MirrorOrderView): Extract<MirrorOutcome, { kind: 'unknown' }> {
+  return {
+    kind: 'unknown',
+    groupId: row.groupId,
+    stepId: row.id,
+    since: row.createdAt,
+    order: null,
+    logged: { ticker: row.ticker, coin: row.coin, notionalUsd: row.notionalUsd },
+    receipts: [],
+    detail: row.error ?? 'Sent earlier; Hyperliquid has not confirmed it yet.',
+  };
+}
+
 /** Hyperliquid's answer when the signing agent is not (or no longer) approved for the wallet. */
 const HL_AGENT_REJECTED =
   /(api wallet|agent)[^.]*(does not exist|not found|unauthori[sz]ed|not approved|expired)/i;
 
 /**
- * True when the stored agent key can no longer trade: the engine has another agent or wallet on
- * record (BAD_SIGNATURE, NO_AGENT, NO_WALLET) or Hyperliquid rejects the agent itself.
+ * True when the stored agent key can no longer trade: the engine has another agent on record
+ * (BAD_SIGNATURE, NO_AGENT) or Hyperliquid rejects the agent itself. A changed wallet link
+ * (NO_WALLET) is not an agent problem: a new key would be refused the same way (walletProblem).
  */
 export function agentProblem(out: MirrorOutcome): boolean {
   if (out.kind !== 'error') return false;
-  if (out.code === 'BAD_SIGNATURE' || out.code === 'NO_AGENT' || out.code === 'NO_WALLET')
-    return true;
+  if (out.code === 'BAD_SIGNATURE' || out.code === 'NO_AGENT') return true;
   return out.code === 'REJECTED' && HL_AGENT_REJECTED.test(out.message);
+}
+
+/** The player's linked wallet is no longer this one: link it again (then approve its agent). */
+export function walletProblem(out: MirrorOutcome): boolean {
+  return out.kind === 'error' && out.code === 'NO_WALLET';
 }
 
 export type MirrorProgress =

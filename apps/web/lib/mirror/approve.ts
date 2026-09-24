@@ -5,6 +5,17 @@ import { approveAgentOnHl, approveBuilderFeeOnHl, type HlSigner } from './hl';
 import type { AgentRecord, KeyStore } from './keystore';
 import { BUILDER_FEE_CEILING } from './policy';
 
+/** The engine refused a setup step, with its error code (WALLET_IN_USE, NO_WALLET, ...). */
+export class EngineRefusal extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'EngineRefusal';
+  }
+}
+
 export interface ApproveDeps {
   api: Pick<Api, 'builderFee' | 'registerAgent'>;
   token: string;
@@ -36,14 +47,14 @@ export async function approveAgentKey(d: ApproveDeps): Promise<AgentRecord> {
     await d.store.save(rec);
   }
   const fee = await d.api.builderFee(d.token);
-  if (!fee.ok) throw new Error(fee.message);
+  if (!fee.ok) throw new EngineRefusal(fee.error, fee.message);
   if (!fee.data.approved)
     await approveBuilderFeeOnHl(d.signer, {
       builder: fee.data.builderAddress,
       tenthsBp: BUILDER_FEE_CEILING,
     });
   const reg = await d.api.registerAgent(d.token, d.master, rec.agentAddress);
-  if (!reg.ok) throw new Error(reg.message);
+  if (!reg.ok) throw new EngineRefusal(reg.error, reg.message);
   rec = { ...rec, approvedAt: now() };
   await d.store.save(rec);
   return rec;

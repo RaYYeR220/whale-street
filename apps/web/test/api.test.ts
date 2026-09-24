@@ -99,6 +99,22 @@ describe('engine API client', () => {
     });
   });
 
+  it('tells the application the engine already had (200) from a new one (202)', async () => {
+    const app = { id: 'ipo_1', address: `0x${'a'.repeat(40)}`, status: 'PENDING' };
+    let code = 200;
+    const f = fakeFetch({ 'POST /api/ipo': () => json({ app }, code) });
+    const api = createApi(BASE, f.impl);
+    expect(await api.applyIpo('tok', app.address)).toEqual({
+      ok: true,
+      data: { app, existing: true },
+    });
+    code = 202;
+    expect(await api.applyIpo('tok', app.address)).toEqual({
+      ok: true,
+      data: { app, existing: false },
+    });
+  });
+
   it('encodes path segments', async () => {
     const f = fakeFetch({ 'GET /api/players/Velvet%20Anchovy%20%23412': () => json({}) });
     const r = await createApi(BASE, f.impl).profile('Velvet Anchovy #412');

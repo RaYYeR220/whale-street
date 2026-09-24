@@ -12,6 +12,7 @@ import {
   PARAMS,
 } from '@whale-street/core';
 import type { CompanyView, MirrorOrderView } from '../api-types';
+import { usd } from '../format';
 
 const DAY_MS = 86_400_000;
 /** Statuses that count as open mirrors (the engine may also discount coins the wallet is flat on). */
@@ -157,7 +158,7 @@ export function checkRows(
     [
       'DAILY_CAP',
       'Daily cap',
-      `$${ctx.playerDailyNotionalUsd + (req.notionalUsd || 0)} of $${MIRROR.dailyCapUsd}`,
+      `${usd(ctx.playerDailyNotionalUsd + (req.notionalUsd || 0))} of ${usd(MIRROR.dailyCapUsd)}`,
     ],
     ['LEVERAGE_CAP', 'Leverage', `${req.leverage}x, cap ${allowedLev}x`],
     [

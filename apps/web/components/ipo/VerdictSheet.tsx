@@ -4,7 +4,7 @@ import type { CheckResult } from '@whale-street/core';
 import Link from 'next/link';
 import { useState } from 'react';
 import type { CompanyView, IpoView } from '../../lib/api-types';
-import { headline, hedgeOffset, MEMBERS } from '../../lib/committee';
+import { deferral, headline, hedgeOffset, MEMBERS } from '../../lib/committee';
 import { IPO_CAP_USD } from '../../lib/company';
 import { agoLong, compact, mmss, shortAddress } from '../../lib/format';
 import { Portrait } from '../ink/Portrait';
@@ -275,7 +275,7 @@ export function VerdictSheet({
           <>
             <p className="ipo-v__reason">
               {app.status === 'DEFERRED'
-                ? `${app.reason ? `${app.reason.replace(/^[A-Z_]+: /, '')}. ` : ''}Unknown is never a pass and never a fail, so nothing was decided. Send the address again later.`
+                ? deferral(app).detail
                 : app.reason
                   ? app.reason.replace(/^[A-Z_]+: /, 'Failed: ')
                   : 'One of the six checks failed.'}

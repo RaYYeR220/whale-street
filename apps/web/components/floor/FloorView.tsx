@@ -275,7 +275,7 @@ export function FloorView({
         </div>
         <aside className="floor__rail" aria-label="Floor news">
           <Newsroom filings={filings} byTicker={market?.byTicker ?? {}} now={now} onGo={go} />
-          <StreetMood mood={market?.mood ?? []} />
+          <StreetMood mood={market?.mood ?? []} now={now} />
           <Tape tape={tape} now={now} you={player?.handle ?? null} />
         </aside>
         <footer className="floor__foot">

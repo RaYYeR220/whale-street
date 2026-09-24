@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import type { IpoView } from '../../lib/api-types';
-import { MEMBERS, verdictChecks } from '../../lib/committee';
+import { deferral, MEMBERS, verdictChecks } from '../../lib/committee';
 import { ago, shortAddress } from '../../lib/format';
 import { Hanko } from '../ink/Hanko';
 import { Portrait } from '../ink/Portrait';
@@ -71,6 +71,10 @@ export function VerdictWall({
                     <>
                       <b className="ws-v-down">Listed</b>, rated {a.verdict?.rating ?? '—'}
                     </>
+                  ) : a.status === 'DEFERRED' && !a.verdict ? (
+                    <>
+                      <b>Deferred:</b> {deferral(a).headline.replace(/^Deferred: /, '')}
+                    </>
                   ) : a.status === 'DEFERRED' ? (
                     <>
                       <b>Unknown:</b> {name ?? 'evidence'}
@@ -84,7 +88,9 @@ export function VerdictWall({
                 <p className="ipo-card__line">
                   {a.status === 'APPROVED'
                     ? `Listed as ${a.ticker}.`
-                    : (bad?.detail ?? a.reason ?? '')}
+                    : a.status === 'DEFERRED' && !a.verdict
+                      ? deferral(a).detail
+                      : (bad?.detail ?? a.reason ?? '')}
                 </p>
                 <div className="ipo-card__foot">
                   <Link className="ws-link" href={`/ipo/${a.id}`}>

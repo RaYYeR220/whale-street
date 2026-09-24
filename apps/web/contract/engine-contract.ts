@@ -33,8 +33,12 @@ import type {
   PortfolioView as EPortfolio,
   QuoteResult as EQuote,
 } from '../../engine/src/services/exchange';
-import type { IpoView as EIpoView } from '../../engine/src/services/ipo';
 import type {
+  ApplyErrorCode as EApplyError,
+  IpoView as EIpoView,
+} from '../../engine/src/services/ipo';
+import type {
+  MirrorErrorCode as EMirrorError,
   MirrorOrderView as EMirrorOrder,
   PrepareResult as EPrepare,
   MirrorReceipt as EReceipt,
@@ -55,6 +59,11 @@ type EBuilderFee = Extract<
   Awaited<ReturnType<MirrorService['builderStatus']>>,
   { ok: true }
 >['status'];
+/** POST /api/mirror/prepare: the route answers a policy refusal as `{ ...result, ok: false }`. */
+type EPrepareOk = Extract<EPrepare, { ok: true }>;
+type EPrepareWire =
+  | Exclude<EPrepareOk, { refusals: unknown }>
+  | (Omit<Extract<EPrepareOk, { refusals: unknown }>, 'ok'> & { ok: false });
 /** The shapes api/rest.ts assembles inline from repository rows. */
 // GET /api/companies/:ticker/history → points.map(({ t, nav, price }) => ({ t, nav, price }))
 type EHistoryPoint = Pick<ENavPoint, 't' | 'nav' | 'price'>;
@@ -79,7 +88,7 @@ export type EngineToWeb = [
   Accepts<W.QuoteView, Extract<EQuote, { ok: true }>>,
   Accepts<W.OrderFilled, Extract<EOrder, { ok: true }>>,
   Accepts<W.ServerMessage, EServer>,
-  Accepts<W.PrepareView, Extract<EPrepare, { ok: true }>>,
+  Accepts<W.PrepareView, EPrepareWire>,
   Accepts<W.MirrorStep, EStep>,
   Accepts<W.MirrorReceipt, EReceipt>,
   Accepts<W.MirrorOrderView, EMirrorOrder>,
@@ -98,4 +107,8 @@ export type WebToEngine = [Accepts<EClient, W.ClientMessage>];
 export type SameCodes = [
   Accepts<W.LinkErrorCode, ELinkError>,
   Accepts<ELinkError, W.LinkErrorCode>,
+  Accepts<W.IpoApplyErrorCode, EApplyError>,
+  Accepts<EApplyError, W.IpoApplyErrorCode>,
+  Accepts<W.MirrorErrorCode, EMirrorError>,
+  Accepts<EMirrorError, W.MirrorErrorCode>,
 ];

@@ -5,7 +5,17 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { MirrorOrderView, TradeRowView } from '../../lib/api-types';
 import { hypeOf } from '../../lib/company';
-import { agoSec, pct, price, shares, shortAddress, signedUsd, upDown, usd } from '../../lib/format';
+import {
+  agoLong,
+  agoSec,
+  pct,
+  price,
+  shares,
+  shortAddress,
+  signedUsd,
+  upDown,
+  usd,
+} from '../../lib/format';
 import { avgEntry, holdingPnl, holdingReturn, isShort } from '../../lib/portfolio';
 import { Portrait } from '../ink/Portrait';
 import { useApi, useEngine, useEngineNow } from '../providers/engine';
@@ -210,22 +220,22 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
                 <MirrorSeal status={m.status} />
                 <span>
                   <b>
-                    {m.ticker}: {m.coin}, ${m.notionalUsd}
+                    {m.ticker}: {m.coin}, {usd(m.notionalUsd)}
                   </b>
                   <span className="s">
                     {m.status === 'REFUSED'
                       ? (m.refusals ?? []).map((r) => `${r.code}: “${r.message}”`).join(' ')
                       : m.status === 'UNKNOWN' || m.status === 'SUBMITTED'
                         ? 'No definitive answer from Hyperliquid. Check it there before sending again.'
-                        : m.error
-                          ? m.error
-                          : m.hlOid !== null
-                            ? `Order ${m.hlOid}${m.avgPx !== null ? ` at ${price(m.avgPx)}` : ''}`
-                            : 'Sent'}
+                        : m.status === 'CLOSED'
+                          ? `Filled, and closed on Hyperliquid since${m.hlOid !== null ? ` (order ${m.hlOid})` : ''}.`
+                          : m.error
+                            ? m.error
+                            : m.hlOid !== null
+                              ? `Order ${m.hlOid}${m.avgPx !== null ? ` at ${price(m.avgPx)}` : ''}`
+                              : 'Sent'}
                   </span>
-                  <span className="s">
-                    {now !== null ? `${agoSec(now - m.createdAt)} ago` : ''}
-                  </span>
+                  <span className="s">{now !== null ? agoLong(now - m.createdAt) : ''}</span>
                 </span>
                 <span
                   className={`me-mir__st ${m.status === 'REFUSED' || m.status === 'REJECTED' ? 'ws-v-red' : m.status === 'UNKNOWN' || m.status === 'SUBMITTED' ? 'ws-v-down' : 'ws-v-nav'}`}

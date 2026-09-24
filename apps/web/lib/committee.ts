@@ -112,9 +112,53 @@ export function isDecided(app: IpoView | null): app is IpoView {
 export const decidedUpdate = (updates: readonly IpoUpdate[], appId: string) =>
   updates.find((u) => u.appId === appId && u.kind === 'decided') ?? null;
 
+/**
+ * Why an application was deferred, in words. The desk defers some without asking the committee
+ * (engine reasons: HIP-3 exposure, a full queue, the credit floor, a restart, REPLAY addresses);
+ * a committee deferral means evidence was missing.
+ */
+export function deferral(app: IpoView): { headline: string; detail: string } {
+  const reason = app.reason ?? '';
+  // The engine's words after its "kind:" prefix, as a sentence.
+  const after = (r: string) => {
+    const t = r.replace(/^[^:]*:\s*/, '');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  if (/^holds HIP-3 markets/.test(reason))
+    return {
+      headline: 'Deferred: holds HIP-3 markets',
+      detail:
+        'This trader holds HIP-3 markets (perps deployed by builders), which Whale Street does not list yet. Nothing was decided.',
+    };
+  if (/^desk busy/.test(reason))
+    return {
+      headline: 'Deferred: the desk was busy',
+      detail: `${after(reason).replace(/;\s*apply again later$/, '')}. Nothing was decided; send the address again later.`,
+    };
+  if (/^credit floor/.test(reason))
+    return {
+      headline: 'Deferred: Nansen credit floor',
+      detail: `${after(reason)}. Send the address again once the desk reopens.`,
+    };
+  if (reason === 'engine restarted')
+    return {
+      headline: 'Deferred: the engine restarted',
+      detail: 'The engine restarted before the committee finished. Send the address again.',
+    };
+  if (/^not in recording/.test(reason))
+    return {
+      headline: 'Deferred: not in this recording',
+      detail: `${after(reason)}.`,
+    };
+  return {
+    headline: 'Deferred: evidence unavailable',
+    detail: `${reason ? `${reason.replace(/^[A-Z_]+: /, '')}. ` : ''}Unknown is never a pass and never a fail, so nothing was decided. Send the address again later.`,
+  };
+}
+
 export function headline(app: IpoView, companyName: string | null): string {
   if (app.status === 'APPROVED') return `Listed: ${companyName ?? app.ticker ?? 'new company'}`;
-  if (app.status === 'DEFERRED') return 'Deferred: evidence unavailable';
+  if (app.status === 'DEFERRED') return deferral(app).headline;
   if (app.status === 'DENIED') {
     const fail = verdictChecks(app).find((c) => c.status === 'FAIL');
     const m = fail ? MEMBERS.find((x) => x.id === fail.id) : null;

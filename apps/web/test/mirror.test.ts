@@ -35,6 +35,9 @@ import {
   type MirrorOutcome,
   resolveUnknown,
   runMirror,
+  unknownFromLog,
+  unresolvedOrders,
+  walletProblem,
 } from '../lib/mirror/flow';
 import {
   approveAgentOnHl,
@@ -413,6 +416,14 @@ describe('policy preview', () => {
   const at = (o: Partial<typeof view> = {}) =>
     previewContext(companyView({ ...view, ...o }), 'BTC', T0, { open: 0, dailyUsd: 0 });
 
+  it('quotes the daily cap in dollars and cents: the engine stores size × mark', () => {
+    const ctx = previewContext(companyView(view), 'BTC', T0, { open: 1, dailyUsd: 82.1 + 17.8 });
+    const row = checkRows(req, ctx, previewMirror(req, ctx), 'OOH').find(
+      (r) => r.code === 'DAILY_CAP',
+    );
+    expect(row?.value).toBe('$149.90 of $300.00');
+  });
+
   it('clears a good order', () => {
     const p = previewMirror(req, at());
     expect(p).toEqual({ canSend: true, blocking: [], advisory: [], staleMs: null });
@@ -544,7 +555,7 @@ describe('runMirror', () => {
 
   it('returns the committee refusals from prepare', async () => {
     const refusals = [{ code: 'ANTI_FOMO', message: 'entry 5.5% worse than the trader' }];
-    const { api, executed } = fake([], { ok: true, data: { ok: true, groupId: 'g2', refusals } });
+    const { api, executed } = fake([], { ok: true, data: { ok: false, groupId: 'g2', refusals } });
     expect(await runMirror({ api, token: 't', body, privateKey: AGENT_KEY })).toEqual({
       kind: 'refused',
       refusals,
@@ -717,6 +728,46 @@ describe('resolving an unknown order from the engine’s order log', () => {
   });
 });
 
+describe('orders still unknown on the engine', () => {
+  const row = (o: Partial<MirrorOrderView>): MirrorOrderView => ({
+    id: 's1',
+    groupId: 'g1',
+    kind: 'order',
+    ticker: 'OOH',
+    coin: 'BTC',
+    status: 'UNKNOWN',
+    notionalUsd: 50,
+    refusals: null,
+    hlOid: null,
+    avgPx: null,
+    error: null,
+    createdAt: T0,
+    explorerUrl: null,
+    ...o,
+  });
+
+  it('lists UNKNOWN and SUBMITTED orders, newest first, minus the ones put aside', () => {
+    const rows = [
+      row({ id: 'a', createdAt: T0 }),
+      row({ id: 'b', status: 'SUBMITTED', createdAt: T0 + 1 }),
+      row({ id: 'c', status: 'FILLED' }),
+      row({ id: 'd', kind: 'leverage' }),
+      row({ id: 'e', createdAt: T0 + 2 }),
+    ];
+    expect(unresolvedOrders(rows, new Set(['e'])).map((r) => r.id)).toEqual(['b', 'a']);
+  });
+
+  it('turns one into the checking state without inventing the order it cannot know', () => {
+    const out = unknownFromLog(row({ id: 's7', error: null }));
+    expect(out).toMatchObject({
+      kind: 'unknown',
+      stepId: 's7',
+      order: null,
+      logged: { ticker: 'OOH', coin: 'BTC', notionalUsd: 50 },
+    });
+  });
+});
+
 describe('agent key problems', () => {
   const err = (code: string, message: string): MirrorOutcome => ({
     kind: 'error',
@@ -728,10 +779,18 @@ describe('agent key problems', () => {
   it('asks for a new agent key when the engine or Hyperliquid no longer accepts this one', () => {
     expect(agentProblem(err('BAD_SIGNATURE', 'not signed by your approved agent key'))).toBe(true);
     expect(agentProblem(err('NO_AGENT', 'approve a Whale Street agent key first'))).toBe(true);
-    expect(agentProblem(err('NO_WALLET', 'your linked wallet changed'))).toBe(true);
     expect(agentProblem(err('REJECTED', 'User or API Wallet 0xab12 does not exist.'))).toBe(true);
     expect(agentProblem(err('REJECTED', 'Insufficient margin to place order.'))).toBe(false);
     expect(agentProblem(err('HTTP_502', 'Bad Gateway'))).toBe(false);
+  });
+
+  it('asks to link the wallet again, not for a new key, when the player’s wallet changed', () => {
+    const changed = err('NO_WALLET', 'your linked wallet changed');
+    expect(agentProblem(changed)).toBe(false);
+    expect(walletProblem(changed)).toBe(true);
+    expect(walletProblem(err('BAD_SIGNATURE', 'not signed by your approved agent key'))).toBe(
+      false,
+    );
   });
 });
 

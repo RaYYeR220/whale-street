@@ -4,7 +4,7 @@ import { Fragment, useMemo, useState } from 'react';
 import type { FilingView, MarketEntry, MoodEntry, TapeView } from '../../lib/api-types';
 import { displayStatus, hypeOf, portraitStatus } from '../../lib/company';
 import { filingText, foldRepeats, kindOf, TONE_TEXT } from '../../lib/filings';
-import { ago, agoSec, compact } from '../../lib/format';
+import { ago, agoLong, agoSec, compact } from '../../lib/format';
 import { NMark } from '../chrome/Drawer';
 import { Portrait } from '../ink/Portrait';
 
@@ -118,46 +118,71 @@ const WHALE = (flip: boolean) => (
   </svg>
 );
 
-function Crowd({
-  label,
-  long,
-  short,
-  glyph,
-}: {
-  label: string;
-  long: number;
-  short: number;
-  glyph: 'p' | 'w';
-}) {
-  const tot = long + short;
-  const nl = tot > 0 ? Math.round((10 * long) / tot) : 5;
-  const ns = 10 - nl;
+/** Figures in one crowd. */
+const CROWD = 10;
+
+/**
+ * A cohort's skew ((long − short) / (long + short), in [−1, 1]) as ten figures: (1 + skew) / 2 of
+ * them lean long. Null without a valid reading: an unknown cohort is never drawn as an even split.
+ */
+export function crowdOf(
+  skew: number | null,
+): { long: number; short: number; longShare: number } | null {
+  if (skew === null || !Number.isFinite(skew) || skew < -1 || skew > 1) return null;
+  const longShare = (1 + skew) / 2;
+  const long = Math.round(CROWD * longShare);
+  return { long, short: CROWD - long, longShare };
+}
+
+const pctOf = (f: number) => `${Math.round(f * 100)}%`;
+
+function Crowd({ label, skew, glyph }: { label: string; skew: number | null; glyph: 'p' | 'w' }) {
+  const c = crowdOf(skew);
+  const text = c
+    ? `${label}: ${pctOf(c.longShare)} long, ${pctOf(1 - c.longShare)} short`
+    : `${label}: no reading`;
   return (
-    <div className="ws-crowd" title={`${label}: ${compact(short)} short, ${compact(long)} long`}>
-      <span className="ws-crowd__usd ws-crowd__usd--l">{compact(short)}</span>
-      <span className="ws-crowd__side ws-crowd__side--short">
-        {Array.from({ length: ns }, (_, i) => (
+    <div className="ws-crowd" title={text}>
+      <span className="ws-crowd__usd ws-crowd__usd--l" aria-hidden="true">
+        {c ? pctOf(1 - c.longShare) : '—'}
+      </span>
+      <span className="ws-crowd__side ws-crowd__side--short" aria-hidden="true">
+        {Array.from({ length: c?.short ?? 0 }, (_, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: identical glyphs in a fixed order
           <Fragment key={`s${i}`}>{glyph === 'p' ? PERSON(-12) : WHALE(true)}</Fragment>
         ))}
       </span>
       <span className="ws-crowd__axis" />
-      <span className="ws-crowd__side">
-        {Array.from({ length: nl }, (_, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: identical glyphs in a fixed order
-          <Fragment key={`l${i}`}>{glyph === 'p' ? PERSON(12) : WHALE(false)}</Fragment>
-        ))}
+      <span className="ws-crowd__side" aria-hidden="true">
+        {c ? (
+          Array.from({ length: c.long }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: identical glyphs in a fixed order
+            <Fragment key={`l${i}`}>{glyph === 'p' ? PERSON(12) : WHALE(false)}</Fragment>
+          ))
+        ) : (
+          <small className="ws-v-muted">no reading</small>
+        )}
       </span>
-      <span className="ws-crowd__usd">{compact(long)}</span>
-      <span className="ws-sr">
-        {label}: {compact(short)} short, {compact(long)} long.
+      <span className="ws-crowd__usd" aria-hidden="true">
+        {c ? pctOf(c.longShare) : '—'}
       </span>
+      <span className="ws-sr">{text}.</span>
     </div>
   );
 }
 
-/** Nansen cohort positioning per coin: smart traders and whales drawn as two crowds leaning. */
-export function StreetMood({ mood }: { mood: readonly MoodEntry[] }) {
+/** How the smart-trader crowd leans, in words. */
+function leanOf(skew: number | null): string {
+  const c = crowdOf(skew);
+  if (!c) return 'no reading';
+  return c.longShare > 0.6 ? 'leans long' : c.longShare < 0.4 ? 'leans short' : 'split';
+}
+
+/**
+ * Nansen cohort positioning per coin: smart traders and whales drawn as two crowds leaning, from
+ * the engine's derived skews. `now` is engine time (REPLAY: recording time), for each reading's age.
+ */
+export function StreetMood({ mood, now }: { mood: readonly MoodEntry[]; now: number | null }) {
   return (
     <section
       className="ws-panel ws-panel--flat ws-panel--thin ws-rail-panel rail-mood"
@@ -171,8 +196,8 @@ export function StreetMood({ mood }: { mood: readonly MoodEntry[] }) {
       </p>
       {mood.length === 0 ? (
         <p className="ws-rail-sub">
-          No cohort data yet. The engine reads it every 15 minutes while someone is watching (LIVE
-          only).
+          No cohort reading right now. The engine reads it every 15 minutes while someone is
+          watching, and drops a reading once it is two hours old.
         </p>
       ) : (
         <div className="ws-mood">
@@ -182,33 +207,21 @@ export function StreetMood({ mood }: { mood: readonly MoodEntry[] }) {
             <span>{WHALE(false)} whales</span>
             <span>Long</span>
           </div>
-          {mood.map((m) => {
-            const tot = m.smartLongs + m.smartShorts;
-            const s = tot > 0 ? m.smartLongs / tot : 0.5;
-            const lean = s > 0.6 ? 'leans long' : s < 0.4 ? 'leans short' : 'split';
-            return (
-              <div key={m.coin} className="ws-mood__coin">
-                <div className="ws-mood__name">
-                  {m.coin}
-                  <small>{lean}</small>
-                </div>
-                <div className="ws-mood__rows">
-                  <Crowd
-                    label={`Smart traders on ${m.coin}`}
-                    long={m.smartLongs}
-                    short={m.smartShorts}
-                    glyph="p"
-                  />
-                  <Crowd
-                    label={`Whales on ${m.coin}`}
-                    long={m.whaleLongs}
-                    short={m.whaleShorts}
-                    glyph="w"
-                  />
-                </div>
+          {mood.map((m) => (
+            <div key={m.coin} className="ws-mood__coin">
+              <div className="ws-mood__name">
+                {m.coin}
+                <small>
+                  {leanOf(m.smartSkew)}
+                  {now === null ? '' : `, read ${agoLong(now - m.asOf)}`}
+                </small>
               </div>
-            );
-          })}
+              <div className="ws-mood__rows">
+                <Crowd label={`Smart traders on ${m.coin}`} skew={m.smartSkew} glyph="p" />
+                <Crowd label={`Whales on ${m.coin}`} skew={m.whaleSkew} glyph="w" />
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </section>

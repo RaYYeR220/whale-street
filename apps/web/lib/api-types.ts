@@ -119,14 +119,16 @@ export interface MarketEntry {
   status: CompanyStatus;
 }
 
+/**
+ * Street mood of one coin: how Nansen's smart traders and whales lean, each as
+ * (long − short) / (long + short) ∈ [−1, 1], null when unknown. `asOf`: when the engine read it
+ * (engine clock; REPLAY: recording time).
+ */
 export interface MoodEntry {
   coin: string;
-  smartLongs: number;
-  smartShorts: number;
-  whaleLongs: number;
-  whaleShorts: number;
-  publicLongs: number;
-  publicShorts: number;
+  smartSkew: number | null;
+  whaleSkew: number | null;
+  asOf: number;
 }
 
 export interface FilingView {
@@ -168,6 +170,15 @@ export type IpoUpdate =
       ticker: string | null;
       reason: string | null;
     };
+
+/** Refusals of POST /api/ipo: 400 INVALID_ADDRESS, 429 RATE_LIMITED / IPO_DESK_BUSY, 409 the rest. */
+export type IpoApplyErrorCode =
+  | 'INVALID_ADDRESS'
+  | 'RATE_LIMITED'
+  | 'IPO_DESK_BUSY'
+  | 'ALREADY_LISTED'
+  | 'COOLING_DOWN'
+  | 'RECENTLY_DENIED';
 
 export interface IpoView {
   id: string;
@@ -334,9 +345,29 @@ export interface MirrorStep {
   eip712: Eip712Payload;
 }
 
+/** POST /api/mirror/prepare, HTTP 200: a policy refusal (ok: false) or the steps to sign. */
 export type PrepareView =
-  | { ok: true; groupId: string; refusals: MirrorReason[] }
+  | { ok: false; groupId: string; refusals: MirrorReason[] }
   | { ok: true; groupId: string; order: MirrorOrder; steps: MirrorStep[] };
+
+/** Mirror route errors (the HTTP status is in the reply); POLICY_CHANGED also carries refusals. */
+export type MirrorErrorCode =
+  | 'TRADING_UNAVAILABLE'
+  | 'REGION_BLOCKED'
+  | 'NO_WALLET'
+  | 'WALLET_IN_USE'
+  | 'NO_AGENT'
+  | 'UNKNOWN_TICKER'
+  | 'INVALID_ADDRESS'
+  | 'PREPARE_FAILED'
+  | 'ACTION_MISMATCH'
+  | 'NOT_FOUND'
+  | 'BAD_STATE'
+  | 'EXPIRED'
+  | 'BAD_SIGNATURE'
+  | 'POLICY_CHANGED'
+  | 'REJECTED'
+  | 'UPSTREAM_FAILED';
 
 export interface MirrorPrepareBody {
   ticker: string;

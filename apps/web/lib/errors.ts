@@ -1,4 +1,4 @@
-import type { LinkErrorCode } from './api-types';
+import type { IpoApplyErrorCode, LinkErrorCode, MirrorErrorCode } from './api-types';
 
 /** Player-facing wording for engine error codes (the engine's own message is kept as detail). */
 const ORDER: Record<string, string> = {
@@ -23,16 +23,28 @@ export function orderErrorText(code: string, message: string): string {
   return ORDER[code] ?? message;
 }
 
-const IPO: Record<string, string> = {
+/** IPO desk refusals: every engine code (contract-checked), plus the transport ones. */
+const IPO: Record<IpoApplyErrorCode | 'UNAUTHORIZED' | 'NETWORK', string> = {
   INVALID_ADDRESS: 'That is not a Hyperliquid address. It starts with 0x and has 42 characters.',
   RATE_LIMITED:
     'The committee takes at most 3 applications an hour from one player. Try again later.',
+  IPO_DESK_BUSY:
+    'The IPO desk is full for this hour: it takes a limited number of applications per hour, across the desk and per network. Try again later.',
+  ALREADY_LISTED: 'This trader is already listed on the floor.',
+  COOLING_DOWN:
+    'This trader is cooling down after a bankruptcy on the floor and cannot list again yet.',
+  RECENTLY_DENIED:
+    'The committee denied this address in the last 7 days. It can apply again after that.',
   UNAUTHORIZED: 'Your player session expired. Reload the page.',
   NETWORK: 'Cannot reach the engine. Nothing was sent.',
 };
 
 export function ipoErrorText(code: string, message: string): string {
-  return IPO[code] ?? message;
+  if (code === 'ALREADY_LISTED') {
+    const ticker = message.match(/already listed as (\S+)/)?.[1];
+    if (ticker) return `This trader is already listed on the floor as ${ticker}.`;
+  }
+  return (IPO as Record<string, string>)[code] ?? message;
 }
 
 /** Wallet-link refusals: every engine code (contract-checked), plus the transport ones. */
@@ -57,4 +69,34 @@ const LINK: Record<
 
 export function linkErrorText(code: string, message: string): string {
   return (LINK as Record<string, string>)[code] ?? message;
+}
+
+/**
+ * Mirror route errors: every engine code (contract-checked). REJECTED keeps Hyperliquid's own
+ * words (margin, size, ...), which say more than any sentence of ours.
+ */
+const MIRROR: Record<Exclude<MirrorErrorCode, 'REJECTED'>, string> = {
+  TRADING_UNAVAILABLE: 'Mirror trading is off on this engine right now. Nothing was sent.',
+  REGION_BLOCKED: 'Real orders cannot be placed from the engine’s region right now.',
+  NO_WALLET: 'Your player is linked to another wallet now. Link this wallet again first.',
+  WALLET_IN_USE:
+    'This wallet already mirrors through another Whale Street player. Use another wallet, or mirror from that player.',
+  NO_AGENT: 'The engine has no agent key on record for this wallet. Approve the agent key again.',
+  UNKNOWN_TICKER: 'That company is no longer listed. Nothing was sent.',
+  INVALID_ADDRESS: 'That wallet address is not valid.',
+  PREPARE_FAILED:
+    'The Nansen Trading API could not prepare the order. Nothing was signed; try again in a minute.',
+  ACTION_MISMATCH:
+    'The prepared order did not match what you asked for, so nothing was signed or sent.',
+  NOT_FOUND: 'The engine has no record of this step. Nothing was sent.',
+  BAD_STATE: 'This step was already sent or refused, so it was not sent again.',
+  EXPIRED: 'The prepared order expired before it was sent. Send it again.',
+  BAD_SIGNATURE: 'The engine did not accept this agent key’s signature.',
+  POLICY_CHANGED:
+    'The trader or the market moved between the check and the send, so nothing was sent.',
+  UPSTREAM_FAILED: 'Hyperliquid or Nansen did not answer. Try again in a minute.',
+};
+
+export function mirrorErrorText(code: string, message: string): string {
+  return (MIRROR as Record<string, string>)[code] ?? message;
 }

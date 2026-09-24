@@ -14,7 +14,7 @@ import {
   verdictChecks,
 } from '../../lib/committee';
 import { ipoErrorText } from '../../lib/errors';
-import { shortAddress } from '../../lib/format';
+import { agoLong, shortAddress } from '../../lib/format';
 import { useReducedMotion } from '../ink/motion';
 import { useChannels, useEngine, useEngineNow, useEngineRuntime } from '../providers/engine';
 import { usePlayer } from '../providers/player';
@@ -67,6 +67,8 @@ export function IpoDesk({
   const [company, setCompany] = useState<CompanyView | null>(null);
   const [live, setLive] = useState('');
   const [replay, setReplay] = useState(0);
+  /** The last nomination returned the application the address already had. */
+  const [existing, setExisting] = useState(false);
   const roomRef = useRef<HTMLDivElement>(null);
 
   const refreshWall = useCallback(async () => {
@@ -170,6 +172,7 @@ export function IpoDesk({
       return;
     }
     setFormError(null);
+    setExisting(false);
     setSending(true);
     const r = await api.applyIpo(token, address.trim());
     setSending(false);
@@ -177,10 +180,17 @@ export function IpoDesk({
       setFormError(ipoErrorText(r.error, r.message));
       return;
     }
-    setAnimate(true);
-    setReveal(0);
-    setApp(r.data.app);
-    setLive(`Committee reviewing ${shortAddress(r.data.app.address)}.`);
+    const next = r.data.app;
+    // 200: the address already has an application; it opens as it stands (no new committee run).
+    setExisting(r.data.existing);
+    setAnimate(!r.data.existing);
+    setReveal(r.data.existing && isDecided(next) ? MEMBERS.length : 0);
+    setApp(next);
+    setLive(
+      r.data.existing
+        ? `${shortAddress(next.address)} already has an application: ${isDecided(next) ? headline(next, null) : 'the committee is reviewing it'}.`
+        : `Committee reviewing ${shortAddress(next.address)}.`,
+    );
     roomRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
   };
 
@@ -231,6 +241,15 @@ export function IpoDesk({
           <p className="ipo-form__err" id="addr-err" role="alert" hidden={!formError}>
             {formError}
           </p>
+          {existing && app ? (
+            <p className="ipo-form__help" role="status" data-testid="ipo-existing">
+              {shortAddress(app.address)} already has an application
+              {app.decidedAt !== null && now !== null
+                ? `, decided ${agoLong(now - app.decidedAt)}`
+                : ''}
+              , so the committee did not sit again. Here it is.
+            </p>
+          ) : null}
           <p className="ipo-form__help" id="addr-help">
             {creditFloor
               ? 'The committee is paused: the Nansen credit floor was reached. It reopens when credits are topped up.'

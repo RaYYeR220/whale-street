@@ -134,6 +134,7 @@ function fakeEngine(o: {
   /** The player's linked wallet as /api/me reports it (default: the connected master). */
   linked?: () => string | null;
   link?: (body: { message: string; signature: string }) => Reply;
+  agent?: () => Reply;
 }) {
   const seen = {
     prepare: 0,
@@ -157,6 +158,7 @@ function fakeEngine(o: {
         builderAddress: `0x${'b'.repeat(40)}`,
       }),
     'POST /api/mirror/agent': ({ init }) => {
+      if (o.agent) return o.agent();
       seen.agents.push((JSON.parse(String(init.body)) as { agentAddress: string }).agentAddress);
       return json({ ok: true });
     },
@@ -254,7 +256,7 @@ describe('Mirror ticket: the engine has the final say', () => {
 
   it('shows a refusal on market data as likely, lets the engine decide and renders its answer', async () => {
     const refusals = [{ code: 'ANTI_FOMO', message: 'you’d enter 8.0% worse than the trader' }];
-    const engine = fakeEngine({ prepare: () => json({ ok: true, groupId: 'g2', refusals }) });
+    const engine = fakeEngine({ prepare: () => json({ ok: false, groupId: 'g2', refusals }) });
     mount(engine, await approvedStore(), view({ positions: [{ ...BTC, mark: 111_200 * 1.08 }] }));
     const send = await toSend();
     expect(send.disabled).toBe(false);
@@ -328,12 +330,13 @@ describe('Mirror ticket: one click, one order', () => {
 describe('Mirror ticket: an order whose outcome is unknown', () => {
   it('never offers to send again and settles from the engine’s order log', async () => {
     let row = orderRow();
-    const engine = fakeEngine({
+    const engine: ReturnType<typeof fakeEngine> = fakeEngine({
       execute: (id) =>
         id === 's2'
           ? new Response('<html>Bad Gateway</html>', { status: 502, statusText: 'Bad Gateway' })
           : json(receipt(id)),
-      orders: () => [row],
+      // The engine logs the order once it is sent.
+      orders: () => (engine?.seen.execute.length ? [row] : []),
     });
     mount(engine, await approvedStore());
     fireEvent.click(await toSend());
@@ -361,10 +364,11 @@ describe('Mirror ticket: an order whose outcome is unknown', () => {
   it('keeps checking by itself until the engine knows', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let row = orderRow();
-    const engine = fakeEngine({
+    const engine: ReturnType<typeof fakeEngine> = fakeEngine({
       execute: (id) =>
         id === 's2' ? json({ error: 'INTERNAL', message: 'boom' }, 500) : json(receipt(id)),
-      orders: () => [row],
+      // The engine logs the order once it is sent.
+      orders: () => (engine?.seen.execute.length ? [row] : []),
     });
     mount(engine, await approvedStore());
     fireEvent.click(await toSend());
@@ -460,6 +464,106 @@ describe('Mirror ticket: a browser that cannot keep the key', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       'This browser cannot keep a Mirror agent key: The operation is insecure.',
     );
+  });
+});
+
+describe('Mirror ticket: the engine’s answers', () => {
+  it('shows a refusal at the credit floor with what reopens Mirror', async () => {
+    const refusals = [
+      {
+        code: 'CREDIT_FLOOR',
+        message: 'Nansen credits are nearly used up, so the trader data cannot be refreshed',
+      },
+    ];
+    const engine = fakeEngine({ prepare: () => json({ ok: false, groupId: 'g3', refusals }) });
+    mount(engine, await approvedStore());
+    fireEvent.click(await toSend());
+    await screen.findByText('The engine refused on a fresh snapshot');
+    expect(screen.getByText(/reopens once Nansen credits are topped up/)).toBeTruthy();
+    expect(engine.seen.execute).toEqual([]);
+  });
+
+  it('offers to link the wallet again, not a dead re-approve, when the linked wallet changed', async () => {
+    let linked: string | null = MASTER;
+    const engine = fakeEngine({
+      linked: () => linked,
+      execute: () => {
+        linked = `0x${'d'.repeat(40)}`;
+        return json(
+          {
+            error: 'NO_WALLET',
+            message: 'your linked wallet changed; approve an agent key for it first',
+          },
+          403,
+        );
+      },
+    });
+    mount(engine, await approvedStore());
+    fireEvent.click(await toSend());
+    await screen.findByText('Your player is linked to another wallet now');
+    expect(screen.queryByRole('button', { name: 'Re-approve agent' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Link this wallet again' }));
+    expect(await screen.findByRole('button', { name: 'Sign to link' })).toBeTruthy();
+  });
+
+  it('says the wallet already mirrors through another player when registration is refused', async () => {
+    stubHyperliquid();
+    const engine = fakeEngine({
+      agent: () =>
+        json(
+          { error: 'WALLET_IN_USE', message: 'this wallet already trades through another player' },
+          409,
+        ),
+    });
+    const store = createMemoryKeyStore();
+    mount(engine, store);
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve agent key' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(
+      /already mirrors through another Whale Street player/,
+    );
+    expect((await store.load(MASTER))?.approvedAt).toBeNull();
+  });
+});
+
+describe('Mirror ticket: an order still unknown after a reload', () => {
+  it('opens on the checking state from the engine’s order log and never offers a resend', async () => {
+    let row = orderRow({ status: 'SUBMITTED' });
+    const engine = fakeEngine({ orders: () => [row] });
+    mount(engine, await approvedStore());
+    await screen.findByText('Outcome unknown — checking with Hyperliquid');
+    expect(screen.getByText(/\$50 of BTC/)).toBeTruthy();
+    for (const name of [/Sign and send/, /Use this position/, /Start again/])
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    row = orderRow({ status: 'FILLED', avgPx: 113_990, hlOid: 42 });
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+    await screen.findByText(/Mirrored BTC, \$50/);
+    expect(engine.seen.prepare).toBe(0);
+    expect(engine.seen.execute).toEqual([]);
+  });
+
+  it('names an unknown order on another company without blocking this one', async () => {
+    const engine = fakeEngine({ orders: () => [orderRow({ ticker: 'GBC', coin: 'ETH' })] });
+    mount(engine, await approvedStore());
+    expect((await screen.findByTestId('mirror-elsewhere')).textContent).toMatch(
+      /GBC \(ETH\).*still being checked with Hyperliquid/,
+    );
+    expect(await toSend()).toBeTruthy();
+  });
+
+  it('can be put aside once the player checked Hyperliquid, and stays put aside', async () => {
+    const engine = fakeEngine({
+      orders: () => [orderRow({ status: 'UNKNOWN', createdAt: Date.now() - 10 * 60_000 })],
+    });
+    const store = await approvedStore();
+    mount(engine, store);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'I checked on Hyperliquid, put this aside' }),
+    );
+    expect(await toSend()).toBeTruthy();
+    cleanup();
+    mount(engine, store);
+    expect(await toSend()).toBeTruthy();
+    expect(screen.queryByText('Outcome unknown — checking with Hyperliquid')).toBeNull();
   });
 });
 

@@ -32,9 +32,15 @@ import type {
   TradeRowView,
 } from './api-types';
 
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; status: number; error: string; message: string; refusals?: MirrorReason[] };
+export interface ApiFailure {
+  ok: false;
+  status: number;
+  error: string;
+  message: string;
+  refusals?: MirrorReason[];
+}
+
+export type ApiResult<T> = { ok: true; data: T } | ApiFailure;
 
 export interface RequestOptions {
   token?: string | null;
@@ -75,11 +81,12 @@ export const EXECUTE_TIMEOUT_MS = 30_000;
 export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetch(...a)) {
   const root = base.replace(/\/+$/, '');
 
-  async function request<T>(
+  /** One request; a success also says its HTTP status (some routes answer 200 or 202). */
+  async function exchange<T>(
     method: 'GET' | 'POST',
     path: string,
     o: RequestOptions = {},
-  ): Promise<ApiResult<T>> {
+  ): Promise<ApiFailure | { ok: true; data: T; httpStatus: number }> {
     const url = new URL(`${root}${path}`);
     for (const [k, v] of Object.entries(o.query ?? {}))
       if (v !== undefined) url.searchParams.set(k, String(v));
@@ -123,7 +130,7 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
     if (res.ok) {
       if (json === null)
         return { ok: false, status: res.status, error: 'BAD_RESPONSE', message: 'empty reply' };
-      return { ok: true, data: json as T };
+      return { ok: true, data: json as T, httpStatus: res.status };
     }
     const body = (json ?? {}) as Partial<ApiErrorBody>;
     return {
@@ -133,6 +140,15 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
       message: typeof body.message === 'string' ? body.message : res.statusText || 'request failed',
       ...(Array.isArray(body.refusals) ? { refusals: body.refusals } : {}),
     };
+  }
+
+  async function request<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    o: RequestOptions = {},
+  ): Promise<ApiResult<T>> {
+    const r = await exchange<T>(method, path, o);
+    return r.ok ? { ok: true, data: r.data } : r;
   }
 
   const get = <T>(path: string, o?: RequestOptions) => request<T>('GET', path, o);
@@ -164,8 +180,18 @@ export function createApi(base: string, fetchImpl: typeof fetch = (...a) => fetc
     seasons: () => get<{ seasons: SeasonRow[] }>('/api/seasons'),
     season: (id: number) =>
       get<{ season: SeasonRow; results: SeasonResultView[] }>(`/api/seasons/${id}`),
-    applyIpo: (token: string, address: string) =>
-      post<{ app: IpoView }>('/api/ipo', { token, body: { address } }),
+    /**
+     * 202: a new application. 200 (`existing`): the address already had one (pending, the listed
+     * company's approval, or a committee decision within 24 h), returned as it stands.
+     */
+    applyIpo: async (
+      token: string,
+      address: string,
+    ): Promise<ApiResult<{ app: IpoView; existing: boolean }>> => {
+      const r = await exchange<{ app: IpoView }>('POST', '/api/ipo', { token, body: { address } });
+      if (!r.ok) return r;
+      return { ok: true, data: { app: r.data.app, existing: r.httpStatus === 200 } };
+    },
     ipoList: (limit = 20) => get<{ apps: IpoView[] }>('/api/ipo', { query: { limit } }),
     ipo: (id: string) => get<{ app: IpoView }>(`/api/ipo/${seg(id)}`),
     provenance: (limit = 50) =>

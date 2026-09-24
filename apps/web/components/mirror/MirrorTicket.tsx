@@ -5,15 +5,19 @@ import { useConnect, useConnection, useConnectors, useSignMessage } from 'wagmi'
 import { getWalletClient } from 'wagmi/actions';
 import type { CompanyView, MirrorOrderView, MirrorReason } from '../../lib/api-types';
 import { side } from '../../lib/company';
+import { mirrorErrorText } from '../../lib/errors';
 import { coinPx, pctAbs, shortAddress, usd } from '../../lib/format';
 import { AGENT_VALID_DAYS, isUsable } from '../../lib/mirror/agent';
-import { approveAgentKey } from '../../lib/mirror/approve';
+import { approveAgentKey, EngineRefusal } from '../../lib/mirror/approve';
 import {
   agentProblem,
   type MirrorOutcome,
   type MirrorProgress,
   resolveUnknown,
   runMirror,
+  unknownFromLog,
+  unresolvedOrders,
+  walletProblem,
 } from '../../lib/mirror/flow';
 import { builderFeeRate, hlErrorText } from '../../lib/mirror/hl';
 import { createIdbKeyStore, type KeyStore } from '../../lib/mirror/keystore';
@@ -98,6 +102,30 @@ const browserStore = typeof window === 'undefined' ? null : createIdbKeyStore();
 
 /** Delays between automatic checks of an unknown outcome (the engine reconciles with Hyperliquid). */
 const RECHECK_MS = [3_000, 5_000, 10_000, 15_000, 30_000];
+/**
+ * An unknown outcome may be put aside (after the player checked Hyperliquid) only this long after
+ * the order was sent: the engine never downgrades UNKNOWN, so without it the card would stay forever.
+ */
+export const PUT_ASIDE_AFTER_MS = 2 * 60_000;
+const PUT_ASIDE_KEY = 'ws.mirror.putAside';
+
+/** Order ids the player put aside in this browser (kept across reloads; storage may be blocked). */
+function readPutAside(): Set<string> {
+  try {
+    const raw = typeof window === 'undefined' ? null : window.localStorage.getItem(PUT_ASIDE_KEY);
+    const ids: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(ids) ? ids.filter((x) => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+function savePutAside(ids: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(PUT_ASIDE_KEY, JSON.stringify([...ids].slice(-50)));
+  } catch {
+    /* kept for this page only */
+  }
+}
 const pctText = (f: number) => `${Number((f * 100).toFixed(2))}%`;
 
 type Availability = { available: boolean; mode: 'live' | 'replay' } | { error: string };
@@ -115,6 +143,8 @@ function hint(r: MirrorReason, view: CompanyView, coin: string): string {
       return view.status === 'HALTED'
         ? 'Mirror reopens when trading resumes.'
         : 'A bankrupt company has nothing left to copy.';
+    case 'CREDIT_FLOOR':
+      return 'Mirror reopens once Nansen credits are topped up. Nothing was sent.';
     case 'STALE_DATA':
       return `We only copy positions seen in the last ${Math.round(MIRROR.maxSnapshotAgeMs / 1000)} seconds, and the engine could not refresh this trader's snapshot. Try again in a moment.`;
     case 'NOTIONAL_OUT_OF_RANGE':
@@ -178,10 +208,18 @@ export function MirrorTicket({
   const [progress, setProgress] = useState<MirrorProgress | null>(null);
   /** Result of the last check of an unknown outcome. */
   const [checked, setChecked] = useState<string | null>(null);
+  const [putAside, setPutAside] = useState<ReadonlySet<string>>(readPutAside);
+  const putAsideRef = useRef(putAside);
+  putAsideRef.current = putAside;
   /** Taken synchronously on click, before any await: a second click never starts a second action. */
   const lock = useRef<string | null>(null);
   const outcomeRef = useRef(outcome);
   outcomeRef.current = outcome;
+  /** Sets the outcome at once for the code that runs before the next render reads the ref. */
+  const show = useCallback((o: MirrorOutcome | null) => {
+    outcomeRef.current = o;
+    setOutcome(o);
+  }, []);
   const checking = useRef(false);
 
   const address = conn.address?.toLowerCase() ?? null;
@@ -202,8 +240,20 @@ export function MirrorTicket({
   const loadOrders = useCallback(async () => {
     if (!token) return;
     const r = await api.mirrorOrders(token);
-    if (r.ok) setOrders(r.data.orders);
-  }, [api, token]);
+    if (!r.ok) return;
+    setOrders(r.data.orders);
+    // An order of this company still unknown on the engine (sent before a reload): show it as
+    // being checked, so the page never offers to send it again.
+    if (outcomeRef.current || lock.current !== null) return;
+    const mine = unresolvedOrders(r.data.orders, putAsideRef.current).find(
+      (o) => o.ticker === view.ticker,
+    );
+    if (!mine) return;
+    outcomeRef.current = unknownFromLog(mine);
+    setOutcome(outcomeRef.current);
+    setCoin(mine.coin);
+    setPicked(true);
+  }, [api, token, view.ticker]);
   useEffect(() => {
     void loadOrders();
   }, [loadOrders]);
@@ -284,7 +334,11 @@ export function MirrorTicket({
     try {
       await fn();
     } catch (err) {
-      setProblem(hlErrorText(err));
+      if (err instanceof EngineRefusal) {
+        setProblem(mirrorErrorText(err.code, err.message));
+        // The engine has another wallet on record for this player: show the link step again.
+        if (err.code === 'NO_WALLET') await refresh();
+      } else setProblem(hlErrorText(err));
     } finally {
       lock.current = null;
       setBusy(null);
@@ -340,10 +394,32 @@ export function MirrorTicket({
       if (!address || !store) return;
       await store.remove(address);
       setAgentReady(false);
-      setOutcome(null);
+      show(null);
       setChecked(null);
       await approve();
     });
+
+  /** The engine has another wallet on record: re-read the player so the link step shows. */
+  const doRelink = () =>
+    guarded('link', async () => {
+      await refresh();
+      show(null);
+      setChecked(null);
+      setPicked(false);
+    });
+
+  /** The player checked Hyperliquid themselves: stop showing this unknown order (kept on reload). */
+  const putAsideOutcome = () => {
+    const out = outcomeRef.current;
+    if (out?.kind !== 'unknown') return;
+    const next = new Set(putAside);
+    next.add(out.stepId);
+    savePutAside(next);
+    setPutAside(next);
+    show(null);
+    setChecked(null);
+    setPicked(false);
+  };
 
   const doSend = () =>
     guarded('send', async () => {
@@ -353,7 +429,7 @@ export function MirrorTicket({
         setAgentReady(false);
         return;
       }
-      setOutcome(null);
+      show(null);
       setChecked(null);
       const out = await runMirror({
         api,
@@ -362,7 +438,7 @@ export function MirrorTicket({
         privateKey: rec.privateKey,
         onProgress: setProgress,
       });
-      setOutcome(out);
+      show(out);
       if (out.kind === 'filled')
         fire({ text: 'GACHA!', kana: 'ガチャ', tone: 'blue', x: '46%', y: '-18px' });
       void loadOrders();
@@ -388,17 +464,18 @@ export function MirrorTicket({
         Date.now(),
       );
       if (res.kind === 'filled')
-        setOutcome({
+        show({
           kind: 'filled',
           groupId: out.groupId,
           order: out.order,
+          ...(out.logged ? { logged: out.logged } : {}),
           receipts: [...out.receipts, res.receipt],
           warning: res.warning,
           note: res.note,
           closed: res.closed,
         });
       else if (res.kind === 'rejected')
-        setOutcome({
+        show({
           kind: 'error',
           code: 'REJECTED',
           message: res.message,
@@ -408,7 +485,7 @@ export function MirrorTicket({
     } finally {
       checking.current = false;
     }
-  }, [api, token]);
+  }, [api, token, show]);
 
   // While the outcome is unknown, keep asking (backing off) until the engine knows.
   useEffect(() => {
@@ -703,7 +780,7 @@ export function MirrorTicket({
                 onChange={(e) => setUsdAmt(Number(e.target.value))}
               />
               <span className="co-mctl__note" id="m-usd-note">
-                Used today <b>${usage.dailyUsd}</b> of ${MIRROR.dailyCapUsd}. Open mirrors{' '}
+                Used today <b>{usd(usage.dailyUsd)}</b> of {usd(MIRROR.dailyCapUsd)}. Open mirrors{' '}
                 <b>{usage.open}</b> of {MIRROR.maxOpen}. That is this player's log; the engine
                 counts every order from this wallet and has the final say.
               </span>
@@ -865,23 +942,7 @@ export function MirrorTicket({
                     : 'Signed. Waiting for Hyperliquid…'}
             </div>
           );
-        if (outcome)
-          return (
-            <Outcome
-              outcome={outcome}
-              view={view}
-              coin={coin ?? ''}
-              checked={checked}
-              busy={busy !== null}
-              onRecheck={() => void checkOutcome()}
-              onReapprove={() => void doReapprove()}
-              onAgain={() => {
-                setOutcome(null);
-                setPicked(false);
-              }}
-              onDesk={() => open({ kind: 'desk' })}
-            />
-          );
+        if (outcomeCard) return outcomeCard;
         return (
           <div className="co-sign">
             <button
@@ -902,6 +963,26 @@ export function MirrorTicket({
     }
   };
 
+  const outcomeCard = outcome ? (
+    <Outcome
+      outcome={outcome}
+      view={view}
+      coin={coin ?? ''}
+      checked={checked}
+      busy={busy !== null}
+      onRecheck={() => void checkOutcome()}
+      onReapprove={() => void doReapprove()}
+      onRelink={() => void doRelink()}
+      onPutAside={putAsideOutcome}
+      onAgain={() => {
+        show(null);
+        setPicked(false);
+      }}
+      onDesk={() => open({ kind: 'desk' })}
+    />
+  ) : null;
+  const elsewhere = unresolvedOrders(orders, putAside).filter((o) => o.ticker !== view.ticker);
+
   const summary = (key: Step): string | null => {
     if (stepState(key) !== 'done') return null;
     if (key === 'connect') return `${shortAddress(address)} connected`;
@@ -916,6 +997,18 @@ export function MirrorTicket({
     <section className="co-ticket co-mirror" aria-labelledby="mirror-h" data-testid="mirror-on">
       {head}
       {leash}
+      {elsewhere.length > 0 ? (
+        <p className="co-sub" data-testid="mirror-elsewhere" style={{ padding: '12px 16px 0' }}>
+          {elsewhere
+            .map((o) => `Your ${usd(o.notionalUsd)} mirror on ${o.ticker} (${o.coin})`)
+            .join('; ')}{' '}
+          {elsewhere.length === 1 ? 'is' : 'are'} still being checked with Hyperliquid. Do not send{' '}
+          {elsewhere.length === 1 ? 'it' : 'them'} again; the company page shows the result.
+        </p>
+      ) : null}
+      {outcome?.kind === 'unknown' && current !== 'size' ? (
+        <div style={{ padding: '12px 16px 0' }}>{outcomeCard}</div>
+      ) : null}
       <ol className="co-steps">
         {STEPS.map(([key, title], i) => {
           const st = stepState(key);
@@ -973,6 +1066,8 @@ function Outcome({
   busy,
   onRecheck,
   onReapprove,
+  onRelink,
+  onPutAside,
   onAgain,
   onDesk,
 }: {
@@ -984,6 +1079,8 @@ function Outcome({
   busy: boolean;
   onRecheck(): void;
   onReapprove(): void;
+  onRelink(): void;
+  onPutAside(): void;
   onAgain(): void;
   onDesk(): void;
 }) {
@@ -1013,6 +1110,7 @@ function Outcome({
     );
   if (outcome.kind === 'error') {
     const agentBad = agentProblem(outcome);
+    const walletBad = walletProblem(outcome);
     return (
       <div className="co-receipt co-unknown" role="alert">
         <div className="co-receipt__top">
@@ -1021,13 +1119,21 @@ function Outcome({
             <b>
               {outcome.code === 'REGION_BLOCKED'
                 ? 'Trading is unavailable in this region'
-                : agentBad
-                  ? 'Your agent key no longer works'
-                  : 'Not placed'}
+                : walletBad
+                  ? 'Your player is linked to another wallet now'
+                  : agentBad
+                    ? 'Your agent key no longer works'
+                    : 'Not placed'}
             </b>
-            <span>{outcome.message}</span>
+            <span>{mirrorErrorText(outcome.code, outcome.message)}</span>
           </div>
         </div>
+        {walletBad ? (
+          <p style={{ margin: 0 }}>
+            No order was placed. Link this wallet to your player again (one free signature), then
+            approve its agent key and send once more.
+          </p>
+        ) : null}
         {agentBad ? (
           <p style={{ margin: 0 }}>
             No order was placed. Approve a new agent key (your wallet signs again), then send once
@@ -1035,6 +1141,11 @@ function Outcome({
           </p>
         ) : null}
         <div className="co-receipt__links">
+          {walletBad ? (
+            <button className="ws-btn" type="button" disabled={busy} onClick={onRelink}>
+              Link this wallet again
+            </button>
+          ) : null}
           {agentBad ? (
             <button className="ws-btn" type="button" disabled={busy} onClick={onReapprove}>
               Re-approve agent
@@ -1048,6 +1159,8 @@ function Outcome({
     );
   }
   const order = outcome.order;
+  const coinOf = order?.coin ?? outcome.logged?.coin ?? coin;
+  const notional = order?.notionalUsd ?? outcome.logged?.notionalUsd ?? null;
   const last = outcome.receipts[outcome.receipts.length - 1];
   const explorer = last?.explorerUrl || null;
   if (outcome.kind === 'unknown')
@@ -1070,17 +1183,20 @@ function Outcome({
           </p>
         ) : null}
         <ul className="co-rl">
-          <li>
-            {TICK}
-            <span>
-              <b>Leverage set to {order.leverage}x</b> on {order.coin}, cross
-            </span>
-          </li>
+          {order ? (
+            <li>
+              {TICK}
+              <span>
+                <b>Leverage set to {order.leverage}x</b> on {order.coin}, cross
+              </span>
+            </li>
+          ) : null}
           <li>
             {QMARK}
             <span>
               <b>
-                Market {order.isBuy ? 'buy' : 'sell'}, ${order.notionalUsd} of {order.coin}
+                {order ? `Market ${order.isBuy ? 'buy' : 'sell'}, ` : 'Market order, '}$
+                {notional ?? '?'} of {coinOf}
               </b>
               sent, no definitive answer
             </span>
@@ -1088,8 +1204,8 @@ function Outcome({
           <li>
             {QMARK}
             <span>
-              <b>Stop at {coinPx(order.stopLossPx)}</b>attached to the order; it exists only if the
-              order filled
+              <b>{order ? `Stop at ${coinPx(order.stopLossPx)}` : 'Stop-loss'}</b>attached to the
+              order; it exists only if the order filled
             </span>
           </li>
         </ul>
@@ -1102,6 +1218,11 @@ function Outcome({
           <button className="ws-link" type="button" onClick={onRecheck}>
             Check again
           </button>
+          {Date.now() - outcome.since >= PUT_ASIDE_AFTER_MS ? (
+            <button className="ws-link" type="button" onClick={onPutAside}>
+              I checked on Hyperliquid, put this aside
+            </button>
+          ) : null}
         </div>
       </div>
     );
@@ -1111,8 +1232,9 @@ function Outcome({
         <Hanko kanji="約定" word="FILLED" tone="blue" stamping label="Filled" />
         <div>
           <b>
-            Mirrored {order.isBuy ? 'LONG' : 'SHORT'} {order.coin} {order.leverage}x, $
-            {order.notionalUsd}
+            {order
+              ? `Mirrored ${order.isBuy ? 'LONG' : 'SHORT'} ${order.coin} ${order.leverage}x, $${order.notionalUsd}`
+              : `Mirrored ${coinOf}, $${notional ?? '?'}`}
           </b>
           <span>
             {outcome.closed
@@ -1129,17 +1251,19 @@ function Outcome({
         </p>
       ) : null}
       <ul className="co-rl">
-        <li>
-          {TICK}
-          <span>
-            <b>Leverage set to {order.leverage}x</b> on {order.coin}, cross
-          </span>
-        </li>
+        {order ? (
+          <li>
+            {TICK}
+            <span>
+              <b>Leverage set to {order.leverage}x</b> on {order.coin}, cross
+            </span>
+          </li>
+        ) : null}
         <li>
           {TICK}
           <span>
             <b>
-              {order.isBuy ? 'Bought' : 'Sold'} {order.coin}
+              {order ? (order.isBuy ? 'Bought' : 'Sold') : 'Traded'} {coinOf}
               {last?.avgPx != null ? ` at ${coinPx(last.avgPx)}` : ''}
             </b>
             {last?.hlOid != null ? (
@@ -1154,7 +1278,7 @@ function Outcome({
         <li>
           {outcome.warning || outcome.note ? QMARK : TICK}
           <span>
-            <b>Stop at {coinPx(order.stopLossPx)}</b>
+            <b>{order ? `Stop at ${coinPx(order.stopLossPx)}` : 'Stop-loss'}</b>
             {outcome.warning ??
               (outcome.note
                 ? 'attached to the order; check that it is on Hyperliquid'

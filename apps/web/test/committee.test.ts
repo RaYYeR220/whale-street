@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { addressProblem } from '../components/ipo/IpoDesk';
 import type { IpoView } from '../lib/api-types';
 import {
+  deferral,
   hedgeOffset,
   headline as ipoHeadline,
   MEMBERS,
@@ -73,6 +74,26 @@ describe('listing committee', () => {
     expect(ipoHeadline(app({ status: 'DEFERRED', verdict: null }), null)).toBe(
       'Deferred: evidence unavailable',
     );
+  });
+
+  it('names why the desk deferred without asking the committee', () => {
+    const deferred = (reason: string) => app({ status: 'DEFERRED', verdict: null, reason });
+    const hip3 = deferred('holds HIP-3 markets (not supported yet)');
+    expect(ipoHeadline(hip3, null)).toBe('Deferred: holds HIP-3 markets');
+    expect(deferral(hip3).detail).toMatch(/HIP-3 markets.*not list yet/);
+    const busy = deferred('desk busy: 10 applications are already waiting; apply again later');
+    expect(ipoHeadline(busy, null)).toBe('Deferred: the desk was busy');
+    expect(deferral(busy).detail).toMatch(/10 applications are already waiting/);
+    expect(
+      ipoHeadline(
+        deferred('credit floor: the IPO desk is paused to protect the Nansen credit budget'),
+        null,
+      ),
+    ).toBe('Deferred: Nansen credit floor');
+    expect(ipoHeadline(deferred('engine restarted'), null)).toBe('Deferred: the engine restarted');
+    const odd = deferred('listing failed: disk full');
+    expect(ipoHeadline(odd, null)).toBe('Deferred: evidence unavailable');
+    expect(deferral(odd).detail).toMatch(/listing failed: disk full/);
   });
 
   it('lands the stamp over two passing neighbours', () => {
