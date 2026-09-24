@@ -144,4 +144,31 @@ describe('idle gate', () => {
     expect(onWake).toHaveBeenCalledWith(w.clock.now());
     expect(gate.clients()).toBe(1);
   });
+
+  it('activity (an authenticated write) wakes it and holds IDLE off for the same window', () => {
+    const w = makeWorld();
+    const onWake = vi.fn();
+    const gate = createIdleGate(w.state, w.bus, onWake, w.clock.now());
+    w.clock.advance(IDLE_AFTER_MS);
+    gate.tick(w.clock.now());
+    expect(w.state.flags.idle).toBe(true);
+    gate.touch(w.clock.now());
+    expect(w.state.flags.idle).toBe(false);
+    expect(w.state.flags.wokeAt).toBe(w.clock.now());
+    expect(onWake).toHaveBeenCalledTimes(1);
+    // Woken, but NAV has not ticked since: orders stay paused until the next live tick.
+    expect(w.state.paused()).toBe(true);
+    expect(gate.clients()).toBe(0);
+    w.clock.advance(IDLE_AFTER_MS - 1);
+    gate.tick(w.clock.now());
+    expect(w.state.flags.idle).toBe(false);
+    gate.touch(w.clock.now());
+    expect(onWake).toHaveBeenCalledTimes(1);
+    w.clock.advance(IDLE_AFTER_MS - 1);
+    gate.tick(w.clock.now());
+    expect(w.state.flags.idle).toBe(false);
+    w.clock.advance(1);
+    gate.tick(w.clock.now());
+    expect(w.state.flags.idle).toBe(true);
+  });
 });

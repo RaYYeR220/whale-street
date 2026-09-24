@@ -22,7 +22,11 @@ export function sendError(
   return reply.code(status).send({ error, message });
 }
 
-/** Resolves the caller or answers 401; handlers return early on null. */
+/**
+ * Resolves the caller or answers 401; handlers return early on null. An authenticated write
+ * (any method but GET/HEAD) counts as activity: it wakes the engine from IDLE and keeps it awake
+ * like a WS viewer would (see IdleGate.touch).
+ */
 export function requirePlayer(
   e: Engine,
   req: FastifyRequest,
@@ -30,5 +34,6 @@ export function requirePlayer(
 ): PlayerView | null {
   const p = playerFrom(e, req);
   if (!p) sendError(reply, 401, 'UNAUTHORIZED', 'missing or invalid bearer token');
+  else if (req.method !== 'GET' && req.method !== 'HEAD') e.idle.touch(e.clock.now());
   return p;
 }

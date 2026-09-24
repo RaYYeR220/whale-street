@@ -32,7 +32,15 @@ export interface OrderRequest {
   cash?: number;
 }
 
-export type ExchangeErrorCode = RejectReason | 'UNKNOWN_TICKER' | 'UNKNOWN_PLAYER' | 'BAD_REQUEST';
+export type ExchangeErrorCode =
+  | RejectReason
+  | 'UNKNOWN_TICKER'
+  | 'UNKNOWN_PLAYER'
+  | 'BAD_REQUEST'
+  | 'MARKET_PAUSED';
+
+/** Suggested retry delay for a MARKET_PAUSED refusal (the next 1 Hz tick usually clears it). */
+export const MARKET_PAUSED_RETRY_MS = 2_000;
 
 export interface FillView {
   ticker: string;
@@ -78,6 +86,8 @@ export type QuoteResult =
       avgPrice: number;
       price: number;
       priceAfter: number;
+      /** True while orders are refused with MARKET_PAUSED (NAV frozen): the quote is indicative. */
+      paused: boolean;
     }
   | { ok: false; code: ExchangeErrorCode; message: string };
 
@@ -99,6 +109,7 @@ export interface HolderView {
 
 export interface ExchangeService {
   quote(ticker: string, side: OrderSide, qty: number): QuoteResult;
+  /** Non-forced order; refused with MARKET_PAUSED while NAV is frozen (MarketState.paused). */
   placeOrder(playerId: string, req: OrderRequest): OrderResult;
   /** Forced COVER of every short in this company whose buy-back reached 95% of its collateral. */
   autoCover(rt: CompanyRuntime, now: number): void;
@@ -131,6 +142,8 @@ const MESSAGES: Record<ExchangeErrorCode, string> = {
   UNKNOWN_TICKER: 'no such ticker',
   UNKNOWN_PLAYER: 'no such player',
   BAD_REQUEST: 'give qty, or cash for a BUY',
+  MARKET_PAUSED:
+    'market paused while prices catch up (no live viewer or delayed marks); retry shortly',
 };
 
 const fail = (code: ExchangeErrorCode) => ({ ok: false as const, code, message: MESSAGES[code] });
@@ -296,12 +309,15 @@ export function createExchange(d: ExchangeDeps): ExchangeService {
         avgPrice: q.cash / qty,
         price: state.price(rt),
         priceAfter: sharePrice(rt.nav.nav, q.pool),
+        paused: state.paused(),
       };
     },
 
     placeOrder(playerId, req) {
       const rt = state.byTicker(req.ticker);
       if (!rt) return fail('UNKNOWN_TICKER');
+      // NAV is frozen (IDLE, stale marks, or just woken): a fill now would trade at a stale price.
+      if (state.paused()) return fail('MARKET_PAUSED');
       const now = d.clock.now();
       let qty = req.qty;
       if (qty === undefined) {

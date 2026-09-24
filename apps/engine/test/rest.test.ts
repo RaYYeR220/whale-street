@@ -1,5 +1,6 @@
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { afterEach, describe, expect, it } from 'vitest';
+import { IDLE_AFTER_MS } from '../src/ingest/idle';
 import { linkMessage } from '../src/services/players';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { programCleanTrader } from './helpers/traders';
@@ -230,6 +231,68 @@ describe('REST', () => {
       payload: { address: account.address, signature },
     });
     expect(linked.json().player.walletAddress).toBe(account.address.toLowerCase());
+  });
+
+  it('refuses orders while IDLE with 503 MARKET_PAUSED, wakes the engine, and fills once NAV is live', async () => {
+    t = await testEngine();
+    seedCompany();
+    const { token } = await signup();
+    const liveTick = () => {
+      t.engine.state.setMarks({}, t.clock.now());
+      t.engine.tick();
+    };
+    liveTick();
+    t.clock.advance(IDLE_AFTER_MS);
+    liveTick();
+    expect(t.engine.status().idle).toBe(true);
+    const order = () =>
+      t.app.inject({
+        method: 'POST',
+        url: '/api/orders',
+        headers: bearer(token),
+        payload: { ticker: 'AAA', side: 'BUY', qty: 1 },
+      });
+    const paused = await order();
+    expect(paused.statusCode).toBe(503);
+    expect(paused.json()).toMatchObject({ error: 'MARKET_PAUSED', retryAfterMs: 2_000 });
+    expect(paused.headers['retry-after']).toBe('2');
+    expect(t.engine.status().idle).toBe(false);
+    expect(t.engine.state.flags.wokeAt).toBe(t.clock.now());
+    // Awake, but NAV has not ticked since the wake: still paused.
+    expect((await order()).statusCode).toBe(503);
+    const quote = (await t.app.inject({ url: '/api/quote?ticker=AAA&side=BUY&qty=1' })).json();
+    expect(quote).toMatchObject({ ok: true, paused: true });
+    t.clock.advance(1_000);
+    liveTick();
+    expect((await order()).statusCode).toBe(200);
+    expect(
+      (await t.app.inject({ url: '/api/quote?ticker=AAA&side=BUY&qty=1' })).json(),
+    ).toMatchObject({ ok: true, paused: false });
+    // The write kept the engine awake: a viewer-less stretch shorter than the idle window stays live.
+    t.clock.advance(IDLE_AFTER_MS - 1_000);
+    liveTick();
+    expect(t.engine.status().idle).toBe(false);
+  });
+
+  it('refuses orders with 503 MARKET_PAUSED while marks are delayed; fresh marks let the retry fill', async () => {
+    t = await testEngine();
+    seedCompany();
+    const { token } = await signup();
+    t.engine.tick(); // no HL mids yet: marks delayed
+    expect(t.engine.status().marksDelayed).toBe(true);
+    const order = () =>
+      t.app.inject({
+        method: 'POST',
+        url: '/api/orders',
+        headers: bearer(token),
+        payload: { ticker: 'AAA', side: 'BUY', qty: 1 },
+      });
+    const paused = await order();
+    expect(paused.statusCode).toBe(503);
+    expect(paused.json()).toMatchObject({ error: 'MARKET_PAUSED', retryAfterMs: 2_000 });
+    t.engine.state.setMarks({}, t.clock.now());
+    t.engine.tick();
+    expect((await order()).statusCode).toBe(200);
   });
 
   it('TRUST_PROXY=0 (default): a spoofed X-Forwarded-For does not change the rate key', async () => {

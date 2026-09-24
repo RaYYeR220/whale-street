@@ -12,6 +12,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Engine } from '../engine';
+import { MARKET_PAUSED_RETRY_MS } from '../services/exchange';
 import type { PlayerView } from '../services/players';
 import { bearerToken, sendError } from './auth';
 import type { Gates } from './rate';
@@ -127,9 +128,16 @@ export function buildMcpServer(
     },
     async ({ ticker, side, qty }) => {
       if (!player) return fail(NEEDS_TOKEN);
+      // An authenticated write is activity: wakes the engine from IDLE (the retry then fills).
+      e.idle.touch(e.clock.now());
       if (!gates.orders.allow(player.id)) return fail('RATE_LIMITED: at most 10 orders per second');
       const r = e.exchange.placeOrder(player.id, { ticker, side, qty });
-      return r.ok ? json(r) : fail(`${r.code}: ${r.message}`);
+      if (r.ok) return json(r);
+      return fail(
+        r.code === 'MARKET_PAUSED'
+          ? `${r.code}: ${r.message} (retry after ${MARKET_PAUSED_RETRY_MS} ms)`
+          : `${r.code}: ${r.message}`,
+      );
     },
   );
 
@@ -160,6 +168,7 @@ export function buildMcpServer(
     },
     async ({ address }) => {
       if (!player) return fail(NEEDS_TOKEN);
+      e.idle.touch(e.clock.now());
       const r = e.ipo.apply(player.id, address, clientIp);
       return r.ok ? json(r.app) : fail(`${r.code}: ${r.message}`);
     },

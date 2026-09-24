@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { IDLE_AFTER_MS } from '../src/ingest/idle';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
 import { addCompany } from './helpers/world';
 
@@ -166,6 +167,38 @@ describe('MCP /mcp', () => {
       isError: true,
       text: 'RATE_LIMITED: at most 10 orders per second',
     });
+  });
+
+  it('trade while IDLE: MARKET_PAUSED, the engine wakes, and the retry fills once NAV is live', async () => {
+    t = await testEngine();
+    addCompany(t.engine, { id: '0x00000000000000000000000000000000000000a1', ticker: 'AAA' });
+    t.clock.advance(61_000);
+    const agent = (
+      await t.app.inject({ method: 'POST', url: '/api/agents', payload: { name: 'Quant Desk' } })
+    ).json();
+    const liveTick = () => {
+      t.engine.state.setMarks({}, t.clock.now());
+      t.engine.tick();
+    };
+    t.clock.advance(IDLE_AFTER_MS);
+    liveTick();
+    expect(t.engine.status().idle).toBe(true);
+    const trade = async () =>
+      toolText(
+        (await call('trade', { ticker: 'AAA', side: 'BUY', qty: 1 }, bearer(agent.token))).first,
+      );
+    expect(await trade()).toMatchObject({
+      isError: true,
+      text: expect.stringMatching(/^MARKET_PAUSED: /),
+    });
+    expect(t.engine.status().idle).toBe(false);
+    const quote = toolText((await call('quote', { ticker: 'AAA', side: 'BUY', qty: 1 })).first);
+    expect(JSON.parse(quote.text)).toMatchObject({ ok: true, paused: true });
+    t.clock.advance(1_000);
+    liveTick();
+    const filled = await trade();
+    expect(filled.isError).toBe(false);
+    expect(JSON.parse(filled.text)).toMatchObject({ ok: true, fill: { ticker: 'AAA', qty: 1 } });
   });
 
   it('refuses a garbage bearer token on trade without placing an order', async () => {

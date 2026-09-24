@@ -99,6 +99,11 @@ export class MarketState {
   marksAt = 0;
   readonly mood = new Map<string, CohortPositioning>();
   moodAt = 0;
+  /**
+   * Set on a wake from IDLE, cleared by the next market-loop tick that moves NAV on fresh marks:
+   * until then NAV is still the frozen pre-IDLE value.
+   */
+  awaitingNavTick = false;
   readonly flags: EngineFlags;
 
   constructor(now: number) {
@@ -133,6 +138,14 @@ export class MarketState {
   /** Companies that are listed and not in bankruptcy (ACTIVE or HALTED). */
   listed(): CompanyRuntime[] {
     return this.list().filter((c) => c.status === 'ACTIVE' || c.status === 'HALTED');
+  }
+
+  /**
+   * True while NAV is not following the market (IDLE, delayed marks, or woken but not yet ticked):
+   * non-forced orders are refused so nobody trades at a frozen price.
+   */
+  paused(): boolean {
+    return this.flags.idle || this.flags.marksDelayed || this.awaitingNavTick;
   }
 
   setMarks(m: Marks, at: number): void {

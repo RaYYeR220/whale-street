@@ -57,6 +57,8 @@ export function createMarketLoop(d: LoopDeps): MarketLoop {
         flags.marksDelayed = delayed;
         d.bus.emit({ t: 'status' });
       }
+      // This tick moves NAV on fresh marks: orders may trade again (see MarketState.paused).
+      if (!flags.idle && !delayed) state.awaitingNavTick = false;
       const minute = Math.floor(now / MINUTE_MS);
 
       for (const rt of state.list()) {

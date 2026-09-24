@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { HOUR_MS, MINUTE_MS } from '../dates';
 import type { Engine } from '../engine';
-import type { ExchangeErrorCode } from '../services/exchange';
+import { type ExchangeErrorCode, MARKET_PAUSED_RETRY_MS } from '../services/exchange';
 import type { ApplyErrorCode } from '../services/ipo';
 import { playerView } from '../services/players';
 import { requirePlayer, sendError } from './auth';
@@ -56,7 +56,18 @@ const statusFor = (code: ExchangeErrorCode): number =>
     ? 404
     : code === 'BAD_REQUEST' || code === 'INVALID_QTY'
       ? 400
-      : 422;
+      : code === 'MARKET_PAUSED'
+        ? 503
+        : 422;
+
+/** An exchange refusal; MARKET_PAUSED also carries when to retry (body and Retry-After). */
+function sendExchangeError(reply: FastifyReply, code: ExchangeErrorCode, message: string) {
+  if (code !== 'MARKET_PAUSED') return sendError(reply, statusFor(code), code, message);
+  return reply
+    .code(503)
+    .header('retry-after', String(Math.ceil(MARKET_PAUSED_RETRY_MS / 1_000)))
+    .send({ error: code, message, retryAfterMs: MARKET_PAUSED_RETRY_MS });
+}
 
 const ipoStatusFor = (code: ApplyErrorCode): number =>
   code === 'RATE_LIMITED' || code === 'IPO_DESK_BUSY'
@@ -172,7 +183,7 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
     if (!gates.orders.allow(player.id))
       return sendError(reply, 429, 'RATE_LIMITED', 'at most 10 orders per second');
     const r = e.exchange.placeOrder(player.id, body);
-    return r.ok ? r : sendError(reply, statusFor(r.code), r.code, r.message);
+    return r.ok ? r : sendExchangeError(reply, r.code, r.message);
   });
 
   app.get('/api/leaderboard', async (req, reply) => {
