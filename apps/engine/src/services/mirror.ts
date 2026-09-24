@@ -76,6 +76,11 @@ const CREDIT_FLOOR_REFUSAL: MirrorReason = {
   message:
     'Nansen credits are nearly used up, so the trader data cannot be refreshed: mirror orders are paused',
 };
+/** The Mirror's own fresh Nansen snapshot could not be fetched; never trade on an older one. */
+const STALE_DATA_REFUSAL: MirrorReason = {
+  code: 'STALE_DATA',
+  message: 'trader data could not be refreshed right now',
+};
 
 export type MirrorErrorCode =
   | 'TRADING_UNAVAILABLE'
@@ -620,7 +625,11 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       const failWith = (e: MirrorError) => fail(e.code, e.status, e.message);
 
       if (d.state.flags.creditFloor) return refuse([CREDIT_FLOOR_REFUSAL]);
-      await d.refresher.refresh(rt.id, 'mirror');
+      // The Mirror's source is Nansen (see refresh.ts ROUTINE): if that fresh snapshot cannot be
+      // fetched, refuse visibly rather than trade on a snapshot a routine Hyperliquid refresh
+      // happened to leave fresh-looking (no silent source switch on the failure path).
+      const refreshed = await d.refresher.refresh(rt.id, 'mirror');
+      if (refreshed.kind === 'failed') return refuse([STALE_DATA_REFUSAL]);
       const table = await assets();
       if (!(table instanceof Map)) return failWith(table);
       const asset = table.get(req.coin) ?? null;

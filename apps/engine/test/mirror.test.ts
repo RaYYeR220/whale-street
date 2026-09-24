@@ -6,6 +6,7 @@ import type { Engine } from '../src/engine';
 import { MARKS_DELAY_MS } from '../src/market/loop';
 import { validateLeverageAction, validateOrderAction } from '../src/services/mirror';
 import { bearer, type TestEngine, testEngine } from './helpers/engine';
+import { fail } from './helpers/fake-nansen';
 import { FakeTrading, NANSEN_BUILDER } from './helpers/fake-trading';
 import { siweMessage } from './helpers/siwe';
 import { addCompany, pos } from './helpers/world';
@@ -1048,6 +1049,27 @@ describe('mirror', () => {
     e.state.flags.creditFloor = false;
     expect(refusalCodes(await e.mirror.prepare(player.id, HYP_50))).toBe('allowed');
     expect(t.nansen.count('perpPositions')).toBe(positionCalls + 1);
+  });
+
+  it('refuses visibly when its own Nansen refresh fails, even if a recent Hyperliquid snapshot looks fresh', async () => {
+    const { e, trading, master, agent, player } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    e.state.flags.creditSaver = true;
+    // A routine (credit-saver) refresh lands via Hyperliquid just before the prepare call, so the
+    // company's snapshot age alone would look fresh.
+    t.info.states.set(TRADER, {
+      positions: [pos('HYPE', 100, 40, 30, 10)],
+      accountValue: 100_000,
+      time: null,
+    });
+    expect(await e.refresher.refresh(TRADER, 'heartbeat')).toEqual({ kind: 'ok' });
+    // Now the mirror's own fresh Nansen snapshot fails.
+    t.nansen.positions.set(TRADER, fail());
+    const res = await e.mirror.prepare(player.id, HYP_50);
+    expect(refusalCodes(res)).toEqual(['STALE_DATA']);
+    expect(res.ok && 'refusals' in res && res.refusals[0]?.message).toBeTruthy();
+    expect(trading.calls.filter((c) => c.method.startsWith('prepare'))).toEqual([]);
+    expect(e.mirror.orders(player.id)[0]).toMatchObject({ status: 'REFUSED' });
   });
 
   it('never leaks the Nansen API key into responses or the database', async () => {
