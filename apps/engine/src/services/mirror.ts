@@ -242,17 +242,6 @@ const num = (v: unknown): number | null => {
   return null;
 };
 
-/**
- * The notional an order action really sends: its entry leg's size × limit price (null when the
- * leg is unreadable; a validated action always has one).
- */
-export function entryNotional(action: Record<string, unknown>): number | null {
-  const main = Array.isArray(action.orders) ? asRecord(action.orders[0]) : null;
-  const size = num(main?.s);
-  const px = num(main?.p);
-  return size === null || px === null ? null : size * px;
-}
-
 /** What a prepared order is checked against besides the policy decision. */
 export interface OrderActionLimits {
   /** Nansen's builder address (from /perp/builder-fee); the order's builder code must be it. */
@@ -732,8 +721,9 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
           stepIndex: 1,
           groupId,
           status: 'PREPARED',
-          // What the validated action really sends (lots, slippage), so the daily cap counts it.
-          notionalUsd: entryNotional(prepared.value.action) ?? order.notionalUsd,
+          // The expected fill (rounded size × the mark at prepare), so the daily cap counts what
+          // the trade is actually worth, not the limit price's slippage padding.
+          notionalUsd: order.size * order.markPx,
           request: { ...request, hlBaselineSzi: baseline },
           createdAt: preparedAt,
         }),
