@@ -1,6 +1,7 @@
+import { evaluateListing } from '@whale-street/core';
 import { describe, expect, it } from 'vitest';
 import { DAY_MS, HOUR_MS } from '../src/dates';
-import { gatherEvidence } from '../src/ingest/evidence';
+import { FIRST_FILL_PAGE, gatherEvidence, TOP_TRADE_PAGE } from '../src/ingest/evidence';
 import { silentLogger } from '../src/log';
 import { createIpoService, deniedKey } from '../src/services/ipo';
 import { createListingService } from '../src/services/listing';
@@ -86,6 +87,47 @@ describe('gatherEvidence', () => {
     expect(ev.linked).toEqual({ ok: false, error: 'related wallets: timeout' });
     expect(ev.equityUsd.ok).toBe(false);
     expect(positions).toBeNull();
+  });
+
+  it('asks for pages large enough to find the first perp fill and the top perp trade (spot fills are dropped)', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    await gatherEvidence(APP, { ...w, nansen, info });
+    expect(nansen.calls.filter((c) => c.method === 'perpTrades').map((c) => c.args[3])).toEqual([
+      { orderBy: 'timestamp', direction: 'ASC', perPage: FIRST_FILL_PAGE },
+      { orderBy: 'closed_pnl', direction: 'DESC', perPage: TOP_TRADE_PAGE },
+    ]);
+    expect([FIRST_FILL_PAGE, TOP_TRADE_PAGE]).toEqual([100, 5]);
+  });
+
+  it('no perp fill on the page while the P&L summary shows perp trading is unknown, never "never traded"', async () => {
+    const { w, nansen, info } = setup();
+    programCleanTrader(nansen, info, APP, w.clock.now());
+    // Every fill on both pages was a spot fill (dropped by the client).
+    nansen.firstTrades.set(APP, []);
+    nansen.topTrades.set(APP, []);
+    const { ev } = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(ev.firstTradeAt).toEqual({
+      ok: false,
+      error: `no Hyperliquid perp fill among the first ${FIRST_FILL_PAGE} fills`,
+    });
+    expect(ev.topTradePnlUsd).toEqual({
+      ok: false,
+      error: `no Hyperliquid perp fill among the top ${TOP_TRADE_PAGE} fills`,
+    });
+    expect(evaluateListing(ev).decision).toBe('DEFERRED');
+    // No perp trading at all: the known "no trades" answer (TRACK_RECORD fails on it).
+    nansen.pnl.set(APP, {
+      realizedPnlUsd: 0,
+      feesUsd: 0,
+      winRate: 0,
+      closedTrades: 0,
+      tradedTimes: 0,
+      topCoins: [],
+    });
+    const idle = await gatherEvidence(APP, { ...w, nansen, info });
+    expect(idle.ev.firstTradeAt).toEqual({ ok: true, value: null });
+    expect(idle.ev.topTradePnlUsd).toEqual({ ok: true, value: null });
   });
 
   it('an unreported top-trade profit is unknown, never the same as having no top trade at all', async () => {

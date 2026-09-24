@@ -230,6 +230,52 @@ describe('listing committee', () => {
     expect(v.decision).toBe('DENIED');
   });
 
+  it('average hold divides by trades, not closing fills (live figures: 47,399 closing fills, 8,036 trades, 244 days)', () => {
+    const ev = clean();
+    ev.firstTradeAt = some(NOW - 244 * DAY);
+    ev.pnl = some({
+      realizedPnlUsd: 9_088_531,
+      feesUsd: 55_669,
+      winRate: 0.69,
+      closedTrades: 47_399,
+      tradedTimes: 8_036,
+      topCoins: ['ZEC', 'ETH', 'VVV'],
+    });
+    // 244 d × 1,440 / 8,036 ≈ 43.7 min per trade (not 7.4 min from ÷ 47,399).
+    const strict = { ...PARAMS, committee: { ...PARAMS.committee, minAvgHoldMinutes: 50 } };
+    expect(evaluateListing(ev, strict).checks.find((c) => c.id === 'HUMAN_TRADER')?.detail).toBe(
+      'market-maker profile: 33 trades/day, ~43.7 min per trade',
+    );
+    const loose = { ...PARAMS, committee: { ...PARAMS.committee, minAvgHoldMinutes: 10 } };
+    expect(evaluateListing(ev, loose).checks.find((c) => c.id === 'HUMAN_TRADER')?.status).toBe(
+      'PASS',
+    );
+    const styles = {
+      ...PARAMS,
+      committee: {
+        ...PARAMS.committee,
+        styleMinutes: { ...PARAMS.committee.styleMinutes, scalper: 30 },
+      },
+    };
+    expect(evaluateListing(ev, styles).prospectus?.style).toBe('Day Trader');
+    // Fewer closing fills than trades: the smaller count still decides, and never below 1.
+    const styleWith = (closedTrades: number, tradedTimes: number) =>
+      evaluateListing({
+        ...clean(),
+        firstTradeAt: some(NOW - 10 * DAY),
+        pnl: some({
+          realizedPnlUsd: 1,
+          feesUsd: 0,
+          winRate: 0.5,
+          closedTrades,
+          tradedTimes,
+          topCoins: [],
+        }),
+      }).prospectus?.style;
+    expect(styleWith(2, 100)).toBe('Swing Trader'); // 14,400 / 2 = 7,200 min
+    expect(styleWith(0, 3)).toBe('Position Trader'); // 14,400 / 1
+  });
+
   it('HUMAN_TRADER defers (as before) when isVault is unavailable but the profile looks human', () => {
     const ev = { ...clean(), isVault: none('timeout') };
     const v = evaluateListing(ev);

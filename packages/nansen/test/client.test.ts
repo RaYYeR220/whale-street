@@ -186,6 +186,25 @@ describe('NansenClient', () => {
     });
   });
 
+  it('perp trades: spot fills (token_symbol "@<index>") are dropped, perp fills kept', async () => {
+    const fill = (token_symbol: string, closed_pnl: number) => ({
+      timestamp: '2026-01-23T16:09:04.842000Z',
+      side: 'Short',
+      action: 'Sell',
+      token_symbol,
+      price: 89725,
+      size: 0.00027,
+      value_usd: 24.22575,
+      closed_pnl,
+      fee_usd: 0.0096903,
+    });
+    const r = await clientWith({
+      data: [fill('@142', 0.00891001), fill('ZEC', 12.5), fill('@151', 0), fill('xyz:CL', 1)],
+    }).perpTrades(A, '2025-09-24', '2026-09-24', { direction: 'ASC', perPage: 100 });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.value.map((t) => t.coin)).toEqual(['ZEC', 'xyz:CL']);
+  });
+
   it('perp trades: an ISO timestamp without an offset is treated as UTC', async () => {
     const c = clientWith({
       data: [

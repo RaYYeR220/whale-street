@@ -7,6 +7,7 @@ export interface PnlStats {
   feesUsd: number;
   /** Fraction in [0, 1]. */
   winRate: number;
+  /** Nansen `closed_trade_count`: counts closing FILLS (47,399 vs 8,036 trades live), not round trips. */
   closedTrades: number;
   tradedTimes: number;
   topCoins: string[];
@@ -21,7 +22,7 @@ export interface LinkedWallet {
 export interface ListingEvidence {
   address: Address;
   now: number;
-  /** Earliest HL trade timestamp; null when the address never traded. */
+  /** First Hyperliquid perp fill (spot fills excluded); null when the address has no perp fill. */
   firstTradeAt: Maybe<number | null>;
   pnl: Maybe<PnlStats>;
   /** Largest single realized trade PnL; null when there are no closed trades. */
@@ -142,6 +143,14 @@ function pnlBand(usd: number, bands: Params['committee']['pnlBands']): string {
   return '$10M+';
 }
 
+/**
+ * Average minutes per trade over the history: divided by the smaller of closing fills and trades,
+ * since one trade closes over many fills (never below 1).
+ */
+function avgHoldMinutes(days: number, pnl: PnlStats): number {
+  return (days * 1_440) / Math.max(1, Math.min(pnl.closedTrades, pnl.tradedTimes));
+}
+
 function styleOf(
   avgHoldMinutes: number,
   minutes: Params['committee']['styleMinutes'],
@@ -165,7 +174,7 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
   if (!ev.firstTradeAt.ok) checks.push(unknown('TRACK_RECORD', ev.firstTradeAt.error));
   else if (!ev.pnl.ok) checks.push(unknown('TRACK_RECORD', ev.pnl.error));
   else if (history === null)
-    checks.push({ id: 'TRACK_RECORD', status: 'FAIL', detail: 'no Hyperliquid trades found' });
+    checks.push({ id: 'TRACK_RECORD', status: 'FAIL', detail: 'no Hyperliquid perp fills found' });
   else {
     const passed = history >= c.minHistoryDays && ev.pnl.value.closedTrades >= c.minClosedTrades;
     checks.push({
@@ -192,7 +201,7 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
   else {
     const days = Math.max(1, history ?? 0);
     const perDay = ev.pnl.value.tradedTimes / days;
-    const hold = (days * 1_440) / Math.max(1, ev.pnl.value.closedTrades);
+    const hold = avgHoldMinutes(days, ev.pnl.value);
     const mmProfile = !(perDay <= c.maxTradesPerDay && hold >= c.minAvgHoldMinutes);
     if (mmProfile) {
       // A market-maker profile is disqualifying on its own; no need to know isVault.
@@ -332,7 +341,7 @@ export function evaluateListing(ev: ListingEvidence, params: Params = PARAMS): L
 
   let prospectus: Prospectus | null = null;
   if (ev.pnl.ok && ev.positions.ok && history !== null) {
-    const hold = (Math.max(1, history) * 1_440) / Math.max(1, ev.pnl.value.closedTrades);
+    const hold = avgHoldMinutes(Math.max(1, history), ev.pnl.value);
     prospectus = {
       style: styleOf(hold, c.styleMinutes),
       historyDays: Math.floor(history),

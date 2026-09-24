@@ -4,6 +4,7 @@ import {
   type ListingEvidence,
   type Maybe,
   none,
+  type PnlStats,
   type Position,
   some,
 } from '@whale-street/core';
@@ -42,20 +43,57 @@ export interface Evidence {
 export const MAX_LINKED = 10;
 /** Visible reason an address holding a HIP-3 market is never evaluated further. */
 export const HIP3_REASON = 'holds HIP-3 markets (not supported yet)';
+/**
+ * Fills asked for to find the first Hyperliquid perp fill. Nansen's perp-trades also returns spot
+ * fills (dropped by the client), and an account can open with dozens of them (the #1 leaderboard
+ * trader: over 25 in its first seconds); a call costs the same credit whatever the page size.
+ */
+export const FIRST_FILL_PAGE = 100;
+/** Fills asked for (by realized profit) to find the top perp trade among any spot fills. */
+export const TOP_TRADE_PAGE = 5;
 
 /** The first HIP-3 coin ("dex:COIN") among open positions, or null: a standard perp coin has no dex prefix. */
 const hip3CoinOf = (positions: readonly Position[]): string | null =>
   positions.find((p) => p.coin.includes(':'))?.coin ?? null;
 
 /**
+ * Whether the perp P&L summary shows any perp trading: then a page with no perp fill on it (all
+ * spot fills) is not "never traded" but unknown.
+ */
+const tradesPerps = (pnl: ApiResult<PnlStats>): boolean =>
+  pnl.ok && (pnl.value.tradedTimes > 0 || pnl.value.closedTrades > 0);
+
+/**
+ * The committee's track-record evidence: the first Hyperliquid perp fill (spot fills excluded);
+ * `null` only when the address has no perp trading at all.
+ */
+function firstPerpFillAt(
+  first: ApiResult<PerpTradeRow[]>,
+  pnl: ApiResult<PnlStats>,
+): Maybe<number | null> {
+  if (!first.ok) return none(first.error);
+  const fill = first.value[0];
+  if (fill) return some(fill.at);
+  return tradesPerps(pnl)
+    ? none(`no Hyperliquid perp fill among the first ${FIRST_FILL_PAGE} fills`)
+    : some(null);
+}
+
+/**
  * The committee's concentration evidence: no trade at all is a known zero-risk `null`, but a top
  * trade whose own profit Nansen did not report is unknown (`none`) — never confused with "no
- * trade" and never an invented zero.
+ * trade" and never an invented zero. A page of spot fills only is unknown too.
  */
-function topTradePnlUsd(top: ApiResult<PerpTradeRow[]>): Maybe<number | null> {
+function topTradePnlUsd(
+  top: ApiResult<PerpTradeRow[]>,
+  pnl: ApiResult<PnlStats>,
+): Maybe<number | null> {
   if (!top.ok) return none(top.error);
   const trade = top.value[0];
-  if (!trade) return some(null);
+  if (!trade)
+    return tradesPerps(pnl)
+      ? none(`no Hyperliquid perp fill among the top ${TOP_TRADE_PAGE} fills`)
+      : some(null);
   return trade.closedPnl === null ? none('top trade profit not reported') : some(trade.closedPnl);
 }
 
@@ -103,10 +141,11 @@ export async function gatherEvidence(
 
   onProgress('track_record', 'running');
   const [first, pnl] = await Promise.all([
+    // The first Hyperliquid perp fill: the oldest page, spot fills dropped.
     d.nansen.perpTrades(address, yearAgo, today, {
       orderBy: 'timestamp',
       direction: 'ASC',
-      perPage: 1,
+      perPage: FIRST_FILL_PAGE,
     }),
     d.nansen.perpPnlSummary(address, yearAgo, today),
   ]);
@@ -120,7 +159,7 @@ export async function gatherEvidence(
   const row = d.repos.companies.get(address);
   const alreadyListed = row !== undefined && row.status !== 'DELISTED';
   const cooldownUntil = row?.cooldownUntil ?? null;
-  const firstTradeAt = first.ok ? some(first.value[0]?.at ?? null) : none(first.error);
+  const firstTradeAt = firstPerpFillAt(first, pnl);
 
   // The universe is standard Hyperliquid perps only: a HIP-3 holder is never listed, and stops
   // here before spending any more of the committee's Nansen credits.
@@ -160,7 +199,7 @@ export async function gatherEvidence(
   const top = await d.nansen.perpTrades(address, yearAgo, today, {
     orderBy: 'closed_pnl',
     direction: 'DESC',
-    perPage: 1,
+    perPage: TOP_TRADE_PAGE,
   });
   onProgress('concentration', 'done');
 
@@ -175,7 +214,7 @@ export async function gatherEvidence(
       pnl: toMaybe(pnl),
       // No trade at all is a known "no concentration risk" (null); a trade whose own profit
       // Nansen did not report is unknown, never the same thing (never the invented zero either).
-      topTradePnlUsd: topTradePnlUsd(top),
+      topTradePnlUsd: topTradePnlUsd(top, pnl),
       equityUsd: pos.ok ? some(pos.value.accountValue) : none(pos.error),
       positions: pos.ok ? some(pos.value.positions) : none(pos.error),
       linked,

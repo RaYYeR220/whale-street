@@ -168,18 +168,22 @@ export class NansenClient {
       pagination: { page: 1, per_page: o.perPage ?? 100 },
       order_by: [{ field: o.orderBy ?? 'timestamp', direction: o.direction ?? 'DESC' }],
     };
+    // The endpoint also returns Hyperliquid spot fills ("@<spot index>" symbols, e.g. "@142"),
+    // whatever the filters: they are dropped, so a page holds perp fills only (maybe none).
     return this.http.request('POST', '/api/v1/profiler/perp-trades', body, (j) =>
-      PerpTradesResponse.parse(j).data.map((t) => ({
-        at: toMs(t.timestamp),
-        coin: t.token_symbol,
-        side: t.side,
-        action: t.action,
-        price: t.price,
-        size: t.size,
-        valueUsd: t.value_usd,
-        closedPnl: t.closed_pnl,
-        feeUsd: t.fee_usd,
-      })),
+      PerpTradesResponse.parse(j)
+        .data.filter((t) => !t.token_symbol.startsWith('@'))
+        .map((t) => ({
+          at: toMs(t.timestamp),
+          coin: t.token_symbol,
+          side: t.side,
+          action: t.action,
+          price: t.price,
+          size: t.size,
+          valueUsd: t.value_usd,
+          closedPnl: t.closed_pnl,
+          feeUsd: t.fee_usd,
+        })),
     );
   }
 
