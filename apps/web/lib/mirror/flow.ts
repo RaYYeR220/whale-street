@@ -176,10 +176,19 @@ export type MirrorProgress =
   | 'signing-order'
   | 'sending-order';
 
+/** The prepared order is not the position the player picked: nothing was signed. */
+export const POSITION_CHANGED = 'POSITION_CHANGED';
+
 export async function runMirror(o: {
   api: Pick<Api, 'mirrorPrepare' | 'mirrorExecute'>;
   token: string;
   body: MirrorPrepareBody;
+  /**
+   * The coin and direction the player picked. The engine copies the trader's side as it is at
+   * prepare, so a trader who flipped since the page last looked would get the other direction:
+   * the flow signs nothing unless the prepared order matches.
+   */
+  expect?: { coin: string; isBuy: boolean };
   privateKey: Hex;
   onProgress?: (p: MirrorProgress) => void;
   now?: () => number;
@@ -195,6 +204,13 @@ export async function runMirror(o: {
   if ('refusals' in prep.data)
     return { kind: 'refused', refusals: prep.data.refusals, groupId: prep.data.groupId };
   const { order, steps, groupId } = prep.data;
+  if (o.expect && (order.coin !== o.expect.coin || order.isBuy !== o.expect.isBuy))
+    return {
+      kind: 'error',
+      code: POSITION_CHANGED,
+      message: `The trader's position changed — pick again. The engine prepared a ${order.isBuy ? 'long' : 'short'} ${order.coin}, not the ${o.expect.isBuy ? 'long' : 'short'} ${o.expect.coin} you picked, so nothing was signed or sent.`,
+      receipts: [],
+    };
   const receipts: MirrorReceipt[] = [];
   for (const step of steps) {
     o.onProgress?.(step.kind === 'leverage' ? 'signing-leverage' : 'signing-order');

@@ -207,8 +207,8 @@ async function approvedStore(): Promise<KeyStore> {
   return store;
 }
 
-function mount(engine: ReturnType<typeof fakeEngine>, keyStore: KeyStore, v = view()) {
-  return render(
+function tree(engine: ReturnType<typeof fakeEngine>, keyStore: KeyStore, v: CompanyView) {
+  return (
     <EngineProvider runtime={engine.runtime}>
       <PlayerProvider>
         <ToastProvider>
@@ -217,8 +217,14 @@ function mount(engine: ReturnType<typeof fakeEngine>, keyStore: KeyStore, v = vi
           </DrawerProvider>
         </ToastProvider>
       </PlayerProvider>
-    </EngineProvider>,
+    </EngineProvider>
   );
+}
+
+/** Renders the ticket; `update` re-renders it with a refreshed company view, as the page does. */
+function mount(engine: ReturnType<typeof fakeEngine>, keyStore: KeyStore, v = view()) {
+  const r = render(tree(engine, keyStore, v));
+  return { ...r, update: (next: CompanyView) => r.rerender(tree(engine, keyStore, next)) };
 }
 
 /** Walks the stepper up to the Send button (wallet connected, linked, agent approved). */
@@ -250,7 +256,7 @@ describe('Mirror ticket: the engine has the final say', () => {
     mount(engine, await approvedStore(), view({ lastSnapshotAt: Date.now() - 5 * 60_000 }));
     const send = await toSend();
     expect(send.disabled).toBe(false);
-    expect(send.textContent).toBe('Sign and send $50 mirror');
+    expect(send.textContent).toBe('Sign and send $50 long BTC');
     expect(screen.getByText(/snapshot 5 min old, refreshed when you send/)).toBeTruthy();
   });
 
@@ -275,6 +281,79 @@ describe('Mirror ticket: the engine has the final say', () => {
     const send = screen.getByRole('button', { name: 'Refused by the committee' });
     expect((send as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText('NOTIONAL_OUT_OF_RANGE')).toBeTruthy();
+  });
+});
+
+describe('Mirror ticket: the position you picked', () => {
+  const ETH: PositionView = {
+    coin: 'ETH',
+    size: -20,
+    entryPx: 4_000,
+    liqPx: 4_800,
+    leverage: 3,
+    marginUsed: 1,
+    unrealizedPnl: 0,
+    mark: 3_990,
+    hp: 0.8,
+  };
+  const changed = /The trader's position changed — pick again/;
+
+  it('names the coin and side it sends', async () => {
+    mount(fakeEngine({}), await approvedStore(), view({ positions: [BTC, ETH] }));
+    expect((await toSend()).textContent).toBe('Sign and send $50 long BTC');
+  });
+
+  it('stops Send, instead of switching coin, when the trader closes the picked position', async () => {
+    const engine = fakeEngine({});
+    const m = mount(engine, await approvedStore(), view({ positions: [BTC, ETH] }));
+    await toSend();
+    m.update(view({ positions: [ETH] }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(changed);
+    const send = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole('button', { name: /ETH/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Pick again' }));
+    fireEvent.click(screen.getByRole('radio', { name: /SHORT ETH/ }));
+    const again = await toSend();
+    expect(again.textContent).toBe('Sign and send $50 short ETH');
+    expect(again.disabled).toBe(false);
+    expect(screen.queryByText(changed)).toBeNull();
+    expect(engine.seen.prepare).toBe(0);
+  });
+
+  it.each([
+    ['flips to short on the same coin', { ...BTC, size: -10 }],
+    ['changes the size of the position', { ...BTC, size: 12 }],
+  ])('stops Send when the trader %s', async (_n, next) => {
+    const engine = fakeEngine({});
+    const m = mount(engine, await approvedStore());
+    await toSend();
+    m.update(view({ positions: [next] }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(changed);
+    const send = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
+    expect((send as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(send);
+    expect(engine.seen.prepare).toBe(0);
+  });
+
+  it('keeps Send enabled when only the price moves', async () => {
+    const m = mount(fakeEngine({}), await approvedStore());
+    await toSend();
+    m.update(view({ positions: [{ ...BTC, mark: 114_500 }] }));
+    const send = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
+    expect((send as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(changed)).toBeNull();
+  });
+
+  it('signs nothing when the engine prepares a different side than the one picked', async () => {
+    const engine = fakeEngine({
+      prepare: () => json({ ...PREPARED, order: { ...order, isBuy: false } }),
+    });
+    mount(engine, await approvedStore());
+    fireEvent.click(await toSend());
+    expect((await screen.findByRole('alert')).textContent).toMatch(/position changed/);
+    expect(engine.seen.prepare).toBe(1);
+    expect(engine.seen.execute).toEqual([]);
   });
 });
 
@@ -321,7 +400,7 @@ describe('Mirror ticket: one click, one order', () => {
     fireEvent.click(await toSend());
     expect((await screen.findByRole('alert')).textContent).not.toBe('');
     expect(screen.queryByText('Your agent key is signing…')).toBeNull();
-    const again = screen.getByRole('button', { name: 'Sign and send $50 mirror' });
+    const again = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
     expect((again as HTMLButtonElement).disabled).toBe(false);
     expect(engine.seen.execute).toEqual([]);
   });
@@ -407,7 +486,7 @@ describe('Mirror ticket: agent key recovery', () => {
     mount(engine, store);
     fireEvent.click(await toSend());
     fireEvent.click(await screen.findByRole('button', { name: 'Re-approve agent' }));
-    await screen.findByRole('button', { name: 'Sign and send $50 mirror' });
+    await screen.findByRole('button', { name: 'Sign and send $50 long BTC' });
     const fresh = await store.load(MASTER);
     expect(fresh?.agentAddress).not.toBe(old?.agentAddress);
     expect(fresh?.approvedAt).not.toBeNull();

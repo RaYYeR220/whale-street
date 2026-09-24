@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useConnect, useConnection, useConnectors, useSignMessage } from 'wagmi';
 import { getWalletClient } from 'wagmi/actions';
-import type { CompanyView, MirrorOrderView, MirrorReason } from '../../lib/api-types';
+import type { CompanyView, MirrorOrderView, MirrorReason, PositionView } from '../../lib/api-types';
 import { side } from '../../lib/company';
 import { mirrorErrorText } from '../../lib/errors';
 import { coinPx, pctAbs, shortAddress, usd } from '../../lib/format';
@@ -129,6 +129,19 @@ function savePutAside(ids: ReadonlySet<string>): void {
 }
 const pctText = (f: number) => `${Number((f * 100).toFixed(2))}%`;
 
+/**
+ * What "Use this position" freezes: the coin, the trader's side and the trader's size at that
+ * moment. A refresh that changes any of them (or removes the position) asks the player to pick
+ * again instead of quietly sending something else.
+ */
+interface PickedPosition {
+  coin: string;
+  side: 'LONG' | 'SHORT';
+  size: number;
+}
+const pickOf = (p: PositionView): PickedPosition => ({ coin: p.coin, side: side(p), size: p.size });
+const sizeText = (n: number) => String(Number(Math.abs(n).toPrecision(6)));
+
 type Availability = { available: boolean; mode: 'live' | 'replay' } | { error: string };
 
 function hint(r: MirrorReason, view: CompanyView, coin: string): string {
@@ -198,8 +211,9 @@ export function MirrorTicket({
   const [askAgain, setAskAgain] = useState(0);
   const [agentReady, setAgentReady] = useState<boolean | null>(null);
   const [orders, setOrders] = useState<MirrorOrderView[]>([]);
+  /** The position the radio buttons point at (before a pick). */
   const [coin, setCoin] = useState<string | null>(null);
-  const [picked, setPicked] = useState(false);
+  const [pick, setPick] = useState<PickedPosition | null>(null);
   const [usdAmt, setUsdAmt] = useState(50);
   const [lev, setLev] = useState(2);
   const [sl, setSl] = useState(MIRROR.defaultStopLossPct);
@@ -252,7 +266,6 @@ export function MirrorTicket({
     outcomeRef.current = unknownFromLog(mine);
     setOutcome(outcomeRef.current);
     setCoin(mine.coin);
-    setPicked(true);
   }, [api, token, view.ticker, locked]);
   useEffect(() => {
     void loadOrders();
@@ -285,7 +298,11 @@ export function MirrorTicket({
     setCoin(first ? first.coin : null);
   }, [view.positions, coin]);
 
-  const pos = view.positions.find((p) => p.coin === coin) ?? null;
+  const pickCoin = pick?.coin ?? coin;
+  /** The trader's current position in the picked coin (the radio's coin before a pick). */
+  const pos = view.positions.find((p) => p.coin === pickCoin) ?? null;
+  /** A refresh changed or removed the picked position: nothing is sent until the player picks again. */
+  const pickChanged = pick !== null && (!pos || side(pos) !== pick.side || pos.size !== pick.size);
   const allowedLev = pos
     ? Math.max(1, Math.min(Math.floor(pos.leverage), MIRROR.maxLeverage))
     : MIRROR.maxLeverage;
@@ -294,8 +311,8 @@ export function MirrorTicket({
   }, [allowedLev]);
 
   const usage = useMemo(() => mirrorUsage(orders, now ?? Date.now()), [orders, now]);
-  const req = { coin: coin ?? '', notionalUsd: usdAmt, leverage: lev, stopLossPct: sl };
-  const ctx = previewContext(view, coin ?? '', now ?? Date.now(), usage);
+  const req = { coin: pickCoin ?? '', notionalUsd: usdAmt, leverage: lev, stopLossPct: sl };
+  const ctx = previewContext(view, pickCoin ?? '', now ?? Date.now(), usage);
   // Advisory: only the player's own inputs block a send; the engine decides the rest on a fresh snapshot.
   const preview = previewMirror(req, ctx);
   const rows = checkRows(req, ctx, preview, view.ticker);
@@ -306,7 +323,7 @@ export function MirrorTicket({
       ? 'link'
       : !agentReady
         ? 'approve'
-        : !picked
+        : !pick && !outcome
           ? 'pick'
           : 'size';
 
@@ -405,7 +422,7 @@ export function MirrorTicket({
       await refresh();
       show(null);
       setChecked(null);
-      setPicked(false);
+      setPick(null);
     });
 
   /** The player checked Hyperliquid themselves: stop showing this unknown order (kept on reload). */
@@ -418,12 +435,12 @@ export function MirrorTicket({
     setPutAside(next);
     show(null);
     setChecked(null);
-    setPicked(false);
+    setPick(null);
   };
 
   const doSend = () =>
     guarded('send', async () => {
-      if (!token || !address || !store || !coin || !preview.canSend) return;
+      if (!token || !address || !store || !pick || pickChanged || !preview.canSend) return;
       const rec = await store.load(address);
       if (!isUsable(rec, Date.now())) {
         setAgentReady(false);
@@ -434,7 +451,14 @@ export function MirrorTicket({
       const out = await runMirror({
         api,
         token,
-        body: { ticker: view.ticker, coin, notionalUsd: usdAmt, leverage: lev, stopLossPct: sl },
+        body: {
+          ticker: view.ticker,
+          coin: pick.coin,
+          notionalUsd: usdAmt,
+          leverage: lev,
+          stopLossPct: sl,
+        },
+        expect: { coin: pick.coin, isBuy: pick.side === 'LONG' },
         privateKey: rec.privateKey,
         onProgress: setProgress,
       });
@@ -731,8 +755,10 @@ export function MirrorTicket({
             <button
               className="ws-btn"
               type="button"
-              disabled={!coin}
-              onClick={() => setPicked(true)}
+              disabled={!pos}
+              onClick={() => {
+                if (pos) setPick(pickOf(pos));
+              }}
             >
               Use this position
             </button>
@@ -741,7 +767,7 @@ export function MirrorTicket({
       case 'size': {
         if (current !== 'size' || outcome) return null;
         const mark = pos?.mark ?? null;
-        const long = pos ? pos.size > 0 : true;
+        const long = pick ? pick.side === 'LONG' : true;
         const move = sl / lev;
         const stopPx = mark ? (long ? mark * (1 - move) : mark * (1 + move)) : null;
         const margin = usdAmt / lev;
@@ -834,14 +860,10 @@ export function MirrorTicket({
               <div className="co-worst" id="m-worst">
                 {stopPx === null
                   ? 'A stop is required on every mirror. You can’t turn it off.'
-                  : `Stop at ${coinPx(stopPx)} (${coin} ${long ? '−' : '+'}${pctAbs(move)}). Worst case you lose ${usd(margin * sl)} of ${usd(margin)} margin. A stop is required; you can’t turn it off.`}
+                  : `Stop at ${coinPx(stopPx)} (${pickCoin} ${long ? '−' : '+'}${pctAbs(move)}). Worst case you lose ${usd(margin * sl)} of ${usd(margin)} margin. A stop is required; you can’t turn it off.`}
               </div>
             </div>
-            <button
-              className="ws-link co-step__change"
-              type="button"
-              onClick={() => setPicked(false)}
-            >
+            <button className="ws-link co-step__change" type="button" onClick={() => setPick(null)}>
               Change position
             </button>
           </>
@@ -898,7 +920,7 @@ export function MirrorTicket({
                   <li key={r.code} className="co-refusal">
                     <span className="co-refusal__code">{r.code}</span>
                     <q>{r.message}</q>
-                    <p>{hint(r, view, coin ?? '')}</p>
+                    <p>{hint(r, view, pickCoin ?? '')}</p>
                   </li>
                 ))}
               </ul>
@@ -943,19 +965,38 @@ export function MirrorTicket({
             </div>
           );
         if (outcomeCard) return outcomeCard;
+        if (!pick) return null;
         return (
           <div className="co-sign">
+            {pickChanged ? (
+              <div className="co-closed co-closed--red" role="alert">
+                <b>The trader's position changed — pick again</b>
+                <span>
+                  You picked {pick.side} {pick.coin} (the trader held {sizeText(pick.size)}{' '}
+                  {pick.coin}).{' '}
+                  {pos
+                    ? `The trader now holds ${side(pos)} ${pos.coin} (${sizeText(pos.size)} ${pos.coin}).`
+                    : `The trader no longer holds ${pick.coin}.`}{' '}
+                  Nothing was sent.
+                </span>
+                <button className="ws-link" type="button" onClick={() => setPick(null)}>
+                  Pick again
+                </button>
+              </div>
+            ) : null}
             <button
               className="ws-btn"
               type="button"
-              disabled={busy !== null || !preview.canSend}
+              disabled={busy !== null || !preview.canSend || pickChanged}
               onClick={() => void doSend()}
             >
-              {preview.canSend ? `Sign and send $${usdAmt} mirror` : 'Refused by the committee'}
+              {preview.canSend
+                ? `Sign and send $${usdAmt} ${pick.side.toLowerCase()} ${pick.coin}`
+                : 'Refused by the committee'}
             </button>
             <p>
               {preview.canSend
-                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${coin} leverage to ${lev}x (cross), then a market ${pos && pos.size > 0 ? 'buy' : 'sell'} with your stop attached. Slippage limit ${pctText(MARKET_SLIPPAGE)}.`
+                ? `The engine checks a fresh snapshot first. If it passes, your agent key signs 2 actions for the Nansen Trading API: set ${pick.coin} leverage to ${lev}x (cross), then a market ${pick.side === 'LONG' ? 'buy' : 'sell'} with your stop attached. Slippage limit ${pctText(MARKET_SLIPPAGE)}.`
                 : 'Nothing was signed or sent. Fix what the committee refused and the stamps re-check instantly.'}
             </p>
           </div>
@@ -967,7 +1008,7 @@ export function MirrorTicket({
     <Outcome
       outcome={outcome}
       view={view}
-      coin={coin ?? ''}
+      coin={pickCoin ?? ''}
       checked={checked}
       busy={busy !== null}
       onRecheck={() => void checkOutcome()}
@@ -976,7 +1017,7 @@ export function MirrorTicket({
       onPutAside={putAsideOutcome}
       onAgain={() => {
         show(null);
-        setPicked(false);
+        setPick(null);
       }}
       onDesk={() => open({ kind: 'desk' })}
     />
@@ -988,8 +1029,10 @@ export function MirrorTicket({
     if (key === 'connect') return `${shortAddress(address)} connected`;
     if (key === 'link') return 'Linked to your player';
     if (key === 'approve') return 'Agent key approved. It can trade; it can’t withdraw.';
-    if (key === 'pick' && pos)
-      return `${side(pos)} ${pos.coin} ${Math.round(pos.leverage)}x, trader in at ${coinPx(pos.entryPx)}`;
+    if (key === 'pick' && pick)
+      return pos && !pickChanged
+        ? `${pick.side} ${pick.coin} ${Math.round(pos.leverage)}x, trader in at ${coinPx(pos.entryPx)}`
+        : `${pick.side} ${pick.coin}`;
     return null;
   };
 

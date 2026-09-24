@@ -563,7 +563,13 @@ describe('runMirror', () => {
       { ok: true, data: receipt('s1', 'FILLED') },
       { ok: true, data: receipt('s2', 'FILLED', { hlOid: 42, avgPx: 113_990 }) },
     ]);
-    const r = await runMirror({ api, token: 't', body, privateKey: AGENT_KEY });
+    const r = await runMirror({
+      api,
+      token: 't',
+      body,
+      expect: { coin: 'BTC', isBuy: true },
+      privateKey: AGENT_KEY,
+    });
     expect(executed).toEqual(['s1', 's2']);
     expect(r).toMatchObject({ kind: 'filled', groupId: 'g1', warning: null });
   });
@@ -578,6 +584,29 @@ describe('runMirror', () => {
     });
     expect(executed).toEqual([]);
   });
+
+  it.each([
+    ['the side flipped', { coin: 'BTC', isBuy: false }],
+    ['the coin changed', { coin: 'ETH', isBuy: true }],
+  ] as const)(
+    'signs nothing when the prepared order differs from the pick (%s)',
+    async (_n, pick) => {
+      const { api, executed } = fake([{ ok: true, data: receipt('s1', 'FILLED') }]);
+      const progress: string[] = [];
+      const r = await runMirror({
+        api,
+        token: 't',
+        body,
+        expect: pick,
+        privateKey: AGENT_KEY,
+        onProgress: (p) => progress.push(p),
+      });
+      expect(r).toMatchObject({ kind: 'error', code: 'POSITION_CHANGED', receipts: [] });
+      expect(r.kind === 'error' ? r.message : '').toMatch(/position changed/);
+      expect(progress).toEqual(['preparing']);
+      expect(executed).toEqual([]);
+    },
+  );
 
   it('stops before the order when the leverage change is unconfirmed', async () => {
     const { api, executed } = fake([{ ok: true, data: receipt('s1', 'UNKNOWN') }]);
