@@ -185,7 +185,7 @@ export async function runMirror(o: {
   body: MirrorPrepareBody;
   /**
    * The coin and direction the player picked. The engine copies the trader's side as it is at
-   * prepare, so a trader who flipped since the page last looked would get the other direction:
+   * prepare and refuses (POLICY_CHANGED) when `body.expect` no longer holds; as a second guard,
    * the flow signs nothing unless the prepared order matches.
    */
   expect?: { coin: string; isBuy: boolean };

@@ -389,6 +389,11 @@ export interface MirrorPrepareBody {
   notionalUsd: number;
   leverage: number;
   stopLossPct?: number;
+  /**
+   * The trader's position the player picked: the engine refuses (POLICY_CHANGED) before any
+   * Nansen prepare call if the trader no longer holds that side of the coin.
+   */
+  expect?: { coin: string; side: 'LONG' | 'SHORT' };
 }
 
 export interface MirrorReceipt {

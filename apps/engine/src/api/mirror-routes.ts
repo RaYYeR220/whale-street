@@ -7,13 +7,21 @@ import { AUTH_PER_MINUTE, rateLimited, requirePlayer, sendError } from './auth';
 import { RateGate } from './rate';
 
 const AgentBody = z.object({ masterAddress: z.string().max(64), agentAddress: z.string().max(64) });
-const PrepareBody = z.object({
-  ticker: z.string().min(1).max(8),
-  coin: z.string().min(1).max(20),
-  notionalUsd: z.number().positive(),
-  leverage: z.number().int().min(1).max(50),
-  stopLossPct: z.number().positive().max(1).optional(),
-});
+const PrepareBody = z
+  .object({
+    ticker: z.string().min(1).max(8),
+    coin: z.string().min(1).max(20),
+    notionalUsd: z.number().positive(),
+    leverage: z.number().int().min(1).max(50),
+    stopLossPct: z.number().positive().max(1).optional(),
+    /** The position the player picked; refused as POLICY_CHANGED if the trader no longer holds it. */
+    expect: z
+      .object({ coin: z.string().min(1).max(20), side: z.enum(['LONG', 'SHORT']) })
+      .optional(),
+  })
+  .refine((b) => b.expect === undefined || b.expect.coin === b.coin, {
+    message: 'expect.coin must be the coin of the order',
+  });
 const ExecuteBody = z.object({
   stepId: z.string().min(1).max(64),
   signature: z.object({

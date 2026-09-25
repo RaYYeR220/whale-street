@@ -140,6 +140,7 @@ function fakeEngine(o: {
 }) {
   const seen = {
     prepare: 0,
+    prepareBodies: [] as Array<Record<string, unknown>>,
     execute: [] as string[],
     orders: 0,
     agents: [] as string[],
@@ -182,8 +183,9 @@ function fakeEngine(o: {
       if (o.ordersDown?.()) return json({ error: 'INTERNAL', message: 'engine restarting' }, 503);
       return json({ orders: o.orders?.() ?? [] });
     },
-    'POST /api/mirror/prepare': () => {
+    'POST /api/mirror/prepare': ({ init }) => {
       seen.prepare += 1;
+      seen.prepareBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
       return o.prepare?.() ?? json(PREPARED);
     },
     'POST /api/mirror/execute': ({ init }) => {
@@ -346,6 +348,30 @@ describe('Mirror ticket: the position you picked', () => {
     const send = screen.getByRole('button', { name: 'Sign and send $50 long BTC' });
     expect((send as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByText(changed)).toBeNull();
+  });
+
+  it('asks the engine to refuse unless the trader still holds the picked side', async () => {
+    const engine = fakeEngine({
+      prepare: () =>
+        json({
+          ok: false,
+          groupId: 'g1',
+          refusals: [
+            {
+              code: 'POLICY_CHANGED',
+              message: 'the trader no longer holds the ETH short you picked',
+            },
+          ],
+        }),
+    });
+    mount(engine, await approvedStore(), view({ positions: [BTC, ETH] }));
+    fireEvent.click(await screen.findByRole('radio', { name: /SHORT ETH/ }));
+    fireEvent.click(await toSend());
+    expect(await screen.findByText(/no longer holds the ETH short you picked/)).toBeTruthy();
+    expect(engine.seen.prepareBodies).toEqual([
+      expect.objectContaining({ coin: 'ETH', expect: { coin: 'ETH', side: 'SHORT' } }),
+    ]);
+    expect(engine.seen.execute).toEqual([]);
   });
 
   it('signs nothing when the engine prepares a different side than the one picked', async () => {

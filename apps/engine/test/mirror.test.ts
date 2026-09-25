@@ -1109,6 +1109,62 @@ describe('mirror', () => {
     expect(e.mirror.orders(player.id)[0]).toMatchObject({ status: 'REFUSED' });
   });
 
+  it('refuses POLICY_CHANGED before any Nansen prepare call when the expected side is gone', async () => {
+    const { e, trading, master, agent, player, token } = await setup();
+    e.mirror.registerAgent(player.id, master.address, agent.address);
+    const prepare = (body: Record<string, unknown>) =>
+      t.app.inject({
+        method: 'POST',
+        url: '/api/mirror/prepare',
+        headers: bearer(token),
+        payload: body,
+      });
+    const PICKED_LONG = { ...HYP_50, expect: { coin: 'HYPE', side: 'LONG' } };
+    const prepareCalls = () => trading.calls.filter((c) => c.method.startsWith('prepare'));
+
+    // The trader flipped to a short since the page last looked (the fresh snapshot says so).
+    t.nansen.positions.set(TRADER, {
+      positions: [pos('HYPE', -100, 40, 50, 10)],
+      accountValue: 100_000,
+      time: null,
+    });
+    const flipped = await prepare(PICKED_LONG);
+    expect(flipped.statusCode).toBe(200);
+    expect(flipped.json()).toMatchObject({ ok: false, refusals: [{ code: 'POLICY_CHANGED' }] });
+    expect(flipped.json().refusals[0].message).toMatch(/short/);
+    expect(prepareCalls()).toEqual([]);
+    expect(e.mirror.orders(player.id)[0]).toMatchObject({
+      status: 'REFUSED',
+      refusals: [{ code: 'POLICY_CHANGED' }],
+    });
+
+    // The position is gone altogether.
+    t.nansen.positions.set(TRADER, { positions: [], accountValue: 100_000, time: null });
+    expect((await prepare(PICKED_LONG)).json()).toMatchObject({
+      ok: false,
+      refusals: [{ code: 'POLICY_CHANGED' }],
+    });
+    expect(prepareCalls()).toEqual([]);
+
+    // The picked long is back: the order is prepared as before.
+    t.nansen.positions.set(TRADER, {
+      positions: [pos('HYPE', 100, 40, 30, 10)],
+      accountValue: 100_000,
+      time: null,
+    });
+    const back = await prepare(PICKED_LONG);
+    expect(back.json()).toMatchObject({ ok: true, order: { coin: 'HYPE', isBuy: true } });
+    expect(prepareCalls().length).toBeGreaterThan(0);
+
+    // An expectation for another coin than the order's is a malformed request.
+    expect((await prepare({ ...HYP_50, expect: { coin: 'BTC', side: 'LONG' } })).statusCode).toBe(
+      400,
+    );
+    expect((await prepare({ ...HYP_50, expect: { coin: 'HYPE', side: 'UP' } })).statusCode).toBe(
+      400,
+    );
+  });
+
   it('never leaks the Nansen API key into responses or the database', async () => {
     const { e, trading, master, agent, player } = await setup();
     e.mirror.registerAgent(player.id, master.address, agent.address);

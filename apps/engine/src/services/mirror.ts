@@ -8,6 +8,7 @@ import {
   type MirrorRequest,
   PARAMS,
   type Params,
+  type Position,
 } from '@whale-street/core';
 import type { HlInfo, HlPerpState } from '@whale-street/hl';
 import {
@@ -108,8 +109,34 @@ export interface MirrorError {
   refusals?: MirrorReason[];
 }
 
+/** The trader's position the player picked (coin and side), as the page last saw it. */
+export interface MirrorExpectation {
+  coin: string;
+  side: 'LONG' | 'SHORT';
+}
+
 export interface MirrorPrepareRequest extends MirrorRequest {
   ticker: string;
+  /**
+   * The copy follows the trader's side at prepare; with this, a trader who flipped or closed the
+   * picked position since the page looked is refused (POLICY_CHANGED) before any Nansen prepare
+   * call, instead of preparing the other direction.
+   */
+  expect?: MirrorExpectation;
+}
+
+/** Why the trader's current position no longer matches the one the player picked, or null. */
+function expectationProblem(
+  positions: readonly Position[],
+  want: MirrorExpectation,
+): string | null {
+  const p = positions.find((x) => x.coin === want.coin && x.size !== 0);
+  const picked = want.side.toLowerCase();
+  if (!p) return `the trader no longer holds the ${want.coin} ${picked} you picked`;
+  const side = p.size > 0 ? 'LONG' : 'SHORT';
+  return side === want.side
+    ? null
+    : `the trader's ${want.coin} position is now ${side.toLowerCase()}, not the ${picked} you picked`;
 }
 
 export interface MirrorStep {
@@ -626,6 +653,9 @@ export function createMirrorService(d: MirrorDeps): MirrorService {
       // happened to leave fresh-looking (no silent source switch on the failure path).
       const refreshed = await d.refresher.refresh(rt.id, 'mirror');
       if (refreshed.kind === 'failed') return refuse([STALE_DATA_REFUSAL]);
+      // On the fresh snapshot, before any Nansen prepare call: still the position the player picked?
+      const changed = req.expect ? expectationProblem(rt.nav.snapshot.positions, req.expect) : null;
+      if (changed) return refuse([{ code: 'POLICY_CHANGED', message: changed }]);
       const table = await assets();
       if (!(table instanceof Map)) return failWith(table);
       const asset = table.get(req.coin) ?? null;

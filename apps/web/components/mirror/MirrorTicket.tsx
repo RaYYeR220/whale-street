@@ -489,6 +489,7 @@ export function MirrorTicket({
           notionalUsd: usdAmt,
           leverage: lev,
           stopLossPct: sl,
+          expect: { coin: pick.coin, side: pick.side },
         },
         expect: { coin: pick.coin, isBuy: pick.side === 'LONG' },
         privateKey: rec.privateKey,

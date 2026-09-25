@@ -48,6 +48,7 @@ import type {
   MirrorErrorCode as EMirrorError,
   MirrorOrderView as EMirrorOrder,
   PrepareResult as EPrepare,
+  MirrorPrepareRequest as EPrepareRequest,
   MirrorReceipt as EReceipt,
   MirrorStep as EStep,
   MirrorService,
@@ -144,7 +145,11 @@ export type EngineToWeb = [
 
 export type EngineKeysKnown = NoUnknownKeys<EngineToWeb[number][2]>;
 
-export type WebToEngine = [Accepts<EClient, W.ClientMessage>];
+export type WebToEngine = [
+  Accepts<EClient, W.ClientMessage>,
+  // POST /api/mirror/prepare
+  Accepts<EPrepareRequest, W.MirrorPrepareBody>,
+];
 
 /** Error codes the web words for players: the same set as the engine's, in both directions. */
 export type SameCodes = [
