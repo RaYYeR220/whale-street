@@ -102,3 +102,20 @@ describe('engine deploy files (Render)', () => {
     expect(ignore).not.toMatch(/replay/);
   });
 });
+
+describe('keep-alive workflow', () => {
+  const wf = repo('.github/workflows/keepalive.yml');
+
+  it('pings the status endpoint every 10 minutes at the address from a repository variable', () => {
+    expect(wf).toMatch(/^\s*- cron: "\*\/10 \* \* \* \*"$/m);
+    expect(wf).toMatch(/^\s*workflow_dispatch:$/m);
+    expect(wf).toMatch(/^\s*ENGINE_URL: \$\{\{ vars\.ENGINE_URL \}\}$/m);
+    expect(wf).toContain('curl -fsS --max-time 60 --retry 2');
+    expect(wf).toContain('/api/status');
+    expect(wf).not.toMatch(/https?:\/\//);
+  });
+
+  it('succeeds with a notice while the variable is unset', () => {
+    expect(wf).toMatch(/if \[ -z "\$ENGINE_URL" \]; then\s+echo "::notice::[^"]+"\s+exit 0/);
+  });
+});
