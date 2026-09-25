@@ -61,7 +61,7 @@ export interface Config {
   trustProxy: number;
   /** LIVE: Nansen credit balance below which live positions come from Hyperliquid (credit-saver). */
   creditSaverAt: number;
-  /** LIVE: Nansen credit balance below which the scout and the IPO desk pause. */
+  /** LIVE: Nansen credit balance below which the scout, the IPO desk, and the Mirror pause. */
   creditFloor: number;
 }
 

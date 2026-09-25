@@ -12,8 +12,8 @@ import type { NansenPort } from '../ports';
  */
 export const CREDIT_SAVER_AT = 1_500;
 /**
- * Default: below this, the scout and the IPO desk pause (applications DEFERRED with a reason).
- * Configurable with CREDIT_FLOOR.
+ * Default: below this, the scout, the IPO desk, and the Mirror pause (applications DEFERRED and
+ * mirror orders refused, each with a reason). Configurable with CREDIT_FLOOR.
  */
 export const CREDIT_FLOOR = 200;
 /** After a data call is refused for credits, further refusals within this window share one check. */
