@@ -4,17 +4,26 @@ import { type CheckResult, PARAMS, type Prospectus as ProspectusData } from '@wh
 import { useState } from 'react';
 import type { FilingView, HolderView, PositionView } from '../../lib/api-types';
 import type { ListingLookup } from '../../lib/committee';
-import { type DisplayCompany, liqDistance, notional, side, unrealized } from '../../lib/company';
+import {
+  cushionLeft,
+  type DisplayCompany,
+  liqDistance,
+  notional,
+  side,
+  unrealized,
+} from '../../lib/company';
 import { filingText, kindOf, TONE_TEXT } from '../../lib/filings';
 import { ago, agoLong, coinPx, compact, pctAbs, upDown } from '../../lib/format';
+import { band } from '../../lib/ink';
 import { NMark } from '../chrome/Drawer';
 import { Hp } from '../ink/Hp';
 
 export function RiskPanel({ c }: { c: DisplayCompany }) {
   const bankrupt = c.display === 'bankrupt' || c.display === 'delisted';
+  // Least cushion first: that position sets HP.
   const pos = [...c.positions].sort(
     (a, b) =>
-      (liqDistance(a) ?? Number.POSITIVE_INFINITY) - (liqDistance(b) ?? Number.POSITIVE_INFINITY),
+      (cushionLeft(a) ?? Number.POSITIVE_INFINITY) - (cushionLeft(b) ?? Number.POSITIVE_INFINITY),
   );
   const risky = pos[0];
   const minHp = PARAMS.mirror.minHp;
@@ -42,11 +51,12 @@ export function RiskPanel({ c }: { c: DisplayCompany }) {
           <p className="co-risk__why">
             {risky ? (
               <>
-                HP follows the riskiest position,{' '}
+                HP is how much of the distance from entry to liquidation is still left. It follows
+                the position with the least left,{' '}
                 <b>
                   {side(risky).toLowerCase()} {risky.coin} {Math.round(risky.leverage)}x
                 </b>
-                . The face gets tenser as it falls. Bars fill up to 50% away.
+                . The face gets tenser as it falls.
               </>
             ) : (
               'No open positions: nothing can be liquidated.'
@@ -71,10 +81,15 @@ export function RiskPanel({ c }: { c: DisplayCompany }) {
   );
 }
 
+/** Bar texture by the face's bands: calm, tense, then panic and meltdown alike. */
+const BAR_BAND = { calm: '', tense: 'tense', panic: 'hot', meltdown: 'hot' } as const;
+
+/** One position on the HP scale: the share of its entry-to-liquidation cushion still left. */
 function LiqRow({ p, first }: { p: PositionView; first: boolean }) {
+  const left = cushionLeft(p);
   const d = liqDistance(p);
   const title = `${side(p)} ${p.coin} ${Math.round(p.leverage)}x`;
-  if (d === null)
+  if (left === null || d === null)
     return (
       <li>
         <div className="co-liq__top">
@@ -90,7 +105,7 @@ function LiqRow({ p, first }: { p: PositionView; first: boolean }) {
         </div>
       </li>
     );
-  const band = d < 0.1 ? 'hot' : d < 0.25 ? 'tense' : '';
+  const pct = Math.round(left * 100);
   return (
     <li>
       <div className="co-liq__top">
@@ -99,24 +114,24 @@ function LiqRow({ p, first }: { p: PositionView; first: boolean }) {
           {first ? <span className="ws-badge ws-badge--bot">Sets HP</span> : null}
         </span>
         <span className="ws-num">
-          <b>{pctAbs(d)}</b> away
+          <b>{pct}%</b> of the cushion left
         </span>
       </div>
       {/* biome-ignore lint/a11y/useSemanticElements: a drawn bar; the native <meter> cannot take this design */}
       <div
         className="co-liq__bar"
-        data-band={band}
+        data-band={BAR_BAND[band(left)]}
         role="meter"
         aria-valuemin={0}
-        aria-valuemax={50}
-        aria-valuenow={Math.round(d * 100)}
-        aria-label={`${p.coin} distance to liquidation`}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+        aria-label={`${p.coin}: share of the distance from entry to liquidation still left`}
       >
-        <i style={{ width: `${Math.min(100, (d / 0.5) * 100).toFixed(1)}%` }} />
+        <i style={{ width: `${(left * 100).toFixed(1)}%` }} />
       </div>
       <div className="co-liq__note">
-        {p.coin} can {side(p) === 'LONG' ? 'fall' : 'rise'} {pctAbs(d)} before liquidation at{' '}
-        {coinPx(p.liqPx)}. Now {coinPx(p.mark)}.
+        {p.coin} liquidation {pctAbs(d)} {side(p) === 'LONG' ? 'below' : 'above'} the mark: at{' '}
+        {coinPx(p.liqPx)}, now {coinPx(p.mark)}, entry {coinPx(p.entryPx)}.
       </div>
     </li>
   );

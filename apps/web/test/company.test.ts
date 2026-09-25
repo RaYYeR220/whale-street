@@ -85,7 +85,7 @@ describe('filings', () => {
       filingText(filing({ kind: 'REDUCE', sizeBefore: 10, sizeAfter: 8, realizedPnlUsd: null })),
     ).toBe('Cut the HYPE long by 20%.');
     expect(filingText(filing({ kind: 'MARGIN_CALL', detail: null }))).toBe(
-      'Margin call: under 10% from liquidation.',
+      'Margin call: HP under 10%.',
     );
   });
 

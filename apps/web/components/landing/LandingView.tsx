@@ -772,7 +772,7 @@ export function LandingView({
                 ['Size between $10 and $100', true, '$50'],
                 ['Leverage at most 5x, never above the trader’s', true, '5x'],
                 ['Stop-loss risks at most 50% of margin', true, '25%'],
-                ['Trader at least 15% from liquidation', true, '58%'],
+                ['Trader HP at least 15%', true, '58%'],
                 ['Trader data under 60 seconds old', true, '12 s'],
                 ['Entry within 5% of the trader', false, '5.5% worse'],
               ].map(([n, ok, d]) => (

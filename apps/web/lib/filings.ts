@@ -147,7 +147,7 @@ export function filingText(f: FilingView): string {
     case 'LIQUIDATION':
       return `${coin} ${before ?? 'position'} liquidated${pnl(f.realizedPnlUsd)}.`;
     case 'MARGIN_CALL':
-      return f.detail ? `Margin call: ${f.detail}.` : 'Margin call: under 10% from liquidation.';
+      return f.detail ? `Margin call: ${f.detail}.` : 'Margin call: HP under 10%.';
     case 'BANKRUPTCY':
       return f.detail ? `Bankrupt: ${f.detail.replace(/^bankrupt:\s*/, '')}.` : 'Bankrupt.';
     case 'DELISTING':

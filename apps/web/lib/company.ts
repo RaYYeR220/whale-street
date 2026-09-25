@@ -2,7 +2,7 @@
  * Display model of a listed company: the live 1 Hz entry (price, NAV, HP, status) merged with the
  * slower REST view (name, rating, positions, prospectus) and the minute series.
  */
-import { type CompanyStatus, PARAMS, type Rating } from '@whale-street/core';
+import { type CompanyStatus, PARAMS, positionHp, type Rating } from '@whale-street/core';
 import type { CompanyView, MarketEntry, PositionView } from './api-types';
 import type { PortraitStatus } from './portrait';
 import { change, lastMinutes, type Series } from './store';
@@ -50,6 +50,17 @@ export const side = (p: { size: number }): 'LONG' | 'SHORT' => (p.size >= 0 ? 'L
 export function notional(p: PositionView): number | null {
   const px = finite(p.mark) ?? finite(p.entryPx);
   return px === null ? null : Math.abs(p.size) * px;
+}
+
+/**
+ * Share of the entry-to-liquidation distance still left at the live mark, 0 to 1: the same rule as
+ * HP (core positionHp), so a position's bar and the HP meter always agree. Null without a
+ * liquidation price or a live mark.
+ */
+export function cushionLeft(p: PositionView): number | null {
+  const mark = finite(p.mark);
+  if (mark === null || mark <= 0 || finite(p.liqPx) === null) return null;
+  return positionHp(p, mark);
 }
 
 /** Fraction the mark can move before liquidation, or null when there is no liquidation price. */
