@@ -35,6 +35,48 @@ test('the embed widget renders, says REPLAY and may be framed anywhere', async (
   expect(floor.headers()['x-frame-options']).toBe('SAMEORIGIN');
 });
 
+test('the embed fits its real 320×120 box in REPLAY: HP and the Nansen line fully visible', async ({
+  page,
+  request,
+}) => {
+  const [ticker] = await listedTickers(request);
+  await page.setViewportSize({ width: 320, height: 120 });
+  await page.goto(`/embed/${ticker}`);
+  await expect(page.locator('.em__mode')).toHaveText('REPLAY');
+  await expect(page.locator('.em__hp')).toHaveText(/^HP (\d+%|—)$/);
+  await expect(page.locator('.em__src')).toHaveText('Powered by Nansen API');
+  const card = await page.locator('.em').boundingBox();
+  if (!card) throw new Error('no embed card');
+  for (const sel of ['.em__on', '.em__mode', '.em__hp', '.em__src']) {
+    const el = page.locator(sel);
+    const box = await el.boundingBox();
+    if (!box) throw new Error(`${sel} is not rendered`);
+    // The box and the text actually drawn stay inside the card's 2.5px border (the card clips
+    // everything past it), and the text is not squeezed narrower than it needs.
+    const drawn = await el.evaluate((n) => {
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const r = range.getBoundingClientRect();
+      return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+    });
+    for (const [what, left, right, top, bottom] of [
+      ['box', box.x, box.x + box.width, box.y, box.y + box.height],
+      ['text', drawn.left, drawn.right, drawn.top, drawn.bottom],
+    ] as const) {
+      expect(left, `${sel} ${what} left edge`).toBeGreaterThanOrEqual(card.x + 2.5);
+      expect(right, `${sel} ${what} right edge`).toBeLessThanOrEqual(card.x + card.width - 2.5);
+      expect(top, `${sel} ${what} top edge`).toBeGreaterThanOrEqual(card.y + 2.5);
+      expect(bottom, `${sel} ${what} bottom edge`).toBeLessThanOrEqual(card.y + card.height - 2.5);
+    }
+    const squeezed = await el.evaluate((n) => n.scrollWidth > n.clientWidth + 0.5);
+    expect(squeezed, `${sel} is squeezed`).toBe(false);
+  }
+  const size = await page
+    .locator('.em__src')
+    .evaluate((n) => Number.parseFloat(getComputedStyle(n).fontSize));
+  expect(size).toBeGreaterThanOrEqual(11);
+});
+
 test('an unknown ticker says so instead of showing a blank company', async ({ page }) => {
   const res = await page.goto('/c/NOPE');
   expect(res?.status()).toBe(404);

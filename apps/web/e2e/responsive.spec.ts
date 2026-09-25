@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { listedTickers } from './helpers';
+import { listedTickers, moodOverlaps } from './helpers';
 
 test('phones: no sideways scroll, the mode badge stays visible', async ({ page, request }) => {
   const [ticker] = await listedTickers(request);
@@ -18,4 +18,9 @@ test('phones: the tab bar replaces the top navigation', async ({ page }) => {
   await page.goto('/floor');
   await expect(page.locator('.ws-tabbar')).toBeVisible();
   await expect(page.locator('.ws-nav')).toBeHidden();
+});
+
+test('phones: street mood keeps each coin reading clear of the crowds', async ({ page }) => {
+  await page.goto('/floor');
+  expect(await moodOverlaps(page)).toEqual([]);
 });

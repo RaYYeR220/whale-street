@@ -1,7 +1,7 @@
 'use client';
 
 import { type CheckResult, PARAMS, type Prospectus as ProspectusData } from '@whale-street/core';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { FilingView, HolderView, PositionView } from '../../lib/api-types';
 import type { ListingLookup } from '../../lib/committee';
 import {
@@ -12,7 +12,7 @@ import {
   side,
   unrealized,
 } from '../../lib/company';
-import { filingText, kindOf, TONE_TEXT } from '../../lib/filings';
+import { filingText, foldConsecutive, kindOf, TONE_TEXT } from '../../lib/filings';
 import { ago, agoLong, coinPx, compact, pctAbs, upDown } from '../../lib/format';
 import { band } from '../../lib/ink';
 import { NMark } from '../chrome/Drawer';
@@ -232,7 +232,9 @@ export function FilingsTimeline({
   lit: ReadonlySet<number>;
 }) {
   const [all, setAll] = useState(false);
-  const showAll = all || filings.slice(8).some((f) => lit.has(f.id));
+  const items = useMemo(() => foldConsecutive(filings), [filings]);
+  const isLit = (ids: readonly number[]) => ids.some((id) => lit.has(id));
+  const showAll = all || items.slice(8).some((x) => isLit(x.ids));
   return (
     <section
       className="ws-panel ws-panel--flat ws-panel--thin co-filings"
@@ -241,21 +243,28 @@ export function FilingsTimeline({
       <h2 className="ws-cap" id="filings-h">
         Filings <small>full history, newest first</small>
       </h2>
-      {filings.length === 0 ? (
+      {items.length === 0 ? (
         <p className="co-sub">No filings yet.</p>
       ) : (
         <ol className={`co-tl${showAll ? ' is-all' : ''}`}>
-          {filings.map((f) => {
+          {items.map(({ filing: f, ids }) => {
             const k = kindOf(f);
+            const times = ids.length;
             return (
-              <li key={f.id} id={`fl-${f.id}`} className={lit.has(f.id) ? 'is-lit' : undefined}>
+              <li key={f.id} id={`fl-${f.id}`} className={isLit(ids) ? 'is-lit' : undefined}>
                 <span className="co-tl__when">{now === null ? '' : ago(now - f.at)}</span>
                 <span className="co-tl__dot" data-tone={k.tone} aria-hidden="true" />
                 <div
                   className={`ws-balloon ${k.shout ? '' : 'ws-balloon--tail-left '}${k.balloon}`}
                 >
                   <div className="co-tl__meta">
-                    <span className={`kind ${TONE_TEXT[k.tone]}`}>{k.label}</span>
+                    <span className={`kind ${TONE_TEXT[k.tone]}`}>
+                      {k.label}
+                      {times > 1 ? <span aria-hidden="true"> ×{times}</span> : null}
+                    </span>
+                    {times > 1 ? (
+                      <span className="ws-sr">, filed {times} times in a row</span>
+                    ) : null}
                     <span className="ws-sr">{now === null ? '' : agoLong(now - f.at)}</span>
                     {f.provenance.length > 0 ? (
                       <>
@@ -271,14 +280,14 @@ export function FilingsTimeline({
           })}
         </ol>
       )}
-      {filings.length > 8 ? (
+      {items.length > 8 ? (
         <button
           className="ws-link co-more"
           type="button"
           aria-expanded={showAll}
           onClick={() => setAll((v) => !v)}
         >
-          {showAll ? 'Show fewer filings' : `Show all ${filings.length} filings`}
+          {showAll ? 'Show fewer filings' : `Show all ${items.length} entries`}
         </button>
       ) : null}
     </section>

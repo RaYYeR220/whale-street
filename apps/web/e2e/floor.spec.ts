@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { listedTickers, watchErrors } from './helpers';
+import { listedTickers, moodOverlaps, watchErrors } from './helpers';
 
 test('the floor shows the REPLAY badge and ticks', async ({ page }) => {
   const errors = watchErrors(page);
@@ -17,6 +17,13 @@ test('the floor shows the REPLAY badge and ticks', async ({ page }) => {
     .poll(async () => Number(await strip.getAttribute('data-market-at')), { timeout: 10_000 })
     .toBeGreaterThan(first);
   expect(errors).toEqual([]);
+});
+
+test('street mood keeps each coin reading clear of the crowds and percentages', async ({
+  page,
+}) => {
+  await page.goto('/floor');
+  expect(await moodOverlaps(page)).toEqual([]);
 });
 
 test('a company page takes a play-money order', async ({ page, request }) => {

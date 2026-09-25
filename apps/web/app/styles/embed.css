@@ -15,7 +15,7 @@
   display: grid;
   grid-template-columns: 86px minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr) auto auto;
-  grid-template-areas: "art head" "art kv" "art spark" "art foot" "art src";
+  grid-template-areas: "art head" "art kv" "art spark" "art foot" "art meta";
   column-gap: 10px;
   row-gap: 2px;
   width: 320px;
@@ -111,15 +111,23 @@
   --spark-h: 100%;
   height: 100%;
 }
-.em__foot {
-  grid-area: foot;
+/* Two footer lines of about 200 px each (the text column is 206 px): "on Whale Street" and HP,
+   then the Nansen credit and the REPLAY tag. */
+.em__foot,
+.em__meta {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   font-size: var(--ws-fs-13);
-  line-height: 1.2;
+  line-height: 1.1;
   white-space: nowrap;
+}
+.em__foot {
+  grid-area: foot;
+}
+.em__meta {
+  grid-area: meta;
 }
 .em__on {
   display: inline-flex;
@@ -143,18 +151,16 @@
   border: 1.5px solid var(--ws-blue-text);
   border-radius: 3px;
   color: var(--ws-blue-text);
+  font-size: var(--ws-fs-12);
   font-weight: 900;
+  line-height: 1.2;
 }
 .em__hp {
   color: var(--ws-text-2);
   font-variant-numeric: tabular-nums;
 }
 .em__src {
-  grid-area: src;
-  font-size: var(--ws-fs-12);
-  line-height: 1.1;
   color: var(--ws-text-2);
-  white-space: nowrap;
 }
 .em__hp.is-hot {
   color: var(--ws-red-text);

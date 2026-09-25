@@ -21,3 +21,31 @@ export function watchErrors(page: Page): string[] {
 /** A random, well-formed address the recording cannot know. */
 export const unknownAddress = (): string =>
   `0x${Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+
+/**
+ * Street mood rows whose "leans long, read 4 min ago" line overlaps the crowd figures or their
+ * percentages (empty when the layout keeps them apart).
+ */
+export async function moodOverlaps(page: Page): Promise<string[]> {
+  await page.locator('.ws-mood__coin').first().waitFor();
+  return page.evaluate(() => {
+    const hit = (a: DOMRect, b: DOMRect) =>
+      a.left < b.right - 0.5 &&
+      b.left < a.right - 0.5 &&
+      a.top < b.bottom - 0.5 &&
+      b.top < a.bottom - 0.5;
+    const out: string[] = [];
+    for (const coin of document.querySelectorAll('.ws-mood__coin')) {
+      const line = coin.querySelector('.ws-mood__name small');
+      if (!line) continue;
+      // Where the text is drawn (a nowrap line can spill out of its own box).
+      const range = document.createRange();
+      range.selectNodeContents(line);
+      const box = range.getBoundingClientRect();
+      for (const other of coin.querySelectorAll('.ws-crowd__usd, .ws-crowd__side'))
+        if (hit(box, other.getBoundingClientRect()))
+          out.push(`${line.textContent} overlaps ${other.textContent || 'the crowd'}`);
+    }
+    return out;
+  });
+}

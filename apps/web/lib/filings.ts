@@ -201,3 +201,31 @@ export function foldRepeats(
   }
   return out;
 }
+
+export interface FoldedFiling {
+  /** The newest filing of the run (its id anchors the entry). */
+  filing: FilingView;
+  /** Ids of every filing the entry stands for, newest first. */
+  ids: number[];
+}
+
+/**
+ * Folds runs of identical consecutive filings (same company, kind and sentence, so the same
+ * detail) into their newest one: a condition that is filed again and again reads as one entry
+ * with a count. Input is newest first.
+ */
+export function foldConsecutive(filings: readonly FilingView[]): FoldedFiling[] {
+  const out: FoldedFiling[] = [];
+  let last: { item: FoldedFiling; key: string } | null = null;
+  for (const f of filings) {
+    const key = `${f.companyId}|${f.kind}|${filingText(f)}`;
+    if (last && last.key === key) {
+      last.item.ids.push(f.id);
+      continue;
+    }
+    const item = { filing: f, ids: [f.id] };
+    out.push(item);
+    last = { item, key };
+  }
+  return out;
+}

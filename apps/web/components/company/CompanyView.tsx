@@ -77,6 +77,24 @@ export function CompanyView({
     };
   }, [api, store, ticker, tickerFilingsHead]);
 
+  // A replay loop restarted: the engine cleared the previous loop's filings, so drop them now and
+  // reload instead of showing them (dated in this loop's future) until the next refresh.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs once per replay epoch
+  useEffect(() => {
+    if (epoch === 0) return;
+    let cancelled = false;
+    setDetail((d) => ({ ...d, filings: [] }));
+    void api.company(ticker).then((r) => {
+      if (!cancelled && r.ok) {
+        setDetail(r.data);
+        store.setView(r.data.company);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [epoch]);
+
   // The listing's committee record: the engine lists applications, but has no lookup by company.
   const companyId = detail.company.id;
   useEffect(() => {

@@ -55,9 +55,24 @@ describe('embed widget', () => {
     );
     expect(screen.getByText('Powered by Nansen API')).toBeTruthy();
     expect(screen.queryByText('REPLAY')).toBeNull();
+    // The card is one link whose label replaces its text: the credit is in the label too.
+    expect(screen.getByRole('link').getAttribute('aria-label')).toMatch(/Powered by Nansen API\./);
   });
 
-  it('says it is reconnecting instead of showing a stale HP', () => {
+  it('keeps the REPLAY tag and the Nansen credit on their own line, apart from HP', () => {
+    render(
+      <EngineProvider runtime={testRuntime()}>
+        <EmbedWidget view={companyView()} history={[]} siteUrl="" initialMode="replay" />
+      </EngineProvider>,
+    );
+    const src = screen.getByText('Powered by Nansen API');
+    const hp = screen.getByText('HP 80%');
+    expect(src.parentElement).toBe(screen.getByText('REPLAY').parentElement);
+    expect(hp.parentElement).not.toBe(src.parentElement);
+    expect(hp.parentElement?.textContent).toContain('Whale Street');
+  });
+
+  it('says it is offline instead of showing a stale HP', () => {
     const rt = testRuntime();
     render(
       <EngineProvider runtime={rt}>
@@ -65,7 +80,8 @@ describe('embed widget', () => {
       </EngineProvider>,
     );
     act(() => rt.store.setConnection('reconnecting'));
-    expect(screen.getByText('reconnecting')).toBeTruthy();
+    expect(screen.getByText('offline').getAttribute('title')).toBe('Reconnecting to Whale Street');
+    expect(screen.queryByText(/^HP /)).toBeNull();
   });
 });
 

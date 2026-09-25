@@ -39,7 +39,9 @@ export function EmbedWidget({
   const dead = c.display === 'bankrupt' || c.display === 'delisted';
   const halted = c.display === 'halted';
   const hp = c.hp === null ? null : Math.round(c.hp * 100);
-  const label = `${c.ticker}, ${c.name}, on Whale Street: ${dead ? 'bankrupt' : halted ? 'trading halted' : `share price ${price(c.price)}, NAV ${price(c.nav)}, hype ${pct(c.hype)}`}. ${mode === 'replay' ? ' A recorded session, not live prices.' : ''} Opens the company page.`;
+  const down = isDown(connection);
+  // The whole card is one link whose label replaces its text: the Nansen credit is spoken here.
+  const label = `${c.ticker}, ${c.name}, on Whale Street: ${dead ? 'bankrupt' : halted ? 'trading halted' : `share price ${price(c.price)}, NAV ${price(c.nav)}, hype ${pct(c.hype)}`}.${mode === 'replay' ? ' A recorded session, not live prices.' : ''} Powered by Nansen API. Opens the company page.`;
   return (
     <div className="em-body">
       <a
@@ -96,19 +98,18 @@ export function EmbedWidget({
         <span className="em__spark" aria-hidden="true">
           <Spark nav={c.spark.nav} price={c.spark.price} />
         </span>
+        {/* Two footer lines, so each fits the 320 px card: brand and HP, then credit and mode. */}
         <span className="em__foot">
           <span className="em__on">
             <i />
             on <b>Whale Street</b>
-            {mode === 'replay' ? (
-              <span className="em__mode" title="A recorded session replayed, not live prices">
-                REPLAY
-              </span>
-            ) : null}
           </span>
-          <span className={`em__hp${hp !== null && hp < 15 && !dead ? ' is-hot' : ''}`}>
-            {isDown(connection)
-              ? 'reconnecting'
+          <span
+            className={`em__hp${hp !== null && hp < 15 && !dead ? ' is-hot' : ''}`}
+            title={down ? 'Reconnecting to Whale Street' : undefined}
+          >
+            {down
+              ? 'offline'
               : dead
                 ? 'delisted'
                 : halted
@@ -116,7 +117,14 @@ export function EmbedWidget({
                   : `HP ${hp === null ? '—' : `${hp}%`}`}
           </span>
         </span>
-        <span className="em__src">Powered by Nansen API</span>
+        <span className="em__meta">
+          <span className="em__src">Powered by Nansen API</span>
+          {mode === 'replay' ? (
+            <span className="em__mode" title="A recorded session replayed, not live prices">
+              REPLAY
+            </span>
+          ) : null}
+        </span>
       </a>
     </div>
   );

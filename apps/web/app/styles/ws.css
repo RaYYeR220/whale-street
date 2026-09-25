@@ -2210,7 +2210,7 @@ body.ws {
   align-items: center;
   font-size: var(--ws-fs-13);
   color: var(--ws-text-2);
-  padding: 0 0 6px 68px;
+  padding: 0 0 6px;
   border-bottom: 1.5px solid var(--ws-ink);
 }
 .ws-mood__legend span {
@@ -2218,22 +2218,25 @@ body.ws {
   align-items: center;
   gap: 4px;
 }
+/* The coin and its reading ("leans long, read 4 min ago") head the row, above both crowds, so the
+   reading never runs into the figures or their percentages at any width. */
 .ws-mood__coin {
   display: grid;
-  grid-template-columns: 60px minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
 }
 .ws-mood__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
   font-family: var(--ws-font-display);
   font-size: var(--ws-fs-14);
   line-height: 1.1;
 }
 .ws-mood__name small {
-  display: block;
-  white-space: nowrap;
   font-family: var(--ws-font-ui);
-  font-size: var(--ws-fs-12);
+  font-size: var(--ws-fs-13);
   color: var(--ws-text-2);
   font-weight: 700;
 }

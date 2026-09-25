@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
-/** Company page panels: the risk panel speaks the same HP as the meter. */
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
-import { RiskPanel } from '../components/company/Panels';
-import type { PositionView } from '../lib/api-types';
+/** Company page panels: the risk panel speaks the same HP as the meter; filings fold repeats. */
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CompanyView } from '../components/company/CompanyView';
+import { FilingsTimeline, RiskPanel } from '../components/company/Panels';
+import type { HolderView, PositionView } from '../lib/api-types';
 import { cushionLeft, toDisplay } from '../lib/company';
-import { companyView, entry, T0 } from './helpers';
+import { companyView, entry, filing, json, market, T0 } from './helpers';
+import { testRuntime, Wrap } from './render';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const position = (o: Partial<PositionView>): PositionView => ({
   coin: 'ETH',
@@ -84,5 +89,81 @@ describe('risk panel', () => {
     expect(cushionLeft(position({ mark: 2_700 }))).toBe(0);
     expect(cushionLeft(position({ mark: null }))).toBeNull();
     expect(cushionLeft(position({ liqPx: null }))).toBeNull();
+  });
+});
+
+describe('filings timeline', () => {
+  const call = (id: number, at: number) =>
+    filing({
+      id,
+      kind: 'MARGIN_CALL',
+      coin: 'ETH',
+      at,
+      detail: 'ETH is 92% of the way from entry to its liquidation price (health 8%)',
+    });
+
+  it('folds consecutive identical filings into one entry with a count', () => {
+    const filings = [
+      call(9, T0),
+      call(8, T0 - 1_000),
+      call(7, T0 - 2_000),
+      filing({ id: 6, kind: 'RESUME', detail: 'marks returned', at: T0 - 3_000 }),
+      call(5, T0 - 4_000),
+      filing({ id: 4, kind: 'OPEN', coin: 'SOL', at: T0 - 5_000 }),
+      filing({ id: 3, kind: 'OPEN', coin: 'BTC', at: T0 - 6_000 }),
+    ];
+    render(
+      <Wrap>
+        <FilingsTimeline filings={filings} now={T0} lit={new Set([8])} />
+      </Wrap>,
+    );
+    const items = within(screen.getByRole('region', { name: /Filings/ })).getAllByRole('listitem');
+    expect(items.map((li) => li.querySelector('.kind')?.textContent)).toEqual([
+      'Margin call ×3',
+      'Resumed',
+      'Margin call',
+      'New position',
+      'New position',
+    ]);
+    // The folded entry stands for every filing in it (a chart balloon on any of them lights it).
+    expect(items[0]?.className).toContain('is-lit');
+    expect(items[0]?.getAttribute('aria-label') ?? items[0]?.textContent).toMatch(/3 times/);
+  });
+});
+
+describe('company page across a replay wrap', () => {
+  it('drops the previous loop’s filings at once instead of at the next refresh', async () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      },
+    );
+    const old = filing({ id: 41, kind: 'MARGIN_CALL', at: T0 - 5_000, detail: 'old loop call' });
+    let filings = [old];
+    const rt = testRuntime({
+      'GET /api/companies/OOH': () =>
+        json({ company: companyView(), filings, holders: [] as HolderView[] }),
+      'GET /api/ipo': () => json({ apps: [] }),
+      'GET /api/companies/OOH/history': () => json({ ticker: 'OOH', points: [] }),
+    });
+    render(
+      <Wrap runtime={rt}>
+        <CompanyView
+          ticker="OOH"
+          initial={{ company: companyView(), filings: [old], holders: [] }}
+          initialHistory={[]}
+        />
+      </Wrap>,
+    );
+    act(() => rt.store.dispatch(market(T0, [entry()]), Date.now()));
+    expect(screen.getAllByText(/old loop call/).length).toBeGreaterThan(0);
+    // The loop restarts: the engine cleared that filing, and the page follows right away.
+    filings = [];
+    act(() => rt.store.dispatch(market(T0 - 400_000, [entry()]), Date.now()));
+    await waitFor(() => expect(screen.queryAllByText(/old loop call/)).toEqual([]), {
+      timeout: 2_000,
+    });
   });
 });
