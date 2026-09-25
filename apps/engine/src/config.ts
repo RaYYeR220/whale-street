@@ -25,6 +25,8 @@ const EnvSchema = z
     RECORD: z.enum(['0', '1']).default('0'),
     CORS_ORIGINS: csv('http://localhost:3000'),
     PUBLIC_HOSTS: csv(''),
+    // Set by Render on web services: the service's own onrender.com hostname.
+    RENDER_EXTERNAL_HOSTNAME: z.string().min(1).optional(),
     TARGET_COMPANIES: z.coerce.number().int().positive().default(20),
     SEASON_DAYS: z.coerce.number().int().positive().default(7),
     TRUST_PROXY: z.coerce.number().int().min(0).default(0),
@@ -45,7 +47,10 @@ export interface Config {
   replayFile: string;
   record: boolean;
   corsOrigins: string[];
-  /** Extra hostnames (besides localhost) accepted in Host/Origin headers on /mcp. */
+  /**
+   * Extra hostnames (besides localhost) accepted in Host/Origin headers on /mcp: PUBLIC_HOSTS plus,
+   * on Render, the service's own hostname.
+   */
   publicHosts: string[];
   targetCompanies: number;
   seasonDays: number;
@@ -106,7 +111,7 @@ export function loadConfig(
     replayFile: e.REPLAY_FILE,
     record: e.RECORD === '1' && mode === 'live',
     corsOrigins: e.CORS_ORIGINS,
-    publicHosts: e.PUBLIC_HOSTS,
+    publicHosts: [...new Set([...e.PUBLIC_HOSTS, e.RENDER_EXTERNAL_HOSTNAME ?? []].flat())],
     targetCompanies: e.TARGET_COMPANIES,
     seasonDays: e.SEASON_DAYS,
     trustProxy: e.TRUST_PROXY,

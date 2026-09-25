@@ -50,6 +50,23 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ TRUST_PROXY: '1.5' }, noFile)).toThrow();
   });
 
+  it('PUBLIC_HOSTS also accepts the hostname the host platform assigns (Render)', () => {
+    expect(
+      loadConfig({ RENDER_EXTERNAL_HOSTNAME: 'whale-street-engine.onrender.com' }, noFile)
+        .publicHosts,
+    ).toEqual(['whale-street-engine.onrender.com']);
+    expect(
+      loadConfig(
+        {
+          PUBLIC_HOSTS: 'engine.example.com, whale-street-engine.onrender.com',
+          RENDER_EXTERNAL_HOSTNAME: 'whale-street-engine.onrender.com',
+        },
+        noFile,
+      ).publicHosts,
+    ).toEqual(['engine.example.com', 'whale-street-engine.onrender.com']);
+    expect(loadConfig({ RENDER_EXTERNAL_HOSTNAME: '' }, noFile).publicHosts).toEqual([]);
+  });
+
   it('auto mode goes live when a key is present; empty values count as unset', () => {
     expect(loadConfig({ NANSEN_API_KEY: 'k1' }, noFile).mode).toBe('live');
     expect(loadConfig({ NANSEN_API_KEY: '' }, noFile).mode).toBe('replay');
