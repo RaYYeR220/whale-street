@@ -1,7 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useConnect, useConnection, useConnectors, useSignMessage } from 'wagmi';
+import {
+  useConnect,
+  useConnection,
+  useConnectors,
+  useDisconnect,
+  useReconnect,
+  useSignMessage,
+} from 'wagmi';
 import { getWalletClient } from 'wagmi/actions';
 import type { CompanyView, MirrorOrderView, MirrorReason, PositionView } from '../../lib/api-types';
 import { side } from '../../lib/company';
@@ -19,7 +26,7 @@ import {
   unresolvedOrders,
   walletProblem,
 } from '../../lib/mirror/flow';
-import { builderFeeRate, hlErrorText } from '../../lib/mirror/hl';
+import { builderFeeRate, hlErrorText, isUserRejection } from '../../lib/mirror/hl';
 import { createIdbKeyStore, type KeyStore } from '../../lib/mirror/keystore';
 import { linkWallet } from '../../lib/mirror/link';
 import {
@@ -100,6 +107,11 @@ const SEAL: Record<CheckState, [string, string, string]> = {
 };
 
 const browserStore = typeof window === 'undefined' ? null : createIdbKeyStore();
+
+/** The EIP-1193 surface of the connected wallet used here (its account picker). */
+interface WalletProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
 
 /** Delays between automatic checks of an unknown outcome (the engine reconciles with Hyperliquid). */
 const RECHECK_MS = [3_000, 5_000, 10_000, 15_000, 30_000];
@@ -220,6 +232,8 @@ export function MirrorTicket({
   const conn = useConnection();
   const connectors = useConnectors();
   const connect = useConnect();
+  const disconnect = useDisconnect();
+  const reconnect = useReconnect();
   const signMessage = useSignMessage();
   const [availability, setAvailability] = useState<Availability | null>(null);
   const [askAgain, setAskAgain] = useState(0);
@@ -439,6 +453,37 @@ export function MirrorTicket({
         setAgentReady(false);
       }
       await refresh();
+    });
+
+  /**
+   * Another account of the same wallet: the wallet shows its account picker
+   * (wallet_requestPermissions), then wagmi reads the accounts again. A new account goes back to
+   * the link step by itself (it is not the player's linked wallet).
+   */
+  const doSwitch = () =>
+    guarded('wallet', async () => {
+      const connector = conn.connector;
+      const provider = (await connector?.getProvider()) as WalletProvider | undefined;
+      if (!connector || !provider) {
+        setProblem('Your wallet did not answer. Disconnect it and connect again.');
+        return;
+      }
+      try {
+        await provider.request({
+          method: 'wallet_requestPermissions',
+          params: [{ eth_accounts: {} }],
+        });
+      } catch (err) {
+        if (!isUserRejection(err)) throw err;
+        setProblem('You closed the account picker. Your wallet stays connected as it was.');
+        return;
+      }
+      await reconnect.mutateAsync({ connectors: [connector] });
+    });
+
+  const doDisconnect = () =>
+    guarded('wallet', async () => {
+      await disconnect.mutateAsync(conn.connector ? { connector: conn.connector } : {});
     });
 
   /** Hyperliquid approvals and engine registration; the key counts as ready only after all of them. */
@@ -1167,6 +1212,27 @@ export function MirrorTicket({
                 </h3>
               </div>
               {sum ? <p className="co-step__sum">{sum}</p> : null}
+              {key === 'connect' && conn.address ? (
+                <p className="co-step__sum">
+                  <button
+                    className="ws-link"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void doSwitch()}
+                  >
+                    {busy === 'wallet' ? 'Waiting for your wallet…' : 'Use a different wallet'}
+                  </button>
+                  {' · '}
+                  <button
+                    className="ws-link"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void doDisconnect()}
+                  >
+                    Disconnect
+                  </button>
+                </p>
+              ) : null}
               {b ? <div className="co-step__body">{b}</div> : null}
             </li>
           );

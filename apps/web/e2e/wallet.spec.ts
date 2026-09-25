@@ -2,57 +2,82 @@ import { expect, test } from '@playwright/test';
 import type { Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { parseSiweMessage } from 'viem/siwe';
+import { shortAddress } from '../lib/format';
 import { TOKEN_KEY } from '../lib/player';
 import { ENGINE_URL, WEB_URL } from './env';
 import { listedTickers } from './helpers';
 
 // Well-known test key (never used for anything real).
 const KEY: Hex = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d';
+const OTHER_KEY: Hex = '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a';
 
-test('a wallet links to the player with Sign-In with Ethereum, verified by the engine', async ({
+test('a wallet links to the player with Sign-In with Ethereum, verified by the engine; another account or a disconnect goes back a step', async ({
   page,
   request,
 }) => {
   const account = privateKeyToAccount(KEY);
+  const other = privateKeyToAccount(OTHER_KEY);
   const signed: string[] = [];
-  // A minimal injected wallet (EIP-1193) whose personal_sign is done here, in the test process.
+  // A minimal injected wallet (EIP-1193) with two accounts, whose personal_sign is done here, in
+  // the test process. Setting window.wsPick picks another account the next time the page asks for
+  // accounts (wallet_requestPermissions), as MetaMask's account picker does.
   await page.exposeFunction('wsTestSign', async (raw: Hex) => {
     const text = Buffer.from(raw.slice(2), 'hex').toString('utf8');
     signed.push(text);
     return account.signMessage({ message: { raw } });
   });
-  await page.addInitScript((address: string) => {
-    const w = window as unknown as {
-      ethereum: unknown;
-      wsTestSign(raw: string): Promise<string>;
-    };
-    const toHex = (s: string) =>
-      `0x${Array.from(new TextEncoder().encode(s), (b) => b.toString(16).padStart(2, '0')).join('')}`;
-    w.ethereum = {
-      request: async ({ method, params }: { method: string; params?: unknown[] }) => {
-        switch (method) {
-          case 'eth_requestAccounts':
-          case 'eth_accounts':
-            return [address];
-          case 'eth_chainId':
-            return '0xa4b1';
-          case 'net_version':
-            return '42161';
-          case 'wallet_requestPermissions':
-          case 'wallet_getPermissions':
-            return [{ parentCapability: 'eth_accounts' }];
-          case 'personal_sign': {
-            const data = String(params?.[0] ?? '');
-            return w.wsTestSign(data.startsWith('0x') ? data : toHex(data));
+  await page.addInitScript(
+    (accounts: string[]) => {
+      const w = window as unknown as {
+        ethereum: unknown;
+        wsPick?: number;
+        wsTestSign(raw: string): Promise<string>;
+      };
+      let address = accounts[0] as string;
+      const listeners = new Map<string, Set<(v: unknown) => void>>();
+      const toHex = (s: string) =>
+        `0x${Array.from(new TextEncoder().encode(s), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+      w.ethereum = {
+        request: async ({ method, params }: { method: string; params?: unknown[] }) => {
+          switch (method) {
+            case 'eth_requestAccounts':
+            case 'eth_accounts':
+              return [address];
+            case 'eth_chainId':
+              return '0xa4b1';
+            case 'net_version':
+              return '42161';
+            case 'wallet_requestPermissions': {
+              const picked = w.wsPick === undefined ? undefined : accounts[w.wsPick];
+              w.wsPick = undefined;
+              if (picked && picked !== address) {
+                address = picked;
+                for (const fn of listeners.get('accountsChanged') ?? []) fn([address]);
+              }
+              return [{ parentCapability: 'eth_accounts' }];
+            }
+            case 'wallet_getPermissions':
+              return [{ parentCapability: 'eth_accounts' }];
+            case 'personal_sign': {
+              const data = String(params?.[0] ?? '');
+              return w.wsTestSign(data.startsWith('0x') ? data : toHex(data));
+            }
+            default:
+              throw Object.assign(new Error(`unsupported: ${method}`), { code: 4200 });
           }
-          default:
-            throw Object.assign(new Error(`unsupported: ${method}`), { code: 4200 });
-        }
-      },
-      on: () => undefined,
-      removeListener: () => undefined,
-    };
-  }, account.address);
+        },
+        on: (event: string, fn: (v: unknown) => void) => {
+          const set = listeners.get(event) ?? new Set();
+          set.add(fn);
+          listeners.set(event, set);
+        },
+        removeListener: (event: string, fn: (v: unknown) => void) => {
+          listeners.get(event)?.delete(fn);
+        },
+      };
+    },
+    [account.address, other.address],
+  );
   // The REPLAY engine has no trading key, so it reports Mirror off; the wallet link needs none,
   // so the page is told Mirror is on to reach the link step. The link itself is the real engine's.
   await page.route('**/api/mirror/status', (route) =>
@@ -83,4 +108,19 @@ test('a wallet links to the player with Sign-In with Ethereum, verified by the e
   expect(((await me.json()) as { player: { walletAddress: string } }).player.walletAddress).toBe(
     account.address.toLowerCase(),
   );
+
+  // Another account of the same wallet: the page asks for the account picker, and the account
+  // picked is not the linked one, so the link step comes back for it.
+  await page.evaluate(() => {
+    (window as unknown as { wsPick: number }).wsPick = 1;
+  });
+  await page.getByRole('button', { name: 'Use a different wallet' }).click();
+  await expect(
+    page.getByText(`${shortAddress(other.address.toLowerCase())} connected`),
+  ).toBeVisible();
+  await expect(page.getByTestId('relink-warning')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Sign to link' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Disconnect' }).click();
+  await expect(page.getByRole('button', { name: 'Connect wallet' })).toBeVisible();
 });

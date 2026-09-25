@@ -34,9 +34,35 @@ const wallet = vi.hoisted(() => ({
   client: null as unknown,
   /** personal_sign of the connected wallet. */
   sign: async (_message: string): Promise<string> => '0x',
+  /** Other EIP-1193 requests to the connected wallet (the account picker). */
+  request: async (_args: { method: string; params?: unknown[] }): Promise<unknown> => null,
+  requests: [] as Array<{ method: string; params?: unknown[] }>,
+  /** wagmi reconnect / disconnect, as the ticket calls them. */
+  reconnect: async (): Promise<void> => undefined,
+  disconnects: 0,
 }));
 vi.mock('wagmi', () => ({
-  useConnection: () => ({ address: wallet.address, chainId: wallet.chainId }),
+  useConnection: () => ({
+    address: wallet.address,
+    chainId: wallet.chainId,
+    connector: wallet.address
+      ? {
+          getProvider: async () => ({
+            request: (args: { method: string; params?: unknown[] }) => {
+              wallet.requests.push(args);
+              return wallet.request(args);
+            },
+          }),
+        }
+      : undefined,
+  }),
+  useReconnect: () => ({ mutateAsync: () => wallet.reconnect() }),
+  useDisconnect: () => ({
+    mutateAsync: async () => {
+      wallet.disconnects += 1;
+      wallet.address = undefined;
+    },
+  }),
   useConnectors: () => [],
   useConnect: () => ({ mutateAsync: async () => undefined }),
   useSignMessage: () => ({
@@ -249,6 +275,10 @@ beforeEach(() => {
   wallet.chainId = 42_161;
   wallet.sign = async () => '0x';
   wallet.client = master;
+  wallet.request = async () => null;
+  wallet.requests = [];
+  wallet.reconnect = async () => undefined;
+  wallet.disconnects = 0;
   localStorage.setItem(TOKEN_KEY, 'tok');
 });
 
@@ -842,6 +872,56 @@ describe('Mirror ticket: linking before the player is ready', () => {
       /^Your player could not be set up: Too many new players from your network/,
     );
     expect(signs).toBe(0);
+  });
+});
+
+describe('Mirror ticket: another wallet', () => {
+  const OTHER = privateKeyToAccount(
+    '0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a',
+  ).address;
+
+  it('asks the wallet for its account picker, then reconnects to the account picked', async () => {
+    wallet.reconnect = async () => {
+      wallet.address = OTHER;
+    };
+    mount(fakeEngine({}), await approvedStore());
+    await screen.findByRole('button', { name: 'Use this position' });
+    fireEvent.click(screen.getByRole('button', { name: 'Use a different wallet' }));
+    // The new account is not linked to this player yet: the link step comes back.
+    expect((await screen.findByTestId('relink-warning')).textContent).toMatch(
+      /linked to 0x.*now\. Linking 0x/,
+    );
+    expect(wallet.requests).toEqual([
+      { method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] },
+    ]);
+    expect(screen.getByRole('button', { name: 'Sign to link' })).toBeTruthy();
+  });
+
+  it('keeps the wallet when the picker is closed, and says so', async () => {
+    let reconnects = 0;
+    wallet.request = async () => {
+      throw new UserRejectedRequestError(new Error('User rejected the request.'));
+    };
+    wallet.reconnect = async () => {
+      reconnects += 1;
+    };
+    mount(fakeEngine({}), await approvedStore());
+    await screen.findByRole('button', { name: 'Use this position' });
+    fireEvent.click(screen.getByRole('button', { name: 'Use a different wallet' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'You closed the account picker. Your wallet stays connected as it was.',
+    );
+    expect(reconnects).toBe(0);
+    expect(screen.getByRole('button', { name: 'Use this position' })).toBeTruthy();
+  });
+
+  it('disconnects the wallet and goes back to the first step', async () => {
+    mount(fakeEngine({}), await approvedStore());
+    await screen.findByRole('button', { name: 'Use this position' });
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    await screen.findByText(/No browser wallet found/);
+    expect(wallet.disconnects).toBe(1);
+    expect(screen.queryByRole('button', { name: 'Use a different wallet' })).toBeNull();
   });
 });
 
