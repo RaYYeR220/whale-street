@@ -10,7 +10,7 @@ import { createRepos } from './db/repos';
 import type { EngineDeps } from './engine';
 import { createCreditHeaderFeed } from './ingest/credits';
 import type { Logger } from './log';
-import { loadReplaySession } from './replay/load';
+import { loadReplaySession, replayAsOf } from './replay/load';
 import { createReplayMood, type ReplayMood } from './replay/mood';
 import { createSessionRecorder, type SessionRecorder } from './replay/record';
 import type { SeedCompany } from './replay/session';
@@ -129,7 +129,10 @@ export function buildRuntime(config: Config, o: RuntimeOptions): Runtime {
   const db = openDb(o.dbPath ?? join(config.dataDir, dbFile));
   const repos = createRepos(db);
   // Nansen and HL info both answer from the recording; anything unrecorded is a 503 (fail closed).
-  const recorded = replayFetch(session.nansen, () => clock.now());
+  const recorded = replayFetch(
+    session.nansen,
+    replayAsOf(session.seeds, () => clock.now()),
+  );
   // Every answer served from the recording is logged at the time it was recorded, marked
   // recorded, so the evidence drawer shows the calls behind a replayed number too.
   const http = new NansenHttp({

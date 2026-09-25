@@ -98,7 +98,15 @@ export function recordingFetch(
   }) as typeof fetch;
 }
 
-export function replayFetch(records: readonly NansenRecord[], now: () => number): typeof fetch {
+/**
+ * Answers each request from the recording: the latest record of its key at or before the replay
+ * time, the earliest one before that, 503 when the key was never recorded. `now` gets the request
+ * key, so a caller may answer some requests as of a later time than others.
+ */
+export function replayFetch(
+  records: readonly NansenRecord[],
+  now: (key: string) => number,
+): typeof fetch {
   const byKey = new Map<string, NansenRecord[]>();
   for (const r of records) {
     const list = byKey.get(r.key) ?? [];
@@ -109,11 +117,12 @@ export function replayFetch(records: readonly NansenRecord[], now: () => number)
 
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const d = describeRequest(input, init);
-    const list = byKey.get(requestKey(d.method, d.url, d.body));
+    const key = requestKey(d.method, d.url, d.body);
+    const list = byKey.get(key);
     if (!list || list.length === 0) {
       return new Response(JSON.stringify({ error: 'not in recording' }), { status: 503 });
     }
-    const t = now();
+    const t = now(key);
     let pick = list[0] as NansenRecord;
     for (const r of list) if (r.t <= t) pick = r;
     const headers: Record<string, string> = {

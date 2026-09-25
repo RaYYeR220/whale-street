@@ -832,6 +832,58 @@ describe('REPLAY listing anchor', () => {
   });
 });
 
+describe('REPLAY company listed during the recording', () => {
+  it('answers as of its recorded listing until the loop reaches it: no restatement from an earlier window', async () => {
+    const path = '/api/v1/profiler/perp-pnl-summary';
+    const summary = (realized: number) => ({
+      data: {
+        top5_coins: [],
+        traded_times: 0,
+        closed_trade_count: 0,
+        realized_pnl_usd: realized,
+        win_rate: 0,
+        fees_usd: 0,
+      },
+    });
+    const line = (s: number, body: unknown) =>
+      JSON.stringify({
+        t: SYNTHETIC_T0 + s * 1_000,
+        k: 'nansen',
+        key: requestKey(
+          'POST',
+          `https://api.nansen.ai${path}`,
+          JSON.stringify({ address: SYNTHETIC_A }),
+        ),
+        path,
+        status: 200,
+        body,
+      });
+    // Company A was listed 200 s into the recording. The same request key (date ranges are not
+    // part of it) was answered earlier for the scout's longer window, then for the listing day.
+    const lines = syntheticSession().flatMap((l) => {
+      const r = JSON.parse(l) as { k: string; path?: string; key?: string; company?: object };
+      if (r.k === 'seed' && l.includes(SYNTHETIC_A))
+        return [
+          JSON.stringify({ ...r, company: { ...r.company, listedAt: SYNTHETIC_T0 + 200_000 } }),
+        ];
+      if (r.k === 'nansen' && r.path === path && r.key?.includes(SYNTHETIC_A))
+        return [line(0, summary(5_000_000)), line(199, summary(0)), line(500, summary(0))];
+      return [l];
+    });
+    const r = await bootReplay(lines);
+    const { engine } = r;
+    expect(engine.state.get(SYNTHETIC_A)?.summaryBaseline).toBe(0);
+    engine.idle.clientConnected(engine.clock.now());
+    for (let s = 0; s < 599; s++) await r.step();
+    const restated = engine.filings
+      .recent(200)
+      .filter((f) => f.companyId === SYNTHETIC_A && f.kind === 'RESTATEMENT');
+    expect(restated).toEqual([]);
+    expect(engine.state.get(SYNTHETIC_A)?.nav.nav).toBeGreaterThan(50);
+    await r.close();
+  }, 60_000);
+});
+
 describe('LIVE Nansen budget', () => {
   it('splits the key budget between the data and trading clients', async () => {
     expect(NANSEN_TRADING_BUDGET).toEqual({ perSecond: 2, perMinute: 20 });

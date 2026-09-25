@@ -166,3 +166,25 @@ export function parseSession(
 export function loadReplaySession(text: string): LoadedSession {
   return parseSession(text, redistributable);
 }
+
+/**
+ * The recording time a REPLAY answer is served as of. Every recorded company is seeded when the
+ * loop starts, also one listed partway through the recording; until the loop reaches its recorded
+ * listing, requests about it are answered as of that listing. The earlier answers under the same
+ * request key (date ranges are not part of a key) were for other windows, such as the scout's
+ * evaluation, and would restate the realized PnL the listing started from.
+ */
+export function replayAsOf(
+  seeds: readonly SeedCompany[],
+  now: () => number,
+): (key: string) => number {
+  const listedAt = new Map(seeds.map((s) => [s.address.toLowerCase(), s.listedAt]));
+  return (key) => {
+    let t = now();
+    for (const a of key.toLowerCase().match(/0x[0-9a-f]{40}/g) ?? []) {
+      const at = listedAt.get(a);
+      if (at !== undefined && at > t) t = at;
+    }
+    return t;
+  };
+}

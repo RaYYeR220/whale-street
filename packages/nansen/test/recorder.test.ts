@@ -86,6 +86,22 @@ describe('recorder', () => {
     expect(miss.headers.get(RECORDED_AT_HEADER)).toBeNull();
   });
 
+  it('asks for the replay time per request key, so some requests can be answered as of later', async () => {
+    const key = 'POST /api/v1/y {"a":1}';
+    const recs: NansenRecord[] = [
+      { t: 100, k: 'nansen', key, path: '/api/v1/y', status: 200, body: { v: 1 } },
+      { t: 200, k: 'nansen', key, path: '/api/v1/y', status: 200, body: { v: 2 } },
+    ];
+    const asked: string[] = [];
+    const f = replayFetch(recs, (k) => {
+      asked.push(k);
+      return k === key ? 200 : 100;
+    });
+    const res = await f('https://api.nansen.ai/api/v1/y', { method: 'POST', body: '{"a":1}' });
+    expect(await res.json()).toEqual({ v: 2 });
+    expect(asked).toEqual([key]);
+  });
+
   it('says when a replayed answer was recorded, with its recorded credits and nothing else', async () => {
     const key = 'POST /api/v1/y {"a":1}';
     const recs: NansenRecord[] = [
