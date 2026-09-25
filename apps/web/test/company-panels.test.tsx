@@ -3,7 +3,7 @@
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CompanyView } from '../components/company/CompanyView';
-import { FilingsTimeline, RiskPanel } from '../components/company/Panels';
+import { FilingsTimeline, Holders, RiskPanel } from '../components/company/Panels';
 import { MarketStrip } from '../components/floor/MarketStrip';
 import type { HolderView, PositionView } from '../lib/api-types';
 import { cushionLeft, toDisplay } from '../lib/company';
@@ -90,6 +90,39 @@ describe('risk panel', () => {
     expect(cushionLeft(position({ mark: 2_700 }))).toBe(0);
     expect(cushionLeft(position({ mark: null }))).toBeNull();
     expect(cushionLeft(position({ liqPx: null }))).toBeNull();
+  });
+});
+
+describe('holders', () => {
+  it('keeps short interest within 0-100% even when shorts outweigh the float', () => {
+    const holders: HolderView[] = [
+      { handle: 'longy', kind: 'human', longQty: 100, shortQty: 0 },
+      { handle: 'shorty', kind: 'bot', longQty: 0, shortQty: 150 },
+    ];
+    render(<Holders holders={holders} you={null} />);
+    const panel = screen.getByRole('region', { name: /Holders/ });
+    // 150 shorted of 250 total positions (100 long + 150 short), never 150 / 100 = 150%.
+    expect(panel.textContent).toContain('60.0%');
+    expect(panel.textContent).toContain('Share of positions that are short');
+    expect(panel.textContent).not.toContain('150.0%');
+  });
+
+  it('reads 0% with no shorts and 100% with nothing but shorts', () => {
+    render(
+      <Holders
+        holders={[{ handle: 'longy', kind: 'human', longQty: 10, shortQty: 0 }]}
+        you={null}
+      />,
+    );
+    expect(screen.getByRole('region', { name: /Holders/ }).textContent).toContain('0.0%');
+    cleanup();
+    render(
+      <Holders
+        holders={[{ handle: 'shorty', kind: 'bot', longQty: 0, shortQty: 10 }]}
+        you={null}
+      />,
+    );
+    expect(screen.getByRole('region', { name: /Holders/ }).textContent).toContain('100.0%');
   });
 });
 

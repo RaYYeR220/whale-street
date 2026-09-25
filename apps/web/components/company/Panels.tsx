@@ -485,7 +485,10 @@ export function Holders({ holders, you }: { holders: readonly HolderView[]; you:
               <b>{float > 0 ? ((machines / float) * 100).toFixed(0) : 0}%</b>
             </span>
             <span>
-              Short interest <b>{float > 0 ? ((shorted / float) * 100).toFixed(1) : '0.0'}%</b>
+              Share of positions that are short{' '}
+              <b>
+                {float + shorted > 0 ? ((shorted / (float + shorted)) * 100).toFixed(1) : '0.0'}%
+              </b>
             </span>
           </p>
           <ol className="co-hold" aria-label="Top holders by share of float">
