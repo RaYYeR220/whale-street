@@ -106,8 +106,8 @@ describe('engine deploy files (Render)', () => {
 describe('keep-alive workflow', () => {
   const wf = repo('.github/workflows/keepalive.yml');
 
-  it('pings the status endpoint every 10 minutes at the address from a repository variable', () => {
-    expect(wf).toMatch(/^\s*- cron: "\*\/10 \* \* \* \*"$/m);
+  it('pings the status endpoint every 5 minutes at the address from a repository variable', () => {
+    expect(wf).toMatch(/^\s*- cron: "\*\/5 \* \* \* \*"$/m);
     expect(wf).toMatch(/^\s*workflow_dispatch:$/m);
     expect(wf).toMatch(/^\s*ENGINE_URL: \$\{\{ vars\.ENGINE_URL \}\}$/m);
     expect(wf).toContain('curl -fsS --max-time 60 --retry 2');
@@ -117,5 +117,13 @@ describe('keep-alive workflow', () => {
 
   it('succeeds with a notice while the variable is unset', () => {
     expect(wf).toMatch(/if \[ -z "\$ENGINE_URL" \]; then\s+echo "::notice::[^"]+"\s+exit 0/);
+  });
+
+  it('pings again 60s later only when the first ping was slow (a cold start)', () => {
+    expect(wf).toMatch(/elapsed=.*\bdate \+%s\b/);
+    expect(wf).toMatch(/if \[ "\$elapsed" -gt 20 \]; then/);
+    expect(wf).toMatch(/sleep 60/);
+    // Two ping call sites: the required first ping, and the conditional second one.
+    expect(wf.match(/\bping\b/g)?.length).toBeGreaterThanOrEqual(3);
   });
 });
