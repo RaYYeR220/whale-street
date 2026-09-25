@@ -91,4 +91,18 @@ describe('evidence drawer', () => {
     expect(await screen.findByText(/1 call could not be loaded/)).toBeTruthy();
     expect(screen.queryByText(/No Nansen call is recorded/)).toBeNull();
   });
+
+  it('shows a load-error footer, not the REPLAY credits line, when every call failed to load', async () => {
+    drawer(['nc_gone'], {});
+    await screen.findByText(/1 call could not be loaded/);
+    expect(screen.getByText(/Couldn't load the Nansen calls/)).toBeTruthy();
+    expect(screen.queryByText(/Credits for these calls were not recorded/)).toBeNull();
+  });
+
+  it('keeps the REPLAY footer when the calls loaded but none carried a cost', async () => {
+    drawer(['nc_1'], { nc_1: call('nc_1', { recorded: true, credits: null }) });
+    await screen.findAllByRole('listitem');
+    expect(screen.getByText(/Credits for these calls were not recorded/)).toBeTruthy();
+    expect(screen.queryByText(/Couldn't load the Nansen calls/)).toBeNull();
+  });
 });

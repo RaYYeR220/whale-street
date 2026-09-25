@@ -82,10 +82,13 @@ export function EvidenceDrawer({
   const credits = known.reduce((s, c) => s + (c.credits ?? 0), 0);
   /** A total that leaves out a call of unknown cost, or one that could not be loaded, is a floor. */
   const partial = data.missing > 0 || known.length < data.calls.length;
-  // REPLAY rows carry the recording's credit headers when it kept them; with none, there is no
-  // total to give ("at least 0" would read as if the calls were free).
+  // Every referenced call failed to load (a fetch/lookup failure): there is nothing to total, and
+  // saying credits "were not recorded" would misreport a load failure as a REPLAY recording gap.
+  const loadFailed = data.calls.length === 0 && data.missing > 0;
+  // REPLAY rows carry the recording's credit headers when it kept them; with none loaded, there is
+  // no total to give ("at least 0" would read as if the calls were free).
   const cost =
-    known.length === 0 && (data.calls.length > 0 || data.missing > 0)
+    known.length === 0 && data.calls.length > 0
       ? 'Credits for these calls were not recorded'
       : `${partial ? 'At least ' : ''}${credits} credit${credits === 1 ? '' : 's'} for the calls above${data.calls.some((c) => c.recorded) ? ', as recorded' : ''}`;
   return (
@@ -151,12 +154,18 @@ export function EvidenceDrawer({
           })}
         </ul>
       )}
-      <p style={{ margin: 0, color: 'var(--ws-text-2)', fontSize: 'var(--ws-fs-13)' }}>
-        Powered by Nansen API. {cost}
-        {status?.creditsRemaining != null
-          ? `; ${status.creditsRemaining.toLocaleString('en-US')} left on the account.`
-          : '.'}
-      </p>
+      {loadFailed ? (
+        <p role="alert" className="ws-v-red">
+          Couldn't load the Nansen calls.
+        </p>
+      ) : (
+        <p style={{ margin: 0, color: 'var(--ws-text-2)', fontSize: 'var(--ws-fs-13)' }}>
+          Powered by Nansen API. {cost}
+          {status?.creditsRemaining != null
+            ? `; ${status.creditsRemaining.toLocaleString('en-US')} left on the account.`
+            : '.'}
+        </p>
+      )}
     </>
   );
 }
