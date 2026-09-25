@@ -17,6 +17,13 @@ export const BOTS: ReadonlyArray<{ id: string; kind: BotKind; handle: string }> 
 
 export const BOT_MIN_WAIT_MS = 20_000;
 export const BOT_JITTER_MS = 20_000;
+/**
+ * The first decision round after the market opens (boot, a wake from IDLE, the MARKET_PAUSED
+ * state clearing on the first fresh tick, a REPLAY wrap) comes within this window of that tick,
+ * so within 5 s of the event on the 1 Hz loop: the tape moves in a visitor's first minute instead
+ * of after a full 20–40 s wait.
+ */
+export const BOT_FIRST_ROUND_MS = 4_000;
 /** The Tape Reader follows the NAV direction over this window. */
 export const TAPE_WINDOW_MS = 5 * MINUTE_MS;
 /** A bot's recent trades searched for the ones that opened its current positions. */
@@ -31,6 +38,7 @@ export function momentumLookbackMs(loopSpanMs: number | null): number {
 }
 
 export interface BotRunner {
+  /** Skips while the market is paused (MarketState.paused): a refused order would waste a round. */
   onTick(now: number): void;
   /** Forgets every bot's next decision time (REPLAY loop wrap: the virtual clock jumped back). */
   reset(): void;
@@ -51,6 +59,9 @@ export function createBotRunner(d: {
   const rand = mulberry32(d.seed ?? 42);
   const lookback = d.momentumLookbackMs ?? HOUR_MS;
   const nextAt = new Map<string, number>();
+  /** The market was paused at the last tick (it is at boot: it opens on the first fresh tick). */
+  let wasPaused = true;
+  const soon = (now: number) => now + rand() * BOT_FIRST_ROUND_MS;
   for (const b of BOTS) d.players.ensureBot(b.id, b.handle);
 
   const navAt = (id: string, t: number) => d.repos.navPoints.atOrBefore(id, t)?.nav ?? null;
@@ -106,11 +117,18 @@ export function createBotRunner(d: {
 
   return {
     onTick(now) {
-      if (d.state.flags.idle) return;
+      if (d.state.paused()) {
+        wasPaused = true;
+        return;
+      }
+      if (wasPaused) {
+        wasPaused = false;
+        for (const bot of BOTS) nextAt.set(bot.id, soon(now));
+      }
       for (const bot of BOTS) {
         const due = nextAt.get(bot.id);
         if (due === undefined) {
-          nextAt.set(bot.id, now + BOT_MIN_WAIT_MS + rand() * BOT_JITTER_MS);
+          nextAt.set(bot.id, soon(now));
           continue;
         }
         if (now < due) continue;

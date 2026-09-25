@@ -1,13 +1,18 @@
 import type { Holding } from '@whale-street/core';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BOTS, createBotRunner, momentumLookbackMs, TAPE_WINDOW_MS } from '../src/bots/runner';
 import { type BotCompany, type BotView, cohortAlignment, decide } from '../src/bots/strategies';
+import { loadConfig } from '../src/config';
 import { HOUR_MS } from '../src/dates';
+import { openDb } from '../src/db/index';
+import { createEngine } from '../src/engine';
 import { MOOD_STALE_MS, type StreetMood } from '../src/ingest/mood';
 import { silentLogger } from '../src/log';
 import { createExchange } from '../src/services/exchange';
 import { createPlayersService } from '../src/services/players';
 import { createSeasonService } from '../src/services/seasons';
+import { FakeFeed, FakeInfo } from './helpers/fake-hl';
+import { FakeNansen } from './helpers/fake-nansen';
 import { addCompany, makeWorld, pos } from './helpers/world';
 
 const NOW = 1_790_000_000_000;
@@ -253,7 +258,7 @@ describe('bot strategies', () => {
 });
 
 describe('bot runner', () => {
-  it('creates five labelled bot players and trades through the exchange every 20–40 s, never while idle', () => {
+  it('creates five labelled bot players and trades through the exchange (a first round within 5 s, then every 20–40 s), never while idle', () => {
     const w = makeWorld();
     const seasons = createSeasonService({ ...w, seasonDays: 7 });
     const exchange = createExchange({ ...w, seasons });
@@ -302,8 +307,9 @@ describe('bot runner', () => {
     w.repos.navPoints.insert({ companyId: rt.id, t: now - 150_000, nav: 100, price: 100 });
     w.repos.navPoints.insert({ companyId: rt.id, t: now - TAPE_WINDOW_MS, nav: 104, price: 104 });
     rt.nav = { ...rt.nav, nav: 103 };
+    // The first decision round comes within 5 s.
     runner.onTick(now);
-    for (let i = 0; i < 41; i++) runner.onTick(now + (i + 1) * 1_000);
+    for (let i = 0; i < 5; i++) runner.onTick(now + (i + 1) * 1_000);
     const sides = w.repos.trades
       .recent(10)
       .map((t) => [t.playerId, t.side])
@@ -362,5 +368,83 @@ describe('bot runner', () => {
     runner.onTick(w.clock.now());
     run(41);
     expect(momentumSides()).toEqual(['BUY', 'SELL', 'BUY', 'SELL']);
+  });
+});
+
+describe('bot runner timing', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('opens the day promptly: a first round within 5 s of boot, of a wake and of the pause clearing', async () => {
+    vi.useFakeTimers({ now: NOW });
+    const feed = new FakeFeed();
+    const config = loadConfig({ MODE: 'replay' }, () => {
+      throw new Error('no env file in tests');
+    });
+    const engine = createEngine({
+      config,
+      db: openDb(':memory:'),
+      nansen: new FakeNansen(),
+      trading: null,
+      hl: { feed, info: new FakeInfo() },
+      clock: { now: () => Date.now() },
+      log: silentLogger,
+      replay: null,
+    });
+    const rt = addCompany(engine, {
+      id: '0x00000000000000000000000000000000000000a1',
+      ticker: 'AAA',
+    });
+    rt.ipoUntil = 0;
+    /** The Value Fund buys a hype discount when it is flat and sells its holding at a premium. */
+    const discount = () => {
+      rt.pool = { x: 5_500, y: 4_500, l0: 5_000 };
+    };
+    const premium = () => {
+      rt.pool = { x: 4_500, y: 5_500, l0: 5_000 };
+    };
+    const botTrades = () =>
+      engine.repos.trades.recent(1_000).filter((t) => t.playerId.startsWith('bot-')).length;
+    /** Seconds pass on the 1 Hz engine interval; the Hyperliquid feed keeps the marks fresh. */
+    const run = async (seconds: number, marks = true) => {
+      for (let i = 0; i < seconds; i++) {
+        if (marks) feed.emitMids({ BTC: 60_000 }, Date.now());
+        await vi.advanceTimersByTimeAsync(1_000);
+      }
+    };
+    discount();
+    engine.start();
+    engine.idle.clientConnected(Date.now());
+
+    // Boot: the market opens on the first fresh tick and a bot trades within 5 s.
+    await run(5);
+    expect(botTrades(), 'bot trades 5 s after boot').toBeGreaterThan(0);
+
+    // Nobody watching: IDLE after two minutes, and no trades while idle.
+    engine.idle.clientDisconnected(Date.now());
+    await run(130);
+    expect(engine.state.flags.idle).toBe(true);
+    const beforeWake = botTrades();
+    await run(60);
+    expect(botTrades()).toBe(beforeWake);
+
+    // A viewer arrives: within 5 s of the wake a bot trades again.
+    premium();
+    engine.idle.clientConnected(Date.now());
+    await run(5);
+    expect(botTrades(), 'bot trades 5 s after a wake').toBeGreaterThan(beforeWake);
+
+    // The feed stalls (MARKET_PAUSED); once fresh marks return, a bot trades within 5 s of the
+    // first fresh tick instead of having spent its round on a refused order.
+    await run(45);
+    discount();
+    await run(15, false);
+    expect(engine.state.paused()).toBe(true);
+    const beforeResume = botTrades();
+    await run(5);
+    expect(engine.state.paused()).toBe(false);
+    expect(botTrades(), 'bot trades 5 s after the pause clears').toBeGreaterThan(beforeResume);
+    await engine.stop();
   });
 });
