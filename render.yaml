@@ -1,0 +1,39 @@
+# Whale Street engine: the public REPLAY demo as a Render web service (Blueprint).
+# No secrets live in this file; values marked sync: false are entered in the Render dashboard.
+services:
+  - type: web
+    name: whale-street-engine
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeployTrigger: commit
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/status
+    # Rebuild only when the engine or what it is built from changes; a restart resets the demo.
+    buildFilter:
+      paths:
+        - Dockerfile
+        - .dockerignore
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - tsconfig.json
+        - tsconfig.base.json
+        - packages/**
+        - apps/engine/**
+      ignoredPaths:
+        - packages/*/test/**
+        - apps/engine/test/**
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MODE
+        value: replay
+      # One trusted proxy hop: per-address limits see the client, not the load balancer.
+      - key: TRUST_PROXY
+        value: "1"
+      # The web app origin, e.g. https://whale-street.vercel.app (comma-separated if several).
+      - key: CORS_ORIGINS
+        sync: false
