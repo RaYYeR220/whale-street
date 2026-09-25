@@ -66,6 +66,26 @@ describe('evidence drawer', () => {
     expect(screen.getByText(/At least 2 credits/)).toBeTruthy();
   });
 
+  it('says the credits were not recorded when no replayed call carries its cost', async () => {
+    drawer(['nc_1', 'nc_2'], {
+      nc_1: call('nc_1', { recorded: true, credits: null }),
+      nc_2: call('nc_2', { recorded: true, credits: null }),
+    });
+    await screen.findAllByRole('listitem');
+    expect(screen.getByText(/Credits for these calls were not recorded/)).toBeTruthy();
+    expect(screen.queryByText(/At least 0/)).toBeNull();
+    expect(screen.queryByText(/\b0 credits/)).toBeNull();
+  });
+
+  it('sums the recorded credits when the replayed calls carry them', async () => {
+    drawer(['nc_1', 'nc_2'], {
+      nc_1: call('nc_1', { recorded: true, credits: 1 }),
+      nc_2: call('nc_2', { recorded: true, credits: 3 }),
+    });
+    await screen.findAllByRole('listitem');
+    expect(screen.getByText(/4 credits for the calls above, as recorded/)).toBeTruthy();
+  });
+
   it('never says no call is recorded when the lookups failed', async () => {
     drawer(['nc_gone'], {});
     expect(await screen.findByText(/1 call could not be loaded/)).toBeTruthy();

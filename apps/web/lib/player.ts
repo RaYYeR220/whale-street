@@ -30,6 +30,23 @@ export function safeStorage(): KeyValueStorage | null {
   }
 }
 
+/**
+ * Where the token lives when first-party storage is blocked: this tab's engine runtime, which
+ * outlives any remount of the player tree, so a remount finds the tab's player instead of signing
+ * up another one. The token is gone when the tab closes.
+ */
+export function tabStorage(ref: { current: string | null }): KeyValueStorage {
+  return {
+    getItem: (key) => (key === TOKEN_KEY ? ref.current : null),
+    setItem: (key, value) => {
+      if (key === TOKEN_KEY) ref.current = value;
+    },
+    removeItem: (key) => {
+      if (key === TOKEN_KEY) ref.current = null;
+    },
+  };
+}
+
 function read(storage: KeyValueStorage | null): string | null {
   try {
     return storage?.getItem(TOKEN_KEY) ?? null;

@@ -3,14 +3,17 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmbedWidget } from '../components/embed/EmbedWidget';
 import { EngineProvider, useEngineRuntime } from '../components/providers/engine';
-import { PlayerProviders, Providers } from '../components/providers/Providers';
+import { isBarePath, Providers } from '../components/providers/Providers';
 import { usePlayer } from '../components/providers/player';
 import { portraitSrc } from '../lib/og/og';
 import { companyView, entry, market, T0 } from './helpers';
 import { testRuntime } from './render';
+
+const nav = vi.hoisted(() => ({ path: '/' as string | null }));
+vi.mock('next/navigation', () => ({ usePathname: () => nav.path }));
 
 afterEach(cleanup);
 
@@ -86,6 +89,8 @@ describe('the embed widget stays anonymous', () => {
   const read = (p: string) => readFileSync(join(import.meta.dirname, '..', p), 'utf8');
 
   it('gets the engine from the root providers but no player, so a view signs nobody up', () => {
+    nav.path = '/embed/OOH';
+    expect(isBarePath('/embed/OOH')).toBe(true);
     expect(() =>
       renderToStaticMarkup(
         <Providers>
@@ -95,18 +100,23 @@ describe('the embed widget stays anonymous', () => {
     ).toThrow(/inside <PlayerProvider>/);
   });
 
-  it('gives the app and the landing page their player', () => {
-    expect(() =>
-      renderToStaticMarkup(
-        <Providers>
-          <PlayerProviders>
-            <Probe />
-          </PlayerProviders>
-        </Providers>,
-      ),
-    ).not.toThrow();
-    expect(read('app/(app)/layout.tsx')).toContain('<PlayerProviders>');
-    expect(read('app/(site)/layout.tsx')).toContain('<PlayerProviders>');
+  it('gives the app and the landing page their player, from the one root tree', () => {
+    for (const path of ['/', '/floor', '/c/OOH', '/embedded-news']) {
+      nav.path = path;
+      expect(isBarePath(path), path).toBe(false);
+      expect(
+        () =>
+          renderToStaticMarkup(
+            <Providers>
+              <Probe />
+            </Providers>,
+          ),
+        path,
+      ).not.toThrow();
+    }
+    // Only the root layout mounts the providers: no route group adds a second player tree.
+    expect(read('app/layout.tsx')).toContain('<Providers>');
+    expect(read('app/(app)/layout.tsx')).not.toMatch(/<\w*Providers?>/);
     expect(read('app/(bare)/embed/[ticker]/page.tsx')).not.toContain('Player');
   });
 });

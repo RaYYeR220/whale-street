@@ -2,7 +2,7 @@
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import type { PlayerView, PortfolioView, SeasonResultRow } from '../../lib/api-types';
-import { bootstrapPlayer, rankOf, safeStorage } from '../../lib/player';
+import { bootstrapPlayer, rankOf, safeStorage, tabStorage } from '../../lib/player';
 import { useChannels, useEngine, useEngineRuntime } from './engine';
 
 export interface PlayerContextValue {
@@ -36,7 +36,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
-    void bootstrapPlayer(api, safeStorage()).then((r) => {
+    // Storage blocked: keep the token in this tab (the runtime outlives the player tree).
+    void bootstrapPlayer(api, safeStorage() ?? tabStorage(tokenRef)).then((r) => {
       if (cancelled) return;
       if (!r.ok) {
         setStatus('offline');

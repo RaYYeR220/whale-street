@@ -78,9 +78,16 @@ export function EvidenceDrawer({
       </p>
     );
   const age = data.snapshotAt !== null && now !== null ? now - data.snapshotAt : null;
-  const credits = data.calls.reduce((s, c) => s + (c.credits ?? 0), 0);
+  const known = data.calls.filter((c) => c.credits !== null);
+  const credits = known.reduce((s, c) => s + (c.credits ?? 0), 0);
   /** A total that leaves out a call of unknown cost, or one that could not be loaded, is a floor. */
-  const partial = data.missing > 0 || data.calls.some((c) => c.credits === null);
+  const partial = data.missing > 0 || known.length < data.calls.length;
+  // REPLAY rows carry the recording's credit headers when it kept them; with none, there is no
+  // total to give ("at least 0" would read as if the calls were free).
+  const cost =
+    known.length === 0 && (data.calls.length > 0 || data.missing > 0)
+      ? 'Credits for these calls were not recorded'
+      : `${partial ? 'At least ' : ''}${credits} credit${credits === 1 ? '' : 's'} for the calls above${data.calls.some((c) => c.recorded) ? ', as recorded' : ''}`;
   return (
     <>
       <p style={{ margin: 0, fontSize: 'var(--ws-fs-16)' }}>
@@ -145,8 +152,7 @@ export function EvidenceDrawer({
         </ul>
       )}
       <p style={{ margin: 0, color: 'var(--ws-text-2)', fontSize: 'var(--ws-fs-13)' }}>
-        Powered by Nansen API. {partial ? 'At least ' : ''}
-        {credits} credit{credits === 1 ? '' : 's'} for the calls above
+        Powered by Nansen API. {cost}
         {status?.creditsRemaining != null
           ? `; ${status.creditsRemaining.toLocaleString('en-US')} left on the account.`
           : '.'}
