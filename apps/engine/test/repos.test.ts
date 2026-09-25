@@ -185,4 +185,39 @@ describe('repos', () => {
     expect(r.nansenCalls.get('nc_1')).toMatchObject({ credits: 1, status: 200 });
     expect(r.nansenCalls.recent(5)).toHaveLength(1);
   });
+
+  it('lists the latest Nansen calls in the order they were logged, not by their time', () => {
+    const r = testRepos();
+    const call = (id: string, at: number, path = '/api/v1/profiler/perp-positions') =>
+      r.nansenCalls.insert({
+        id,
+        method: 'POST',
+        path,
+        requestHash: 'rh',
+        status: 200,
+        creditsUsed: null,
+        creditsRemaining: null,
+        latencyMs: 1,
+        at,
+        responseHash: 'sh',
+        error: null,
+        attempts: 1,
+        recorded: true,
+      });
+    // A REPLAY loop: the recording's calls are logged again after the wrap, at their recorded
+    // times, next to a miss logged at wall time.
+    call('nc_loop0_a', T0);
+    call('nc_loop0_b', T0 + 300_000);
+    call('nc_miss', T0 + 86_400_000);
+    call('nc_loop1_a', T0);
+    call('nc_trade', T0 + 1, '/api/v1/perp/order');
+    call('nc_loop1_b', T0 + 300_000);
+    const ids = ['nc_loop1_b', 'nc_trade', 'nc_loop1_a', 'nc_miss', 'nc_loop0_b', 'nc_loop0_a'];
+    expect(r.nansenCalls.recent(10).map((c) => c.id)).toEqual(ids);
+    expect(r.nansenCalls.recentPublic(3).map((c) => c.id)).toEqual([
+      'nc_loop1_b',
+      'nc_loop1_a',
+      'nc_miss',
+    ]);
+  });
 });

@@ -124,8 +124,12 @@ export interface Repos {
   };
   nansenCalls: {
     insert(r: CallRecord): void;
+    /**
+     * Newest first, in the order the calls were logged: `at` is the recording's time for a call
+     * answered by REPLAY, which repeats every loop.
+     */
     recent(limit: number): NansenCallRow[];
-    /** Newest first, without trading calls (paths under TRADING_PATH_PREFIX): the public log. */
+    /** Like recent, without trading calls (paths under TRADING_PATH_PREFIX): the public log. */
     recentPublic(limit: number): NansenCallRow[];
     get(id: string): NansenCallRow | undefined;
   };
@@ -490,14 +494,13 @@ export function createRepos({ sqlite, db }: Db): Repos {
           .onConflictDoNothing()
           .run();
       },
-      recent: (limit) =>
-        db.select().from(nansenCalls).orderBy(desc(nansenCalls.at)).limit(limit).all(),
+      recent: (limit) => db.select().from(nansenCalls).orderBy(desc(sql`rowid`)).limit(limit).all(),
       recentPublic: (limit) =>
         db
           .select()
           .from(nansenCalls)
           .where(notLike(nansenCalls.path, `${TRADING_PATH_PREFIX}%`))
-          .orderBy(desc(nansenCalls.at))
+          .orderBy(desc(sql`rowid`))
           .limit(limit)
           .all(),
       get: (id) => db.select().from(nansenCalls).where(eq(nansenCalls.id, id)).get(),
