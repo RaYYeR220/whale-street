@@ -266,6 +266,7 @@ export function createEngine(deps: EngineDeps): Engine {
       deps.replay ? deps.replay.endT - deps.replay.startT : null,
     ),
     valueBuysDips: deps.replay !== null,
+    vultureShortsSlides: deps.replay !== null,
   });
 
   let timer: ReturnType<typeof setInterval> | null = null;

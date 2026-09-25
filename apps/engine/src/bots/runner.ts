@@ -55,6 +55,8 @@ export function createBotRunner(d: {
   momentumLookbackMs?: number;
   /** REPLAY: Value also trades healthy NAV dips (see BotView.valueBuysDips). Default false. */
   valueBuysDips?: boolean;
+  /** REPLAY: the Vulture also shorts NAV slides (see BotView.vultureShortsSlides). Default false. */
+  vultureShortsSlides?: boolean;
 }): BotRunner {
   const rand = mulberry32(d.seed ?? 42);
   const lookback = d.momentumLookbackMs ?? HOUR_MS;
@@ -110,6 +112,7 @@ export function createBotRunner(d: {
       marks: d.state.marks,
       rand,
       valueBuysDips: d.valueBuysDips ?? false,
+      vultureShortsSlides: d.vultureShortsSlides ?? false,
       now,
       lookbackMs: lookback,
     };

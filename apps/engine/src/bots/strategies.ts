@@ -39,9 +39,17 @@ export interface BotView {
    * Value's hype bands are out of reach; it also trades healthy NAV dips there.
    */
   valueBuysDips: boolean;
+  /**
+   * REPLAY: a recording may hold no trader near liquidation, so the Vulture also shorts NAV
+   * slides there (see vulture).
+   */
+  vultureShortsSlides: boolean;
   /** Engine clock of the decision. */
   now: number;
-  /** Momentum's lookback window (see BotCompany.navLookback); also its longest holding time. */
+  /**
+   * Momentum's lookback window (see BotCompany.navLookback); also the longest a momentum, cohort
+   * or slide-short vulture position is held.
+   */
   lookbackMs: number;
 }
 
@@ -86,14 +94,37 @@ function value(v: BotView): BotOrder | null {
   return pick ? { ticker: pick.ticker, side: 'BUY', cash: stake(v, 0.02 + 0.02 * v.rand()) } : null;
 }
 
-/** Shorts traders close to liquidation (HP < 25%), covers on recovery (HP > 50%). */
+/**
+ * Held for longer than the lookback window, or since an unknown time, or since a time after now
+ * (bought in an earlier REPLAY loop: the clock went back since).
+ */
+const heldTooLong = (v: BotView, c: BotCompany) =>
+  c.heldSince === null || c.heldSince > v.now || v.now - c.heldSince > v.lookbackMs;
+
+/**
+ * Shorts traders close to liquidation (HP < 25%), covers on recovery (HP > 50%). With
+ * `vultureShortsSlides` (REPLAY) it also shorts the steepest NAV slide (≤ −2% over the lookback)
+ * when nobody is near liquidation, and covers a healthy company only once its slide is over (the
+ * change over the lookback is no longer negative) or it has held the short past the lookback.
+ */
 function vulture(v: BotView): BotOrder | null {
-  for (const c of active(v))
-    if (shortOf(v, c.id) > EPS && c.hp > 0.5)
+  for (const c of active(v)) {
+    if (shortOf(v, c.id) <= EPS || c.hp <= 0.5) continue;
+    const ch = lookbackChange(c);
+    if (!v.vultureShortsSlides || ch === null || ch >= 0 || heldTooLong(v, c))
       return { ticker: c.ticker, side: 'COVER', qty: shortOf(v, c.id) };
-  const pick = active(v)
+  }
+  const distressed = active(v)
     .filter((c) => c.hp < 0.25 && flat(v, c.id) && c.price > 0)
     .sort((a, b) => a.hp - b.hp)[0];
+  const slide = v.vultureShortsSlides
+    ? active(v)
+        .filter((c) => flat(v, c.id) && c.price > 0)
+        .map((c) => ({ c, ch: lookbackChange(c) }))
+        .filter((x): x is { c: BotCompany; ch: number } => x.ch !== null && x.ch < -0.02)
+        .sort((x, y) => x.ch - y.ch)[0]?.c
+    : undefined;
+  const pick = distressed ?? slide;
   return pick ? { ticker: pick.ticker, side: 'SHORT', qty: stake(v, 0.03) / pick.price } : null;
 }
 
@@ -122,11 +153,16 @@ export function cohortAlignment(
   return den > 0 ? num / den : null;
 }
 
-/** Buys companies aligned with the smart-money cohort (> 0.5), sells misaligned ones (< −0.2). */
+/**
+ * Buys companies aligned with the smart-money cohort (> 0.5), sells misaligned ones (< −0.2) and,
+ * like momentum, any holding once it has held it past the lookback window, so it keeps trading in
+ * every REPLAY loop instead of holding its first picks forever.
+ */
 function cohort(v: BotView): BotOrder | null {
   for (const c of active(v)) {
+    if (longOf(v, c.id) <= EPS) continue;
     const a = cohortAlignment(c, v.mood, v.marks, v.now);
-    if (longOf(v, c.id) > EPS && a !== null && a < -0.2)
+    if ((a !== null && a < -0.2) || heldTooLong(v, c))
       return { ticker: c.ticker, side: 'SELL', qty: longOf(v, c.id) };
   }
   const scored = active(v)
@@ -136,13 +172,6 @@ function cohort(v: BotView): BotOrder | null {
     .sort((x, y) => y.a - x.a)[0];
   return scored ? { ticker: scored.c.ticker, side: 'BUY', cash: stake(v, 0.03) } : null;
 }
-
-/**
- * Held for longer than the lookback window, or since an unknown time, or since a time after now
- * (bought in an earlier REPLAY loop: the clock went back since).
- */
-const heldTooLong = (v: BotView, c: BotCompany) =>
-  c.heldSince === null || c.heldSince > v.now || v.now - c.heldSince > v.lookbackMs;
 
 /**
  * Buys an up-trend (+2% over its lookback); sells when that trend reverses (the change over the

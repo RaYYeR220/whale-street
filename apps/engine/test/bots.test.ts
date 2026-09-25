@@ -54,6 +54,7 @@ const view = (over: Partial<BotView>): BotView => ({
   marks: {},
   rand: () => 0.5,
   valueBuysDips: false,
+  vultureShortsSlides: false,
   now: NOW,
   lookbackMs: 150_000,
   ...over,
@@ -127,6 +128,40 @@ describe('bot strategies', () => {
     ).toEqual({ ticker: 'A', side: 'COVER', qty: 4 });
   });
 
+  it('vulture also shorts the steepest NAV slide where nobody is near liquidation (REPLAY), covering once it turns', () => {
+    const slide = co({ id: 'a', nav: 97, navLookback: 100, price: 50 });
+    const steeper = co({ id: 'b', nav: 95, navLookback: 100, price: 25 });
+    const calm = co({ id: 'c', nav: 99, navLookback: 100 });
+    // LIVE: distress only.
+    expect(decide('vulture', view({ companies: [slide, steeper] }))).toBeNull();
+    const replay = (over: Partial<BotView>) => view({ vultureShortsSlides: true, ...over });
+    expect(decide('vulture', replay({ companies: [slide, steeper, calm] }))).toEqual({
+      ticker: 'B',
+      side: 'SHORT',
+      qty: 12,
+    });
+    // A trader near liquidation still comes first.
+    expect(
+      decide('vulture', replay({ companies: [steeper, co({ id: 'd', hp: 0.2, price: 50 })] })),
+    ).toMatchObject({ ticker: 'D', side: 'SHORT' });
+    expect(decide('vulture', replay({ companies: [calm] }))).toBeNull();
+    const held = (over: Partial<BotCompany>) =>
+      decide(
+        'vulture',
+        replay({
+          companies: [co({ id: 'a', heldSince: NOW - 60_000, ...over })],
+          holdings: { a: short(4) },
+        }),
+      );
+    const cover = { ticker: 'A', side: 'COVER', qty: 4 };
+    // Still sliding: keeps the short.
+    expect(held({ nav: 97, navLookback: 100 })).toBeNull();
+    // The slide turned, it has held past its lookback, or it opened before a REPLAY wrap: covers.
+    expect(held({ nav: 100.5, navLookback: 100 })).toEqual(cover);
+    expect(held({ nav: 97, navLookback: 100, heldSince: NOW - 150_001 })).toEqual(cover);
+    expect(held({ nav: 97, navLookback: 100, heldSince: NOW + 30_000 })).toEqual(cover);
+  });
+
   it('cohort alignment follows smart-trader positioning per coin', () => {
     const mood = new Map([
       ['BTC', cohortOf(0.8)],
@@ -161,6 +196,24 @@ describe('bot strategies', () => {
     expect(cohortAlignment(c, fresh, {}, NOW)).toBe(1);
     expect(cohortAlignment(c, stale, {}, NOW)).toBeNull();
     expect(cohortAlignment(c, new Map(), {}, NOW)).toBeNull();
+  });
+
+  it('cohort sells a still-aligned holding held past its lookback, or bought before a REPLAY wrap', () => {
+    const mood = new Map([['BTC', cohortOf(0.8)]]);
+    const held = (heldSince: number | null) =>
+      decide(
+        'cohort',
+        view({
+          companies: [co({ id: 'a', positions: [pos('BTC', 1, 100)], heldSince })],
+          mood,
+          holdings: { a: long(2) },
+        }),
+      );
+    const sell = { ticker: 'A', side: 'SELL', qty: 2 };
+    expect(held(NOW - 60_000)).toBeNull();
+    expect(held(NOW - 150_001)).toEqual(sell);
+    expect(held(NOW + 30_000)).toEqual(sell);
+    expect(held(null)).toEqual(sell);
   });
 
   it('momentum follows the NAV trend over its lookback', () => {
