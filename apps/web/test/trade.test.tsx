@@ -90,7 +90,8 @@ function ticket(o: {
 }
 
 const buy = async () => {
-  const go = await screen.findByRole('button', { name: /^Buy 9\.09 OOH$/ });
+  // The ticket waits for the player and a quote first: allow for a busy full-suite run.
+  const go = await screen.findByRole('button', { name: /^Buy 9\.09 OOH$/ }, { timeout: 5_000 });
   fireEvent.click(go);
 };
 
