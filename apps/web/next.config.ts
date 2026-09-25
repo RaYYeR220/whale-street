@@ -8,6 +8,8 @@ const common = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // Keep `next dev` from writing extra files into the app folder of a fresh clone.
+  agentRules: false,
   transpilePackages: ['@whale-street/core'],
   async headers() {
     return [
