@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CompanyView, FilingView } from '../../lib/api-types';
+import type { CompanyView, FilingView, TapeView } from '../../lib/api-types';
 import { type DisplayCompany, toDisplay } from '../../lib/company';
 import { place, rank, SLOTS, type SortKey } from '../../lib/roster';
 import { isDown } from '../../lib/ws-client';
@@ -33,10 +33,12 @@ const SORTS: Array<{ key: SortKey; label: string }> = [
 export function FloorView({
   initialCompanies,
   initialFilings,
+  initialTape,
   engineError,
 }: {
   initialCompanies: CompanyView[];
   initialFilings: FilingView[];
+  initialTape: TapeView[];
   engineError: string | null;
 }) {
   useChannels(['market', 'filings', 'tape', 'leaderboard']);
@@ -60,6 +62,10 @@ export function FloorView({
   useEffect(() => {
     store.seedFilings(initialFilings);
   }, [store, initialFilings]);
+
+  useEffect(() => {
+    store.seedTape(initialTape);
+  }, [store, initialTape]);
 
   const tickers = useMemo(() => {
     const set = new Set<string>(Object.keys(views));

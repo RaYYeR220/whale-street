@@ -6,6 +6,7 @@ import type {
   PortfolioView,
   ServerMessage,
   StatusView,
+  TapeView,
 } from '../lib/api-types';
 import type { SocketLike } from '../lib/ws-client';
 
@@ -44,6 +45,19 @@ export const filing = (o: Partial<FilingView> = {}): FilingView => ({
   provenance: ['nc_1'],
   detail: null,
   explorerUrl: 'https://app.hyperliquid.xyz/explorer/address/0x0',
+  ...o,
+});
+
+export const tape = (o: Partial<TapeView> = {}): TapeView => ({
+  ticker: 'OOH',
+  side: 'BUY',
+  qty: 10,
+  avgPrice: 110,
+  cash: 1_100,
+  handle: 'anon1',
+  kind: 'human',
+  forced: false,
+  at: T0,
   ...o,
 });
 

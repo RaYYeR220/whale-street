@@ -1,8 +1,10 @@
+import type { OrderSide } from '@whale-street/core';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { HOUR_MS, MINUTE_MS } from '../dates';
 import { TRADING_PATH_PREFIX } from '../db/repos';
 import type { Engine } from '../engine';
+import type { TapeView } from '../events';
 import { type ExchangeErrorCode, MARKET_PAUSED_RETRY_MS } from '../services/exchange';
 import type { ApplyErrorCode } from '../services/ipo';
 import { LINK_STATEMENT, playerView } from '../services/players';
@@ -172,6 +174,30 @@ export function registerRest(app: FastifyInstance, e: Engine, gates: Gates): voi
       companyId = rt.id;
     }
     return { filings: e.filings.recent(query.limit, companyId) };
+  });
+
+  // Public tape seed: same row shape as the WS `tape` event, so the client can prepend live
+  // trades under it without a gap. REPLAY-safe (never a row recorded after engine now) and
+  // ledger SETTLE rows excluded (repos.trades.recentPublic), matching the live tape.
+  app.get('/api/trades', async (req, reply) => {
+    const query = parse(LimitQuery, req.query, reply);
+    if (!query) return reply;
+    const rows = e.repos.trades.recentPublic(query.limit, now());
+    const players = new Map(
+      e.repos.players.many(rows.map((t) => t.playerId)).map((p) => [p.id, p]),
+    );
+    const trades: TapeView[] = rows.map((t) => ({
+      ticker: e.state.get(t.companyId)?.ticker ?? '?',
+      side: t.side as OrderSide,
+      qty: t.qty,
+      avgPrice: t.avgPrice,
+      cash: t.cash,
+      handle: players.get(t.playerId)?.handle ?? '?',
+      kind: players.get(t.playerId)?.kind ?? 'human',
+      forced: t.forced,
+      at: t.at,
+    }));
+    return { trades };
   });
 
   app.get('/api/quote', async (req, reply) => {

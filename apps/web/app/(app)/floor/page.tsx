@@ -11,11 +11,16 @@ export const metadata: Metadata = {
 
 export default async function FloorPage() {
   const api = serverApi();
-  const [companies, filings] = await Promise.all([api.companies(), api.filings({ limit: 40 })]);
+  const [companies, filings, trades] = await Promise.all([
+    api.companies(),
+    api.filings({ limit: 40 }),
+    api.trades({ limit: 40 }),
+  ]);
   return (
     <FloorView
       initialCompanies={companies.ok ? companies.data.companies : []}
       initialFilings={filings.ok ? filings.data.filings : []}
+      initialTape={trades.ok ? trades.data.trades : []}
       engineError={companies.ok ? null : companies.message}
     />
   );

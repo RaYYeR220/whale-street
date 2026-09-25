@@ -8,8 +8,9 @@ import {
   lastMinutes,
   MINUTE_MS,
   seriesFromHistory,
+  TAPE_MAX,
 } from '../lib/store';
-import { entry, filing, market, status, T0 } from './helpers';
+import { entry, filing, market, status, T0, tape } from './helpers';
 
 describe('market frames', () => {
   it('keeps unchanged entries (and the list) referentially stable', () => {
@@ -87,6 +88,34 @@ describe('news and player slices', () => {
       filing({ id: 4, at: T0 + 4 }),
     ]);
     expect(store.getState().filings.map((f) => f.id)).toEqual([5, 4, 3]);
+  });
+
+  it('seeds the tape from REST under the live trades, newest first, no duplicate', () => {
+    const store = createEngineStore();
+    // A trade arrived live before the REST seed resolved: the seed must not duplicate it.
+    store.dispatch({ t: 'tape', trade: tape({ handle: 'anon2', at: T0 + 10 }) });
+    store.seedTape([tape({ handle: 'anon2', at: T0 + 10 }), tape({ handle: 'anon1', at: T0 })]);
+    expect(store.getState().tape.map((t) => [t.handle, t.at])).toEqual([
+      ['anon2', T0 + 10],
+      ['anon1', T0],
+    ]);
+  });
+
+  it('never appends a live trade already seeded from REST', () => {
+    const store = createEngineStore();
+    store.seedTape([tape({ handle: 'anon1', at: T0 })]);
+    store.dispatch({ t: 'tape', trade: tape({ handle: 'anon1', at: T0 }) });
+    expect(store.getState().tape).toHaveLength(1);
+  });
+
+  it('caps the seeded tape at TAPE_MAX', () => {
+    const store = createEngineStore();
+    const seed = Array.from({ length: TAPE_MAX + 10 }, (_, i) =>
+      tape({ handle: `anon${i}`, at: T0 + i }),
+    );
+    store.seedTape(seed);
+    expect(store.getState().tape).toHaveLength(TAPE_MAX);
+    expect(store.getState().tape[0]?.handle).toBe(`anon${TAPE_MAX + 9}`);
   });
 
   it('notifies subscribers only when something changed', () => {

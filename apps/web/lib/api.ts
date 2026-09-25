@@ -29,6 +29,7 @@ import type {
   SeasonRow,
   SignatureParts,
   StatusView,
+  TapeView,
   TradeRowView,
 } from './api-types';
 
@@ -187,6 +188,8 @@ export function createApi(
       }),
     filings: (o: { limit?: number; ticker?: string } = {}) =>
       get<{ filings: FilingView[] }>('/api/filings', { query: o }),
+    trades: (o: { limit?: number } = {}) =>
+      get<{ trades: TapeView[] }>('/api/trades', { query: o }),
     quote: (ticker: string, side: OrderSide, qty: number, signal?: AbortSignal) =>
       get<QuoteView>('/api/quote', { query: { ticker, side, qty }, signal }),
     placeOrder: (token: string, body: OrderBody) =>

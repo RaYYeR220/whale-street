@@ -1,11 +1,15 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FloorView } from '../components/floor/FloorView';
 import { indexSeries } from '../components/floor/MarketStrip';
 import { toDisplay } from '../lib/company';
 import { seriesFromHistory } from '../lib/store';
-import { companyView, entry, T0 } from './helpers';
+import { companyView, entry, T0, tape } from './helpers';
 import { Wrap } from './render';
+
+afterEach(cleanup);
 
 const views = [
   companyView({ id: '0xa1', ticker: 'OOH', name: 'Obsidian Octopus Holdings' }),
@@ -22,7 +26,7 @@ const views = [
 describe('the floor, first paint from the server', () => {
   const html = renderToStaticMarkup(
     <Wrap>
-      <FloorView initialCompanies={views} initialFilings={[]} engineError={null} />
+      <FloorView initialCompanies={views} initialFilings={[]} initialTape={[]} engineError={null} />
     </Wrap>,
   );
 
@@ -49,6 +53,7 @@ describe('the floor without an engine', () => {
         <FloorView
           initialCompanies={[]}
           initialFilings={[]}
+          initialTape={[]}
           engineError="cannot reach the engine (fetch failed)"
         />
       </Wrap>,
@@ -75,5 +80,36 @@ describe('Whale Street Index', () => {
     const s = indexSeries([a, b].filter((c) => c !== null));
     expect(s.at(-1)).toBe(110);
     expect(s[0]).toBeNull();
+  });
+});
+
+describe('the Tape, seeded before the first live trade', () => {
+  it('shows recent trades from the REST seed at once instead of waiting for a WS event', () => {
+    render(
+      <Wrap>
+        <FloorView
+          initialCompanies={views}
+          initialFilings={[]}
+          initialTape={[tape({ handle: 'earlybird', ticker: 'OOH', at: T0 })]}
+          engineError={null}
+        />
+      </Wrap>,
+    );
+    expect(screen.queryByText(/Waiting for the first trade/)).toBeNull();
+    expect(screen.getByText('earlybird')).toBeTruthy();
+  });
+
+  it('says the tape is empty when neither the seed nor a live trade has one', () => {
+    render(
+      <Wrap>
+        <FloorView
+          initialCompanies={views}
+          initialFilings={[]}
+          initialTape={[]}
+          engineError={null}
+        />
+      </Wrap>,
+    );
+    expect(screen.getByText(/Waiting for the first trade/)).toBeTruthy();
   });
 });

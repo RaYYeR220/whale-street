@@ -100,6 +100,13 @@ const sameEntry = (a: MarketEntry | undefined, b: MarketEntry): boolean =>
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+/**
+ * Identifies one trade for de-duplication (TapeView carries no id): the REST seed and the WS event
+ * for the same DB row always agree on every one of these fields.
+ */
+const tapeKey = (t: TapeView): string =>
+  `${t.at}|${t.ticker}|${t.side}|${t.qty}|${t.avgPrice}|${t.cash}|${t.handle}`;
+
 /** Appends (or overwrites the current minute of) one point; trims to SERIES_MAX_POINTS. */
 export function appendPoint(
   s: Series | undefined,
@@ -158,6 +165,8 @@ export interface EngineStore {
   /** `receivedAt`: client clock when it arrived (default now). */
   setStatus(s: StatusView, receivedAt?: number): void;
   seedFilings(filings: readonly FilingView[]): void;
+  /** REST seed of recent trades (page load, warm from a cold Tape); merges under the live ones. */
+  seedTape(trades: readonly TapeView[]): void;
   seedSeries(ticker: string, points: readonly HistoryPoint[]): void;
   setPortfolio(p: PortfolioView | null): void;
   setViews(views: readonly CompanyView[], at: number): void;
@@ -234,9 +243,12 @@ export function createEngineStore(initial: EngineState = INITIAL_STATE): EngineS
           set({ ...state, filings: [msg.filing, ...state.filings].slice(0, FILINGS_MAX) });
           return;
         }
-        case 'tape':
+        case 'tape': {
+          // Already on the tape (the REST seed can race a live event for the same DB row).
+          if (state.tape.some((t) => tapeKey(t) === tapeKey(msg.trade))) return;
           set({ ...state, tape: [msg.trade, ...state.tape].slice(0, TAPE_MAX) });
           return;
+        }
         case 'leaderboard':
           set({ ...state, leaderboard: msg.rows });
           return;
@@ -266,6 +278,13 @@ export function createEngineStore(initial: EngineState = INITIAL_STATE): EngineS
         .sort((a, b) => b.at - a.at || b.id - a.id)
         .slice(0, FILINGS_MAX);
       set({ ...state, filings: merged });
+    },
+    seedTape(trades) {
+      const known = new Set(state.tape.map(tapeKey));
+      const merged = [...state.tape, ...trades.filter((t) => !known.has(tapeKey(t)))]
+        .sort((a, b) => b.at - a.at)
+        .slice(0, TAPE_MAX);
+      set({ ...state, tape: merged });
     },
     seedSeries(ticker, points) {
       const seed = seriesFromHistory(points);

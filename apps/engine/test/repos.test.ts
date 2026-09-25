@@ -52,6 +52,59 @@ describe('repos', () => {
     expect(r.filings.recent(10, A).map((f) => f.kind)).toEqual(['IPO']);
   });
 
+  it('trades: recent is newest first and filterable by company, settlements included', () => {
+    const r = testRepos();
+    const trade = (o: Partial<Parameters<typeof r.trades.insert>[0]>) =>
+      r.trades.insert({
+        playerId: 'p1',
+        seasonId: 1,
+        companyId: A,
+        side: 'BUY',
+        qty: 1,
+        cash: 100,
+        avgPrice: 100,
+        nav: 100,
+        multBefore: 1,
+        multAfter: 1.01,
+        forced: false,
+        at: T0,
+        ...o,
+      });
+    trade({ companyId: A, side: 'BUY', at: T0 });
+    trade({ companyId: B, side: 'SELL', at: T0 + 1 });
+    trade({ companyId: A, side: 'SETTLE', at: T0 + 2 });
+    expect(r.trades.recent(10).map((t) => t.side)).toEqual(['SETTLE', 'SELL', 'BUY']);
+    expect(r.trades.recent(10, A).map((t) => t.side)).toEqual(['SETTLE', 'BUY']);
+  });
+
+  it('trades: recentPublic excludes ledger settlements and never serves a future row', () => {
+    const r = testRepos();
+    const trade = (o: Partial<Parameters<typeof r.trades.insert>[0]>) =>
+      r.trades.insert({
+        playerId: 'p1',
+        seasonId: 1,
+        companyId: A,
+        side: 'BUY',
+        qty: 1,
+        cash: 100,
+        avgPrice: 100,
+        nav: 100,
+        multBefore: 1,
+        multAfter: 1.01,
+        forced: false,
+        at: T0,
+        ...o,
+      });
+    trade({ companyId: A, side: 'BUY', at: T0 });
+    trade({ companyId: B, side: 'SELL', at: T0 + 1 });
+    // A ledger settlement (bankruptcy/season-end): not a player trade, never on the public tape.
+    trade({ companyId: A, side: 'SETTLE', at: T0 + 2 });
+    trade({ companyId: A, side: 'SHORT', at: T0 + 100_000 });
+    expect(r.trades.recentPublic(10).map((t) => t.side)).toEqual(['SHORT', 'SELL', 'BUY']);
+    // REPLAY-safe: a trade recorded past engine now (a lingering previous loop's row) is withheld.
+    expect(r.trades.recentPublic(10, T0 + 1).map((t) => t.side)).toEqual(['SELL', 'BUY']);
+  });
+
   it('portfolios, holdings, trades, ipo spend inside a transaction', () => {
     const r = testRepos();
     r.tx(() => {

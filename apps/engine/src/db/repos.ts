@@ -1,5 +1,5 @@
 import type { CallRecord } from '@whale-street/nansen';
-import { and, desc, eq, gt, gte, inArray, lte, notLike, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lte, ne, notLike, sql } from 'drizzle-orm';
 import type { MirrorStatus } from '../types';
 import type { Db } from './index';
 import {
@@ -90,7 +90,15 @@ export interface Repos {
   };
   trades: {
     insert(t: NewTrade): void;
+    /** Newest first, this company or every one, ledger SETTLE rows included. */
     recent(limit: number, companyId?: string): TradeRow[];
+    /**
+     * The public tape: like `recent`, but never a ledger SETTLE row (bankruptcy and season-end
+     * settlement are never a player's trade). With `untilT` (engine now), only trades at or before
+     * it — REPLAY-safe: trades are never cleared at a loop wrap, so a previous loop's late rows must
+     * not outrank the new loop's until their own recorded time comes around again.
+     */
+    recentPublic(limit: number, untilT?: number): TradeRow[];
     forPlayer(playerId: string, limit: number): TradeRow[];
   };
   ipoSpend: {
@@ -353,6 +361,19 @@ export function createRepos({ sqlite, db }: Db): Repos {
           .select()
           .from(trades)
           .where(companyId ? eq(trades.companyId, companyId) : undefined)
+          .orderBy(desc(trades.id))
+          .limit(limit)
+          .all(),
+      recentPublic: (limit, untilT) =>
+        db
+          .select()
+          .from(trades)
+          .where(
+            and(
+              ne(trades.side, 'SETTLE'),
+              untilT === undefined ? undefined : lte(trades.at, untilT),
+            ),
+          )
           .orderBy(desc(trades.id))
           .limit(limit)
           .all(),

@@ -161,6 +161,67 @@ describe('REST', () => {
     expect((await t.app.inject({ url: '/api/provenance/nc_trade' })).statusCode).toBe(404);
   });
 
+  it('trades: seeds the tape with real fills, no ledger settlements, never a future row', async () => {
+    t = await testEngine();
+    seedCompany();
+    const { token, player } = await signup();
+    const buy = await t.app.inject({
+      method: 'POST',
+      url: '/api/orders',
+      headers: bearer(token),
+      payload: { ticker: 'AAA', side: 'BUY', qty: 10 },
+    });
+    expect(buy.statusCode).toBe(200);
+    const seasonId = t.engine.repos.seasons.current()?.id ?? 1;
+    // A season-end settlement: ledger housekeeping, never a player trade on the public tape.
+    t.engine.repos.trades.insert({
+      playerId: player.id,
+      seasonId,
+      companyId: 'aaa',
+      side: 'SETTLE',
+      qty: 0,
+      cash: 0,
+      avgPrice: 0,
+      nav: 0,
+      multBefore: 1,
+      multAfter: 1,
+      forced: false,
+      at: t.clock.now(),
+    });
+    // A lingering row from a later point of the recording than engine now (REPLAY-unsafe if served).
+    t.engine.repos.trades.insert({
+      playerId: player.id,
+      seasonId,
+      companyId: 'aaa',
+      side: 'SELL',
+      qty: 1,
+      cash: 100,
+      avgPrice: 100,
+      nav: 100,
+      multBefore: 1,
+      multAfter: 1,
+      forced: false,
+      at: t.clock.now() + 60_000,
+    });
+    const res = await t.app.inject({ url: '/api/trades?limit=10' });
+    expect(res.statusCode).toBe(200);
+    const trades = res.json().trades;
+    expect(trades).toHaveLength(1);
+    expect(trades[0]).toMatchObject({
+      ticker: 'AAA',
+      side: 'BUY',
+      qty: 10,
+      handle: player.handle,
+      kind: 'human',
+      forced: false,
+    });
+    expect(typeof trades[0].avgPrice).toBe('number');
+    expect(typeof trades[0].at).toBe('number');
+    // Same shape and cap as every other limited read.
+    expect((await t.app.inject({ url: '/api/trades?limit=0' })).statusCode).toBe(400);
+    expect((await t.app.inject({ url: '/api/trades?limit=201' })).statusCode).toBe(400);
+  });
+
   it('history answers a request with both a bad ticker and a bad query exactly once (400)', async () => {
     t = await testEngine();
     const app = await buildApp(t.engine);
