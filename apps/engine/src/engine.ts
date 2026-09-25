@@ -162,7 +162,7 @@ export function createEngine(deps: EngineDeps): Engine {
   // Every data call reports a refusal for credits to the monitor, which checks the account at once.
   const nansen = credits ? withCreditAlarm(deps.nansen, () => credits.alarm()) : deps.nansen;
 
-  const filings = createFilingService(repos, state, bus);
+  const filings = createFilingService(repos, state, bus, () => clock.now());
   const statusOps = createStatusOps(repos, filings);
   const bankruptcy = createBankruptcyService({ repos, filings, statusOps, bus, params, log });
   const refresher = createRefresher({

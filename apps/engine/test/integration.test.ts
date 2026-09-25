@@ -105,10 +105,8 @@ describe('REPLAY mini-session end to end', () => {
     await engine.settle();
     expect(b.status).toBe('ACTIVE');
     expect(b.nav.nav).toBe(100);
-    expect(engine.repos.filings.recent(1, SYNTHETIC_B)[0]).toMatchObject({
-      kind: 'RESUME',
-      detail: 'replay restarted',
-    });
+    // The wrap files nothing, and the previous loop's filings are gone.
+    expect(engine.filings.recent(10)).toEqual([]);
 
     ws.terminate();
     await app.close();

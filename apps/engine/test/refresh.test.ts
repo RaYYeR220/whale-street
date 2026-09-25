@@ -327,7 +327,7 @@ describe('refresher', () => {
     state2.awaitingNavTick = false;
     const rt2 = runtimeFromRow(persisted);
     state2.add(rt2);
-    const filings2 = createFilingService(w.repos, state2, bus2);
+    const filings2 = createFilingService(w.repos, state2, bus2, () => w.clock.now());
     const statusOps2 = createStatusOps(w.repos, filings2);
     const bankruptcy2 = createBankruptcyService({
       repos: w.repos,

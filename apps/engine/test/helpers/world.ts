@@ -33,7 +33,7 @@ export function makeWorld(): World {
   const state = new MarketState(clock.now());
   // As if the market loop had already ticked once on fresh marks (a fresh MarketState is paused).
   state.awaitingNavTick = false;
-  const filings = createFilingService(repos, state, bus);
+  const filings = createFilingService(repos, state, bus, () => clock.now());
   const statusOps = createStatusOps(repos, filings);
   return { clock, repos, bus, events, state, filings, statusOps };
 }

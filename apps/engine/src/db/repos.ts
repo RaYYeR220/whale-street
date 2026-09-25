@@ -61,7 +61,10 @@ export interface Repos {
   };
   filings: {
     insert(f: NewFiling): FilingRow;
-    recent(limit: number, companyId?: string): FilingRow[];
+    /** Newest first; with `untilT` (engine now), only filings stamped at or before it. */
+    recent(limit: number, companyId?: string, untilT?: number): FilingRow[];
+    /** Deletes every filing (REPLAY loop start: the page holds only the current loop's filings). */
+    clear(): void;
   };
   players: {
     insert(p: PlayerRow): void;
@@ -213,14 +216,22 @@ export function createRepos({ sqlite, db }: Db): Repos {
 
     filings: {
       insert: (f) => db.insert(filings).values(f).returning().get(),
-      recent: (limit, companyId) =>
+      recent: (limit, companyId, untilT) =>
         db
           .select()
           .from(filings)
-          .where(companyId ? eq(filings.companyId, companyId) : undefined)
+          .where(
+            and(
+              companyId ? eq(filings.companyId, companyId) : undefined,
+              untilT === undefined ? undefined : lte(filings.at, untilT),
+            ),
+          )
           .orderBy(desc(filings.id))
           .limit(limit)
           .all(),
+      clear: () => {
+        db.delete(filings).run();
+      },
     },
 
     players: {

@@ -955,21 +955,27 @@ describe('REPLAY loop wrap', () => {
       return refresh(id, reason);
     };
     const lastTradeId = () => engine.repos.trades.recent(1)[0]?.id ?? 0;
-    const lastFilingId = () => engine.repos.filings.recent(1)[0]?.id ?? 0;
-    const bounds: Array<{ trade: number; filing: number }> = [];
+    const bounds: number[] = [];
+    // Each loop's filings, read just before its wrap (a wrap clears them).
+    const filings: string[][] = [];
     for (loop = 0; loop < 3; loop++) {
-      bounds.push({ trade: lastTradeId(), filing: lastFilingId() });
-      for (let s = 0; s < 600; s++) await r.step();
+      bounds.push(lastTradeId());
+      for (let s = 0; s < 599; s++) await r.step();
+      filings.push(
+        engine.filings
+          .recent(200)
+          .map((f) => `${f.companyId === SYNTHETIC_A ? 'A' : 'B'}:${f.kind}`),
+      );
+      await r.step();
     }
-    bounds.push({ trade: lastTradeId(), filing: lastFilingId() });
+    bounds.push(lastTradeId());
 
-    const inLoop = <T extends { id: number }>(rows: T[], l: number, key: 'trade' | 'filing') =>
-      rows.filter((x) => x.id > (bounds[l]?.[key] ?? 0) && x.id <= (bounds[l + 1]?.[key] ?? 0));
+    const inLoop = <T extends { id: number }>(rows: T[], l: number) =>
+      rows.filter((x) => x.id > (bounds[l] ?? 0) && x.id <= (bounds[l + 1] ?? 0));
     const trades = engine.repos.trades.recent(100_000);
-    const filings = engine.repos.filings.recent(100_000);
     // A lively desk in steady state: every bot places orders of its own in every loop.
     for (const l of [0, 1, 2]) {
-      const placed = inLoop(trades, l, 'trade').filter((t) => !t.forced && t.side !== 'SETTLE');
+      const placed = inLoop(trades, l).filter((t) => !t.forced && t.side !== 'SETTLE');
       for (const bot of BOTS)
         expect(
           placed.filter((t) => t.playerId === bot.id).length,
@@ -978,12 +984,10 @@ describe('REPLAY loop wrap', () => {
     }
     for (const l of [1, 2]) {
       expect(beats[l], `heartbeats in loop ${l}`).toBeGreaterThan(0);
-      const bot = inLoop(trades, l, 'trade').filter((t) => t.playerId.startsWith('bot-'));
+      const bot = inLoop(trades, l).filter((t) => t.playerId.startsWith('bot-'));
       expect(bot.length, `bot trades in loop ${l}`).toBeGreaterThan(0);
       expect(bot.some((t) => t.playerId === 'bot-vulture' && t.side === 'SHORT')).toBe(true);
-      const kinds = inLoop(filings, l, 'filing').map(
-        (f) => `${f.companyId === SYNTHETIC_A ? 'A' : 'B'}:${f.kind}`,
-      );
+      const kinds = filings[l] ?? [];
       expect(kinds, `filings in loop ${l}`).toEqual(
         expect.arrayContaining(['A:CLOSE', 'A:OPEN', 'B:LIQUIDATION', 'B:BANKRUPTCY']),
       );
@@ -1083,4 +1087,79 @@ describe('REPLAY loop wrap', () => {
     expect(latest.price).toBeGreaterThan((loop0.get(latest.t) ?? Number.POSITIVE_INFINITY) * 1.01);
     await r.close();
   }, 30_000);
+
+  it('starts every loop with a clean filings page: no wrap filings, no repeats, nothing past now', async () => {
+    const r = await bootReplay(syntheticSession());
+    const { engine, app } = r;
+    engine.idle.clientConnected(engine.clock.now());
+    const b = engine.state.get(SYNTHETIC_B);
+    if (!b) throw new Error('company B missing');
+    type Filing = {
+      id: number;
+      companyId: string;
+      kind: string;
+      detail: string | null;
+      at: number;
+    };
+    const who = (f: Filing) => (f.companyId === SYNTHETIC_A ? 'A' : 'B');
+    const page = async (label: string): Promise<Filing[]> => {
+      const now = engine.clock.now();
+      const all = (await app.inject({ url: '/api/filings?limit=200' })).json().filings as Filing[];
+      const ofB = (await app.inject({ url: `/api/companies/${b.ticker}` })).json()
+        .filings as Filing[];
+      for (const rows of [all, ofB]) {
+        expect(
+          rows.filter((f) => f.at > now),
+          `${label}: nothing later than now`,
+        ).toEqual([]);
+        expect(
+          rows.filter((f) => f.kind === 'RESUME' && /replay/.test(f.detail ?? '')),
+          `${label}: a wrap is not a market event`,
+        ).toEqual([]);
+        const keys = rows.map((f) => `${f.companyId}|${f.kind}|${f.detail}`);
+        expect(new Set(keys).size, `${label}: no filing twice`).toBe(keys.length);
+      }
+      return all;
+    };
+
+    for (let s = 0; s < 599; s++) await r.step();
+    const loop0 = (await page('loop 0 end')).map((f) => `${who(f)}:${f.kind}`);
+    expect(loop0).toEqual(expect.arrayContaining(['B:MARGIN_CALL', 'B:LIQUIDATION', 'A:CLOSE']));
+
+    for (const loop of [1, 2]) {
+      await r.step(); // the wrap
+      expect(engine.status().loop?.index).toBe(loop);
+      // The previous loop's filings are gone and the wrap itself filed nothing.
+      expect(await page(`loop ${loop} start`)).toEqual([]);
+      for (let s = 0; s < 470; s++) await r.step();
+      // Mid-loop: only what happened in this loop so far (B's margin call, not its liquidation).
+      const mid = (await page(`loop ${loop} middle`)).map((f) => `${who(f)}:${f.kind}`);
+      expect(mid.filter((k) => k === 'B:MARGIN_CALL')).toHaveLength(1);
+      expect(mid).not.toContain('B:LIQUIDATION');
+      for (let s = 0; s < 129; s++) await r.step();
+      const end = (await page(`loop ${loop} end`)).map((f) => `${who(f)}:${f.kind}`);
+      // The same filings as the first loop, once each (listing a fresh database's seeds happened
+      // in the first loop only).
+      expect(end.sort()).toEqual(loop0.filter((k) => !k.endsWith(':IPO')).sort());
+    }
+
+    // A filing stamped after engine now (e.g. left over from a later point of the recording) is
+    // never served, by any filings route.
+    const now = engine.clock.now();
+    engine.repos.filings.insert({
+      companyId: b.id,
+      kind: 'MARGIN_CALL',
+      coin: 'ETH',
+      sizeBefore: null,
+      sizeAfter: null,
+      notionalUsd: null,
+      realizedPnlUsd: null,
+      at: now + 60_000,
+      provenance: [],
+      detail: 'from the future',
+    });
+    await page('future row');
+    expect(engine.filings.recent(200).some((f) => f.detail === 'from the future')).toBe(false);
+    await r.close();
+  }, 60_000);
 });
