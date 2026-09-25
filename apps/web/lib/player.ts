@@ -15,7 +15,19 @@ export interface KeyValueStorage {
 
 export type BootstrapResult =
   | { ok: true; token: string; me: MeView; created: boolean }
-  | { ok: false; message: string };
+  /** `code`: the engine's error code (RATE_LIMITED, …) or the client's (NETWORK, TIMEOUT, …). */
+  | { ok: false; code: string; message: string };
+
+/**
+ * Delays between automatic tries of a bootstrap that failed (the last one repeats): a signup limit
+ * or an engine restart clears by itself, and a player is needed before anything else works.
+ */
+export const PLAYER_RETRY_MS = [2_000, 5_000, 15_000, 30_000, 60_000] as const;
+
+/** Delay before the automatic try that follows `failures` failed tries in a row (1, 2, …). */
+export function playerRetryDelay(failures: number): number {
+  return PLAYER_RETRY_MS[Math.min(Math.max(failures, 1), PLAYER_RETRY_MS.length) - 1] ?? 60_000;
+}
 
 export function safeStorage(): KeyValueStorage | null {
   try {
@@ -73,14 +85,14 @@ export async function bootstrapPlayer(
   if (stored) {
     const me = await api.me(stored);
     if (me.ok) return { ok: true, token: stored, me: me.data, created: false };
-    if (me.status !== 401) return { ok: false, message: me.message };
+    if (me.status !== 401) return { ok: false, code: me.error, message: me.message };
     write(storage, null);
   }
   const created = await api.createPlayer();
-  if (!created.ok) return { ok: false, message: created.message };
+  if (!created.ok) return { ok: false, code: created.error, message: created.message };
   write(storage, created.data.token);
   const me = await api.me(created.data.token);
-  if (!me.ok) return { ok: false, message: me.message };
+  if (!me.ok) return { ok: false, code: me.error, message: me.message };
   return { ok: true, token: created.data.token, me: me.data, created: true };
 }
 

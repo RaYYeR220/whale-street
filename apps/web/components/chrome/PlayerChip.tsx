@@ -10,16 +10,18 @@ const CHIP_REASON_CHARS = 26;
 const clip = (t: string) =>
   t.length > CHIP_REASON_CHARS ? `${t.slice(0, CHIP_REASON_CHARS).trimEnd()}…` : t;
 
-/** Handle, net worth and rank; opens the portfolio drawer. */
+/** Handle, net worth and rank (or why there is no player yet); opens the portfolio drawer. */
 export function PlayerChip() {
-  const { status, player, portfolio, rank } = usePlayer();
+  const { status, player, portfolio, rank, error } = usePlayer();
   const { open } = useDrawer();
   // When net worth is unknown, say why in words (not only in a hover tooltip).
   const why = portfolio && portfolio.netWorth === null ? portfolio.netWorthReason : null;
   const label =
     status === 'ready' && player
       ? `Your desk: ${player.handle}, net worth ${usd(portfolio?.netWorth)}${why ? ` (${why})` : ''}${rank !== null ? `, rank ${rank}` : ''}`
-      : 'Your desk';
+      : status === 'offline'
+        ? `Your desk: no player yet. ${error ?? 'The engine did not answer.'} Trying again by itself.`
+        : 'Your desk';
   return (
     <button
       className="ws-player"
@@ -32,12 +34,18 @@ export function PlayerChip() {
         {player ? <Portrait seed={player.handle} hp={0.8} size={48} label="Your avatar" /> : null}
       </span>
       <span className="ws-player__t">
-        <b>{player?.handle ?? (status === 'offline' ? 'Offline' : 'Signing in…')}</b>
-        <span title={why ?? undefined}>
-          {usd(portfolio?.netWorth)}
-          {why ? <span className="ws-player__rank">, {clip(why)}</span> : null}
-          {rank !== null ? <span className="ws-player__rank">, rank {rank}</span> : null}
-        </span>
+        <b>{player?.handle ?? (status === 'offline' ? 'No player yet' : 'Signing in…')}</b>
+        {status === 'offline' ? (
+          <span className="ws-player__rank" title={error ?? undefined}>
+            {clip(error ?? 'The engine did not answer.')}
+          </span>
+        ) : (
+          <span title={why ?? undefined}>
+            {usd(portfolio?.netWorth)}
+            {why ? <span className="ws-player__rank">, {clip(why)}</span> : null}
+            {rank !== null ? <span className="ws-player__rank">, rank {rank}</span> : null}
+          </span>
+        )}
       </span>
     </button>
   );

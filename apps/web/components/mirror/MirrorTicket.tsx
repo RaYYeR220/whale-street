@@ -212,7 +212,7 @@ export function MirrorTicket({
 }) {
   const store = keyStore === undefined ? browserStore : keyStore;
   const api = useApi();
-  const { token, player, refresh } = usePlayer();
+  const { token, player, refresh, status: playerStatus, error: playerError } = usePlayer();
   const now = useEngineNow();
   const reduce = useReducedMotion();
   const { open } = useDrawer();
@@ -394,9 +394,22 @@ export function MirrorTicket({
       },
     );
 
+  /** Why linking cannot start yet: there is no player (still signing up, or the signup failed). */
+  const noPlayerText =
+    playerStatus === 'offline'
+      ? `Your player could not be set up: ${playerError ?? 'the engine did not answer.'} Reload the page, or wait while it tries again by itself.`
+      : 'Your player isn’t ready yet — reload the page.';
+
   const doLink = () =>
     guarded('link', async () => {
-      if (!token || !address) return;
+      if (!token) {
+        setProblem(noPlayerText);
+        return;
+      }
+      if (!address) {
+        setProblem('Connect your wallet first.');
+        return;
+      }
       if (conn.chainId === undefined) {
         setProblem('Your wallet did not say which network it is on. Reconnect it and try again.');
         return;
@@ -687,6 +700,17 @@ export function MirrorTicket({
               Sign in with Ethereum once, so the engine knows {shortAddress(address)} belongs to
               your player. It costs nothing and moves no funds.
             </p>
+            {token ? null : (
+              <p
+                className={`co-sub${playerStatus === 'offline' ? ' ws-v-red' : ''}`}
+                role="status"
+                style={{ margin: 0 }}
+              >
+                {playerStatus === 'offline'
+                  ? `Your player could not be set up: ${playerError ?? 'the engine did not answer.'} Trying again by itself.`
+                  : 'Setting up your player…'}
+              </p>
+            )}
             {player?.walletAddress ? (
               <p className="co-sub ws-v-red" data-testid="relink-warning" style={{ margin: 0 }}>
                 This player is linked to {shortAddress(player.walletAddress)} now. Linking{' '}

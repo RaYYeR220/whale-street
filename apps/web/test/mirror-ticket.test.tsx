@@ -137,6 +137,8 @@ function fakeEngine(o: {
   linked?: () => string | null;
   link?: (body: { message: string; signature: string }) => Reply;
   agent?: () => Reply;
+  /** POST /api/players (a fresh player; used only when the browser holds no token). */
+  signup?: () => Reply;
 }) {
   const seen = {
     prepare: 0,
@@ -147,6 +149,8 @@ function fakeEngine(o: {
     links: [] as Array<{ message: string; signature: string }>,
   };
   const fake = fakeFetch({
+    'POST /api/players': () =>
+      o.signup?.() ?? json({ player: { id: 'p1', handle: 'Tester' }, token: 'tok' }, 201),
     'GET /api/auth/nonce': () => json({ nonce: 'a1b2c3d4e5f60718', message: 'Link this wallet.' }),
     'POST /api/auth/link': ({ init }) => {
       const body = JSON.parse(String(init.body)) as { message: string; signature: string };
@@ -801,6 +805,43 @@ describe('Mirror ticket: linking a wallet', () => {
     expect((await screen.findByRole('alert')).textContent).toMatch(
       /does not accept wallet links from this web address/,
     );
+  });
+});
+
+describe('Mirror ticket: linking before the player is ready', () => {
+  it('says the player is not ready yet instead of doing nothing', async () => {
+    localStorage.removeItem(TOKEN_KEY);
+    const engine = fakeEngine({
+      linked: () => null,
+      signup: () => new Promise<Response>(() => {}),
+    });
+    mount(engine, await approvedStore());
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign to link' }));
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      'Your player isn’t ready yet — reload the page.',
+    );
+    expect(engine.calls.some((c) => c.url.pathname === '/api/auth/nonce')).toBe(false);
+  });
+
+  it('names the signup failure, such as the network’s signup limit', async () => {
+    localStorage.removeItem(TOKEN_KEY);
+    let signs = 0;
+    wallet.sign = async () => {
+      signs += 1;
+      return '0x';
+    };
+    const engine = fakeEngine({
+      linked: () => null,
+      signup: () =>
+        json({ error: 'RATE_LIMITED', message: 'too many new players from this address' }, 429),
+    });
+    mount(engine, await approvedStore());
+    await screen.findByText(/Too many new players from your network/);
+    fireEvent.click(screen.getByRole('button', { name: 'Sign to link' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(
+      /^Your player could not be set up: Too many new players from your network/,
+    );
+    expect(signs).toBe(0);
   });
 });
 

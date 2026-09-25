@@ -10,6 +10,7 @@ import { SeasonClock } from '../components/chrome/SeasonClock';
 import { isCurrent, NAV } from '../components/chrome/TopBar';
 import { EngineProvider, type EngineRuntime } from '../components/providers/engine';
 import { createApi } from '../lib/api';
+import { PLAYER_RETRY_MS } from '../lib/player';
 import { createEngineStore } from '../lib/store';
 import { EngineSocket } from '../lib/ws-client';
 import { FakeSocket, fakeFetch, json, portfolio, status, T0 } from './helpers';
@@ -198,6 +199,44 @@ describe('player chip', () => {
     expect(chip.textContent).not.toContain(why);
     expect(chip.getAttribute('aria-label')).toContain(why);
     expect(chip.querySelector(`[title="${why}"]`)).toBeTruthy();
+    localStorage.clear();
+  });
+});
+
+describe('player chip without a player', () => {
+  it('says why signup failed and tries again by itself, backing off', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const player = { id: 'p1', handle: 'Tester', kind: 'human', walletAddress: null, createdAt: 0 };
+    let signups = 0;
+    const rt = testRuntime({
+      'POST /api/players': () => {
+        signups += 1;
+        return signups < 3
+          ? json({ error: 'RATE_LIMITED', message: 'too many new players from this address' }, 429)
+          : json({ player, token: 'tok' }, 201);
+      },
+      'GET /api/me': () => json({ player, portfolio: portfolio(), seasons: [] }),
+    });
+    render(
+      <Wrap runtime={rt}>
+        <PlayerChip />
+      </Wrap>,
+    );
+    const chip = await vi.waitFor(() =>
+      screen.getByRole('button', { name: /^Your desk: no player yet/ }),
+    );
+    expect(chip.textContent).toContain('No player yet');
+    expect(chip.textContent).toContain('Too many new players');
+    expect(chip.getAttribute('aria-label')).toMatch(
+      /Too many new players from your network in the last hour\. Trying again by itself\./,
+    );
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(signups).toBe(1);
+    await act(() => vi.advanceTimersByTimeAsync(PLAYER_RETRY_MS[0] ?? 0));
+    await vi.waitFor(() => expect(signups).toBe(2));
+    await act(() => vi.advanceTimersByTimeAsync(PLAYER_RETRY_MS[1] ?? 0));
+    await vi.waitFor(() => screen.getByRole('button', { name: /^Your desk: Tester/ }));
+    expect(signups).toBe(3);
     localStorage.clear();
   });
 });

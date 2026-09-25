@@ -80,7 +80,7 @@ describe('anonymous player bootstrap', () => {
     const storage = memoryStorage({ [TOKEN_KEY]: 'kept' });
     const api = fakeApi(new Set(['kept']), false);
     const r = await bootstrapPlayer(api, storage);
-    expect(r).toEqual({ ok: false, message: 'cannot reach the engine' });
+    expect(r).toEqual({ ok: false, code: 'NETWORK', message: 'cannot reach the engine' });
     expect(api.created).toBe(0);
     expect(storage.data[TOKEN_KEY]).toBe('kept');
   });

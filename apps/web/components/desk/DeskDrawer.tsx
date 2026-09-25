@@ -89,7 +89,10 @@ export function DeskDrawer({ onNavigate }: { onNavigate(): void }) {
     return (
       <div className="ws-empty">
         <h2>Your desk is offline</h2>
-        <p>{error ?? 'The engine did not answer.'} Nothing is shown until it does.</p>
+        <p>
+          {error ?? 'The engine did not answer.'} Trying again by itself; nothing is shown until
+          your player is ready.
+        </p>
         <button className="ws-btn ws-btn--quiet" type="button" onClick={retry}>
           Try again
         </button>

@@ -27,6 +27,17 @@ export function orderErrorText(code: string, message: string): string {
   return ORDER[code] ?? message;
 }
 
+/** Why this browser has no player: the signup or the session read failed. */
+const SIGNUP: Record<string, string> = {
+  RATE_LIMITED: 'Too many new players from your network in the last hour.',
+  NETWORK: 'Cannot reach the engine.',
+  TIMEOUT: 'The engine did not answer in time.',
+};
+
+export function signupErrorText(code: string, message: string): string {
+  return SIGNUP[code] ?? `The engine said: ${message.replace(/\.+$/, '')}.`;
+}
+
 /** IPO desk refusals: every engine code (contract-checked), plus the transport ones. */
 const IPO: Record<IpoApplyErrorCode | 'UNAUTHORIZED' | 'NETWORK', string> = {
   INVALID_ADDRESS: 'That is not a Hyperliquid address. It starts with 0x and has 42 characters.',
