@@ -4,6 +4,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CompanyView } from '../components/company/CompanyView';
 import { FilingsTimeline, RiskPanel } from '../components/company/Panels';
+import { MarketStrip } from '../components/floor/MarketStrip';
 import type { HolderView, PositionView } from '../lib/api-types';
 import { cushionLeft, toDisplay } from '../lib/company';
 import { companyView, entry, filing, json, market, T0 } from './helpers';
@@ -165,5 +166,27 @@ describe('company page across a replay wrap', () => {
     await waitFor(() => expect(screen.queryAllByText(/old loop call/)).toEqual([]), {
       timeout: 2_000,
     });
+  });
+});
+
+describe('market strip', () => {
+  it('dates the last bankruptcy in words: just now, then minutes ago', () => {
+    const rt = testRuntime();
+    rt.store.seedFilings([filing({ id: 7, kind: 'BANKRUPTCY', at: T0 - 20_000 })]);
+    const c = toDisplay(entry(), companyView(), undefined, T0);
+    if (!c) throw new Error('no company');
+    const { rerender } = render(
+      <Wrap runtime={rt}>
+        <MarketStrip companies={[c]} now={T0} />
+      </Wrap>,
+    );
+    const bk = () => screen.getByText(/^OOH, /).textContent;
+    expect(bk()).toBe('OOH, just now');
+    rerender(
+      <Wrap runtime={rt}>
+        <MarketStrip companies={[c]} now={T0 + 4 * 60_000} />
+      </Wrap>,
+    );
+    expect(bk()).toBe('OOH, 4m ago');
   });
 });

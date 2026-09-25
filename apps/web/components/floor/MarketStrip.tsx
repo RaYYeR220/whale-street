@@ -88,7 +88,8 @@ export function MarketStrip({
                 <Portrait seed={lastBk.companyId} hp={0} status="bankrupt" size={40} label="" />
               </span>
               <small className="ws-v-muted">
-                {lastBk.ticker}, {ago(now - lastBk.at)} ago
+                {lastBk.ticker},{' '}
+                {ago(now - lastBk.at) === 'now' ? 'just now' : `${ago(now - lastBk.at)} ago`}
               </small>
             </>
           ) : null}
