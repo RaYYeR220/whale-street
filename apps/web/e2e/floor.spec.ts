@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { listedTickers, moodOverlaps, watchErrors } from './helpers';
+import { listedTickers, moodOverlaps, stripOverflow, watchErrors } from './helpers';
 
 test('the floor shows the REPLAY badge and ticks', async ({ page }) => {
   const errors = watchErrors(page);
@@ -24,6 +24,16 @@ test('street mood keeps each coin reading clear of the crowds and percentages', 
 }) => {
   await page.goto('/floor');
   expect(await moodOverlaps(page)).toEqual([]);
+});
+
+test('market strip keeps its Nansen credit on screen at 1280, 1440 and 1920', async ({ page }) => {
+  await page.goto('/floor');
+  const credit = page.getByText('Powered by Nansen API').first();
+  for (const width of [1280, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await stripOverflow(page), `${width}px`).toBeLessThanOrEqual(0);
+    await expect(credit, `${width}px`).toBeInViewport();
+  }
 });
 
 test('a company page takes a play-money order', async ({ page, request }) => {

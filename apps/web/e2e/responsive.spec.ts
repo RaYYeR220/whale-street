@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { listedTickers, moodOverlaps } from './helpers';
+import { listedTickers, moodOverlaps, stripOverflow } from './helpers';
 
 test('phones: no sideways scroll, the mode badge stays visible', async ({ page, request }) => {
   const [ticker] = await listedTickers(request);
@@ -23,4 +23,10 @@ test('phones: the tab bar replaces the top navigation', async ({ page }) => {
 test('phones: street mood keeps each coin reading clear of the crowds', async ({ page }) => {
   await page.goto('/floor');
   expect(await moodOverlaps(page)).toEqual([]);
+});
+
+test('phones: market strip keeps its Nansen credit on screen', async ({ page }) => {
+  await page.goto('/floor');
+  expect(await stripOverflow(page)).toBeLessThanOrEqual(0);
+  await expect(page.getByText('Powered by Nansen API').first()).toBeInViewport();
 });

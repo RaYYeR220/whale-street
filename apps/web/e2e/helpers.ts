@@ -23,6 +23,16 @@ export const unknownAddress = (): string =>
   `0x${Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
 
 /**
+ * Horizontal overflow of the market strip (positive: content scrolls past view on the right,
+ * hiding whatever comes last — the Nansen credit; 0 or less once it wraps or shrinks to fit).
+ */
+export async function stripOverflow(page: Page): Promise<number> {
+  const strip = page.locator('.ws-strip').first();
+  await strip.waitFor();
+  return strip.evaluate((el) => el.scrollWidth - el.clientWidth);
+}
+
+/**
  * Street mood rows whose "leans long, read 4 min ago" line overlaps the crowd figures or their
  * percentages (empty when the layout keeps them apart).
  */
