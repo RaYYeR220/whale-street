@@ -4,19 +4,31 @@ import { useEffect, useState } from 'react';
 import { useEngine } from '../providers/engine';
 
 const STALL_MS = 5_000;
+/**
+ * The free-tier engine can take up to a minute to wake from sleep. While the first connection
+ * attempt is still pending after STALL_MS, say so honestly instead of showing the generic
+ * unreachable message; only give up and show that message once this much time has passed.
+ */
+const WAKE_TIMEOUT_MS = 90_000;
 
 /** Global data-health strip: every degraded state is said out loud, never silently absorbed. */
 export function Banners() {
   const connection = useEngine((s) => s.connection);
   const status = useEngine((s) => s.status);
-  const [stalled, setStalled] = useState(false);
+  const [waking, setWaking] = useState(false);
+  const [gaveUp, setGaveUp] = useState(false);
   useEffect(() => {
     if (connection !== 'connecting') {
-      setStalled(false);
+      setWaking(false);
+      setGaveUp(false);
       return;
     }
-    const id = setTimeout(() => setStalled(true), STALL_MS);
-    return () => clearTimeout(id);
+    const wakeId = setTimeout(() => setWaking(true), STALL_MS);
+    const giveUpId = setTimeout(() => setGaveUp(true), WAKE_TIMEOUT_MS);
+    return () => {
+      clearTimeout(wakeId);
+      clearTimeout(giveUpId);
+    };
   }, [connection]);
 
   const items: Array<{ key: string; text: string; dots?: boolean }> = [];
@@ -31,10 +43,16 @@ export function Banners() {
       text: 'Reconnecting to the floor. Prices will catch up when we are back.',
       dots: true,
     });
-  else if (stalled)
+  else if (connection === 'connecting' && gaveUp)
     items.push({
       key: 'down',
       text: 'Cannot reach the engine. Nothing on this page updates until it answers.',
+      dots: true,
+    });
+  else if (connection === 'connecting' && waking)
+    items.push({
+      key: 'waking',
+      text: 'Waking the demo server (free hosting). This can take up to a minute…',
       dots: true,
     });
   if (status?.marksDelayed)

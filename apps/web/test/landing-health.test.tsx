@@ -45,7 +45,7 @@ describe('landing data-health banners', () => {
     expect(document.querySelector('.ws-tabbar, .ws-breaking')).toBeNull();
   });
 
-  it('says when the engine cannot be reached', () => {
+  it('says the demo server is waking up first, and only calls the engine unreachable after 90s', () => {
     vi.useFakeTimers();
     const rt = testRuntime();
     render(
@@ -57,7 +57,13 @@ describe('landing data-health banners', () => {
     act(() => {
       vi.advanceTimersByTime(6_000);
     });
+    expect(screen.getByText(/Waking the demo server \(free hosting\)/)).toBeTruthy();
+    expect(screen.queryByText(/Cannot reach the engine/)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(84_000);
+    });
     expect(screen.getByText(/Cannot reach the engine/)).toBeTruthy();
+    expect(screen.queryByText(/Waking the demo server/)).toBeNull();
     vi.useRealTimers();
   });
 

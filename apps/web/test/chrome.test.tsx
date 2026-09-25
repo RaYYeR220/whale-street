@@ -124,15 +124,23 @@ describe('data-health banners', () => {
     expect(banner?.textContent).toMatch(/Too many connections or messages from your network/);
   });
 
-  it('reports an unreachable engine after 5 seconds of connecting', () => {
+  it('says the demo server may be waking up after 5 seconds of connecting, then gives up after 90', () => {
     vi.useFakeTimers();
     const rt = mount(<Banners />);
     act(() => rt.store.setConnection('connecting'));
+    expect(screen.queryByText(/Waking the demo server/)).toBeNull();
     expect(screen.queryByText(/Cannot reach the engine/)).toBeNull();
     act(() => {
       vi.advanceTimersByTime(5_000);
     });
+    expect(screen.getByText(/Waking the demo server \(free hosting\)/)).toBeTruthy();
+    expect(document.querySelector('[data-banner="waking"] i')).toBeTruthy();
+    expect(screen.queryByText(/Cannot reach the engine/)).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(85_000);
+    });
     expect(screen.getByText(/Cannot reach the engine/)).toBeTruthy();
+    expect(screen.queryByText(/Waking the demo server/)).toBeNull();
   });
 });
 
